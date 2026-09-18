@@ -23,6 +23,8 @@ import {
   ASSET_CATEGORIES,
 } from '../../../constants/apps/assets';
 import { SelectOptions } from '../../context/ValueHelpsContext';
+import EmployeeSearchDropdown from '../ui/EmployeeSearchDropdown';
+import { useEmployeeOptions } from '../../hooks/useSharedData';
 
 // ── DEPRECIATION ──────────────────────────────────────────────────────────────
 function calcDepreciation(asset: Asset) {
@@ -191,7 +193,9 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
   const [showMaintForm, setShowMaintForm] = useState(false);
   const [assigningAsset, setAssigningAsset] = useState<Asset | null>(null);
   const [assigneeName, setAssigneeName] = useState('');
+  const [assigneeId, setAssigneeId] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const { options: employeeOptions } = useEmployeeOptions();
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; danger?: boolean; action: () => void } | null>(null);
   const [qrAsset, setQrAsset] = useState<Asset | null>(null);
   const [assetErrors, setAssetErrors] = useState<Record<string, string>>({});
@@ -299,6 +303,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
     serialNumber: '', purchaseDate: '', purchaseCost: '', vendor: '', location: '',
     warrantyExpiry: '', notes: '',
     warrantyAlerts: { days90: true, days30: true, onExpiry: true },
+    assignedToName: '', assignedToId: '',
   };
   const [assetForm, setAssetForm] = useState(blankForm);
 
@@ -486,6 +491,8 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
       warrantyExpiry: asset.warrantyExpiry ?? '',
       notes: asset.notes ?? '',
       warrantyAlerts: { days90: true, days30: true, onExpiry: true },
+      assignedToName: asset.assignedToName ?? '',
+      assignedToId: asset.assignedTo ?? '',
     });
     setShowAssetForm(true);
   }
@@ -523,10 +530,20 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
         payload.assetTag = generateAssetTag();
         payload.status = 'Available';
         payload.maintenanceLogs = [];
-        await createAsset(payload);
+        const created = await createAsset(payload);
+        if (assetForm.assignedToName.trim()) {
+          const empId = assetForm.assignedToId || currentUser?.id || '';
+          await assignAsset(created.id, empId, assetForm.assignedToName.trim()).catch(() => {});
+        }
         toast.success(t('Asset created successfully'));
       } else {
         await updateAsset(editingAsset.id, payload);
+        const newAssignee = assetForm.assignedToName.trim();
+        const prevAssignee = editingAsset.assignedToName ?? '';
+        if (newAssignee && newAssignee !== prevAssignee) {
+          const empId = assetForm.assignedToId || currentUser?.id || '';
+          await assignAsset(editingAsset.id, empId, newAssignee).catch(() => {});
+        }
         toast.success(t('Asset updated successfully'));
       }
       setShowAssetForm(false);
@@ -579,10 +596,12 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
     if (!assigningAsset) return;
     setSubmitting(true);
     try {
-      await assignAsset(assigningAsset.id, currentUser?.id ?? '', assigneeName.trim());
+      const empId = assigneeId || currentUser?.id || '';
+      await assignAsset(assigningAsset.id, empId, assigneeName.trim());
       toast.success(t('Asset assigned'));
       setAssigningAsset(null);
       setAssigneeName('');
+      setAssigneeId('');
     } catch (e: any) {
       toast.error(e.message ?? t('Assign failed'));
     } finally {
@@ -1564,22 +1583,23 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
                 ) : (
                   isAdmin && viewingAsset.status === 'Available' ? (
                     <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder={t('Employee name')}
+                      <EmployeeSearchDropdown
                         value={assigneeName}
-                        onChange={e => setAssigneeName(e.target.value)}
-                        className="flex-1 border border-border rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                        onChange={(name, id) => { setAssigneeName(name); setAssigneeId(id ?? ''); }}
+                        placeholder={t('Employee name')}
+                        className="flex-1"
                       />
                       <button
                         onClick={async () => {
                           if (!assigneeName.trim()) return;
                           setSubmitting(true);
                           try {
-                            await assignAsset(viewingAsset.id, currentUser?.id ?? '', assigneeName.trim());
+                            const empId = assigneeId || currentUser?.id || '';
+                            await assignAsset(viewingAsset.id, empId, assigneeName.trim());
                             toast.success(t('Asset assigned'));
                             setViewingAsset(null);
                             setAssigneeName('');
+                            setAssigneeId('');
                           } catch (e: any) { toast.error(e.message); }
                           finally { setSubmitting(false); }
                         }}
@@ -1961,6 +1981,14 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
                 </div>
               </div>
               <div className="space-y-1 sm:col-span-2">
+                <label className="text-xs font-medium text-muted-foreground">{t('Assigned To')} <span className="text-muted-foreground/60">(optional)</span></label>
+                <EmployeeSearchDropdown
+                  value={assetForm.assignedToName}
+                  onChange={(name, id) => setAssetForm(f => ({ ...f, assignedToName: name, assignedToId: id ?? '' }))}
+                  placeholder="Search employee…"
+                />
+              </div>
+              <div className="space-y-1 sm:col-span-2">
                 <label className="text-xs font-medium text-muted-foreground">{t('Notes')}</label>
                 <textarea
                   value={assetForm.notes}
@@ -2002,11 +2030,10 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
               <p className="text-sm text-muted-foreground">{assigningAsset.name} ({assigningAsset.assetTag})</p>
               <div className="space-y-1">
                 <label className="text-xs font-medium text-muted-foreground">{t('Employee Name')} *</label>
-                <input
-                  type="text"
+                <EmployeeSearchDropdown
                   value={assigneeName}
-                  onChange={e => setAssigneeName(e.target.value)}
-                  className="w-full border border-border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  onChange={(name, id) => { setAssigneeName(name); setAssigneeId(id ?? ''); }}
+                  placeholder="Search employee…"
                 />
                 {assignErrors.assigneeName && <p className="text-xs text-red-500 mt-0.5">{assignErrors.assigneeName}</p>}
               </div>

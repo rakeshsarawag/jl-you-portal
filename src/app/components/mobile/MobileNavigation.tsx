@@ -23,7 +23,7 @@ interface MobileNavigationProps {
 const NAV_ITEMS = [
   { id: 'home', label: 'Home', icon: Home, path: '/' },
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
-  { id: 'chat', label: 'Chat', icon: MessageSquare, path: '/collaboration-hub' },
+  { id: 'communications', label: 'Comms', icon: MessageSquare, path: '/communications' },
   { id: 'ai', label: 'AI', icon: Brain, path: '/ai-intelligence-dashboard' },
   { id: 'more', label: 'More', icon: Menu, path: '/menu' }
 ];
@@ -81,7 +81,7 @@ export function MobileNavigation({
 
   const getBadgeCount = (id: string) => {
     switch (id) {
-      case 'chat':
+      case 'communications':
         return unreadMessages;
       case 'more':
         return notifications;

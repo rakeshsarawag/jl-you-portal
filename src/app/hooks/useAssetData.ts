@@ -159,7 +159,7 @@ export function useAssetData(userEmail?: string) {
       employeeName,
       assignedDate: new Date().toISOString().slice(0, 10),
     };
-    const res = await api(`/${assetId}/assign`, { method: 'POST', body: JSON.stringify(payload) }, userEmail);
+    const res = await api('/assign', { method: 'POST', body: JSON.stringify(payload) }, userEmail);
     const data = await safeJson(res);
     if (!data?.success) throw new Error(data?.error ?? 'Failed to assign asset');
     const asset = normalizeAsset(data.data);
@@ -168,7 +168,7 @@ export function useAssetData(userEmail?: string) {
   }, []);
 
   const returnAsset = useCallback(async (assetId: string) => {
-    const res = await api(`/${assetId}/return`, {
+    const res = await api('/return', {
       method: 'POST',
       body: JSON.stringify({ returnedDate: new Date().toISOString().slice(0, 10) }),
     }, userEmail);

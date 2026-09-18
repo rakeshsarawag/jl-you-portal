@@ -78,7 +78,6 @@ const ROUTE_LABELS: Record<string, string> = {
   '/workflow-dashboard': 'Workflow Automation',
   '/ai-intelligence-dashboard': 'AI Intelligence',
   '/advanced-analytics': 'Analytics Dashboard',
-  '/collaboration-hub': 'Collaboration Hub',
   '/security-compliance': 'Security & Compliance',
   '/advanced-features': 'Advanced Features',
   '/master-data': 'Master Data',

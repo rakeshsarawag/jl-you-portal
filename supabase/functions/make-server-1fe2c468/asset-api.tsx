@@ -155,15 +155,13 @@ app.post('/assign', async (c) => {
 
     if (error) return c.json({ success: false, error: error.message }, 500);
 
+    // Fetch the updated asset to return it
+    const { data: updatedAsset } = await supabase.from('assets').select('*').eq('id', assetId).single();
+
     // Check if employee is in onboarding (joined within last 90 days)
     if (employeeId) {
       try {
-        const { data: assetData } = await supabase
-          .from('assets')
-          .select('name')
-          .eq('id', assetId)
-          .single();
-        const assetName = assetData?.name || 'Asset';
+        const assetName = updatedAsset?.name || 'Asset';
 
         const { data: emp } = await supabase
           .from('employees')
@@ -193,7 +191,7 @@ app.post('/assign', async (c) => {
       } catch {}
     }
 
-    return c.json({ success: true, data });
+    return c.json({ success: true, data: updatedAsset ?? data });
   } catch (error) {
     return c.json({ success: false, error: 'Failed to assign asset' }, 500);
   }
@@ -232,7 +230,8 @@ app.post('/return', async (c) => {
         .eq('id', openAssignment.id);
     }
 
-    return c.json({ success: true });
+    const { data: returnedAsset } = await supabase.from('assets').select('*').eq('id', assetId).single();
+    return c.json({ success: true, data: returnedAsset });
   } catch (error) {
     return c.json({ success: false, error: 'Failed to return asset' }, 500);
   }

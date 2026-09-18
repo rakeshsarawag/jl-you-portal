@@ -27,7 +27,6 @@ export const ROUTE_ROLES: Record<string, Role[]> = {
   "/executive-dashboard":           [ROLES.ADMIN, ROLES.MANAGER, ROLES.FINANCE, ROLES.HR],
   "/workflow-dashboard":            [ROLES.ADMIN, ROLES.MANAGER, ROLES.HR, ROLES.FINANCE],
   "/advanced-analytics":            [ROLES.ADMIN, ROLES.MANAGER, ROLES.HR, ROLES.FINANCE],
-  "/collaboration-hub":             [ROLES.ADMIN, ROLES.HR, ROLES.MANAGER, ROLES.EMPLOYEE, ROLES.FINANCE],
   "/security-compliance":           [ROLES.ADMIN],
   "/advanced-features":             [ROLES.ADMIN, ROLES.MANAGER],
   "/training":                      [ROLES.ADMIN, ROLES.HR, ROLES.MANAGER, ROLES.EMPLOYEE],

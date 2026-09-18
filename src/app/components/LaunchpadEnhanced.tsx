@@ -12,7 +12,7 @@ import {
   Brain, BarChart3, MessageSquare, HardDrive, Share2, Database,
   ChevronRight, Calendar, CheckSquare, ArrowUpRight, Star, Inbox,
   Briefcase, Award, BookOpen, LayoutDashboard, LucideIcon,
-  GitBranch, UsersRound, Lock, Cpu, Bug, Globe,
+  GitBranch, Lock, Cpu, Bug, Globe,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useUser } from '../context/UserContext';
@@ -45,7 +45,6 @@ const TILE_CONFIG = [
   { id: 'recruitment',         titleKey: 'tile.recruitment',        subKey: 'tile.sub.recruitment',        icon: UserPlus,        path: '/recruitment',         color: 'text-violet-600',  iconBg: 'bg-violet-50',  category: 'people' },
   { id: 'onboarding',          titleKey: 'tile.onboarding',         subKey: 'tile.sub.onboarding',         icon: Star,            path: '/onboarding',          color: 'text-pink-600',    iconBg: 'bg-pink-50',    category: 'people' },
   { id: 'communications',      titleKey: 'tile.communications',     subKey: 'tile.sub.communications',     icon: MessageSquare,   path: '/communications',      color: 'text-blue-500',    iconBg: 'bg-blue-50',    category: 'operations' },
-  { id: 'collaboration-hub',   titleKey: 'tile.collaboration',      subKey: 'tile.sub.collaboration',      icon: UsersRound,      path: '/collaboration-hub',   color: 'text-sky-600',     iconBg: 'bg-sky-50',     category: 'operations' },
   { id: 'projects',            titleKey: 'tile.projects',           subKey: 'tile.sub.projects',           icon: Folder,          path: '/projects',            color: 'text-lime-600',    iconBg: 'bg-lime-50',    category: 'operations' },
   { id: 'defect-tracker',      titleKey: 'tile.defectTracker',      subKey: 'tile.sub.defectTracker',      icon: Bug,             path: '/defect-tracker',      color: 'text-red-600',     iconBg: 'bg-red-50',     category: 'operations' },
   { id: 'it-services',         titleKey: 'tile.itServices',         subKey: 'tile.sub.itServices',         icon: Laptop,          path: '/it-services',         color: 'text-cyan-600',    iconBg: 'bg-cyan-50',    category: 'operations' },

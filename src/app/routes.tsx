@@ -20,7 +20,6 @@ const PermissionManager = React.lazy(() => import("./components/apps/PermissionM
 const CommunicationsHubDB = React.lazy(() => import("./components/apps/InternalCommunicationsHubEnhanced").then(m => ({ default: m.CommunicationsHubDB })));
 const UnifiedAnalyticsDashboard = React.lazy(() => import("./components/analytics/UnifiedAnalyticsDashboard").then(m => ({ default: m.UnifiedAnalyticsDashboard })));
 const WorkflowDashboard = React.lazy(() => import("./components/workflows/WorkflowDashboard").then(m => ({ default: m.WorkflowDashboard })));
-const CollaborationHub = React.lazy(() => import("./components/collaboration/CollaborationHub").then(m => ({ default: m.CollaborationHub })));
 const SecurityComplianceDashboard = React.lazy(() => import("./components/security/SecurityComplianceDashboard"));
 const AdvancedFeaturesDashboard = React.lazy(() => import("./components/advanced/AdvancedFeaturesDashboard").then(m => ({ default: m.AdvancedFeaturesDashboard })));
 const UserDocumentationEnhanced = React.lazy(() => import("./components/apps/UserDocumentationEnhanced").then(m => ({ default: m.UserDocumentationEnhanced })));
@@ -206,14 +205,6 @@ export const createAppRouter = ({ accessToken, onLogout }: RouteParams) => {
           element: (
             <ProtectedRoute requiredRoles={roles("/advanced-analytics")} appName="Analytics Dashboard">
               <Suspense><UnifiedAnalyticsDashboard accessToken={accessToken} onLogout={onLogout} /></Suspense>
-            </ProtectedRoute>
-          ),
-        },
-        {
-          path: "/collaboration-hub",
-          element: (
-            <ProtectedRoute requiredRoles={roles("/collaboration-hub")} appName="Collaboration Hub">
-              <Suspense><CollaborationHub accessToken={accessToken} onLogout={onLogout} /></Suspense>
             </ProtectedRoute>
           ),
         },

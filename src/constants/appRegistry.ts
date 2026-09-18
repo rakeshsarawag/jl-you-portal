@@ -222,16 +222,6 @@ export const APP_REGISTRY: AppEntry[] = [
     color: 'from-purple-500 to-violet-600',
   },
   {
-    appId: 'collaboration-hub',
-    path: '/collaboration-hub',
-    label: 'Collaboration Hub',
-    description: 'Shared spaces, channels, and team collaboration',
-    icon: 'Network',
-    requiredRoles: ['employee', 'admin', 'hr', 'manager', 'it', 'marketing', 'finance'],
-    category: 'collaboration',
-    color: 'from-orange-500 to-amber-500',
-  },
-  {
     appId: 'security-compliance',
     path: '/security-compliance',
     label: 'Security & Compliance',

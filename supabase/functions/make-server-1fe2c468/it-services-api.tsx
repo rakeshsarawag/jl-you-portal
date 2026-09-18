@@ -135,6 +135,7 @@ app.post('/tickets/update', async (c) => {
       priority: body.priority,
       status: body.status,
       assigned_to: body.assignedTo || null,
+      assigned_to_name: body.assignedToName || null,
       resolution: body.resolution || null,
     };
 
@@ -171,6 +172,7 @@ app.put('/tickets/:id', async (c) => {
       priority: body.priority,
       status: body.status,
       assigned_to: body.assignedTo || null,
+      assigned_to_name: body.assignedToName || null,
       resolution: body.resolution || null,
     };
 

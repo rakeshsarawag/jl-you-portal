@@ -3669,89 +3669,6 @@ ALTER TABLE communications_posts
 -- SECTION 9: COLLABORATION HUB GAPS (full migration from localStorage)
 -- ============================================================
 
--- Chat channels (DMs, group DMs, public/private channels)
-CREATE TABLE IF NOT EXISTS chat_channels (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name TEXT,
-  type TEXT NOT NULL CHECK (type IN ('channel','dm','group_dm')),
-  description TEXT,
-  is_private BOOLEAN DEFAULT false,
-  created_by UUID REFERENCES employees(id),
-  avatar_url TEXT,
-  last_message_at TIMESTAMPTZ,
-  last_message_preview TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_chat_channels_type ON chat_channels(type);
-
--- Channel members
-CREATE TABLE IF NOT EXISTS chat_channel_members (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  channel_id UUID REFERENCES chat_channels(id) ON DELETE CASCADE,
-  employee_id UUID REFERENCES employees(id) ON DELETE CASCADE,
-  role TEXT DEFAULT 'member' CHECK (role IN ('admin','member')),
-  joined_at TIMESTAMPTZ DEFAULT NOW(),
-  last_read_at TIMESTAMPTZ,
-  muted BOOLEAN DEFAULT false,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(channel_id, employee_id)
-);
-CREATE INDEX IF NOT EXISTS idx_channel_members_channel ON chat_channel_members(channel_id);
-CREATE INDEX IF NOT EXISTS idx_channel_members_employee ON chat_channel_members(employee_id);
-
--- Chat messages
-CREATE TABLE IF NOT EXISTS chat_messages (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  channel_id UUID REFERENCES chat_channels(id) ON DELETE CASCADE,
-  sender_id UUID REFERENCES employees(id) ON DELETE SET NULL,
-  thread_parent_id UUID REFERENCES chat_messages(id) ON DELETE CASCADE,
-  content TEXT,
-  message_type TEXT DEFAULT 'text' CHECK (message_type IN ('text','file','image','system','giphy')),
-  is_edited BOOLEAN DEFAULT false,
-  edited_at TIMESTAMPTZ,
-  is_deleted BOOLEAN DEFAULT false,
-  deleted_at TIMESTAMPTZ,
-  metadata JSONB DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_channel ON chat_messages(channel_id);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_thread ON chat_messages(thread_parent_id);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_created ON chat_messages(created_at);
-CREATE INDEX IF NOT EXISTS idx_chat_messages_content_search ON chat_messages USING gin(to_tsvector('english', content));
-
--- Message reactions
-CREATE TABLE IF NOT EXISTS chat_message_reactions (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  message_id UUID REFERENCES chat_messages(id) ON DELETE CASCADE,
-  employee_id UUID REFERENCES employees(id) ON DELETE CASCADE,
-  emoji TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(message_id, employee_id, emoji)
-);
-CREATE INDEX IF NOT EXISTS idx_reactions_message ON chat_message_reactions(message_id);
-
--- Message attachments
-CREATE TABLE IF NOT EXISTS chat_message_attachments (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  message_id UUID REFERENCES chat_messages(id) ON DELETE CASCADE,
-  file_name TEXT NOT NULL,
-  file_size_bytes BIGINT,
-  mime_type TEXT,
-  storage_path TEXT NOT NULL,
-  thumbnail_path TEXT,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-
--- User presence
-CREATE TABLE IF NOT EXISTS user_presence (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  employee_id UUID REFERENCES employees(id) ON DELETE CASCADE UNIQUE,
-  status TEXT DEFAULT 'offline' CHECK (status IN ('online','away','busy','offline')),
-  custom_status TEXT,
-  last_seen_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
 
 -- ============================================================
 -- SECTION 10: WORKFLOW AUTOMATION GAPS
@@ -3869,7 +3786,6 @@ BEGIN
     'performance_okrs','performance_key_results','performance_feedback_requests',
     'training_paths','training_path_courses','training_path_enrollments',
     'training_sessions','training_needs',
-    'chat_channels','chat_channel_members','user_presence',
     'notification_preferences','workflow_versions','workflow_trigger_event_mappings'
   ]) LOOP
     BEGIN
@@ -3905,8 +3821,6 @@ BEGIN
     'training_sessions','training_session_registrations','training_needs',
     'communications_post_reads','communications_post_mentions',
     'communications_event_rsvps','communications_recognitions',
-    'chat_channels','chat_channel_members','chat_messages',
-    'chat_message_reactions','chat_message_attachments','user_presence',
     'workflow_versions','workflow_instance_steps','workflow_trigger_event_mappings',
     'notification_preferences','notification_quiet_hours','user_push_subscriptions'
   ]) LOOP
@@ -4932,3 +4846,53 @@ CREATE OR REPLACE FUNCTION nextval_backlog_item_id()
 RETURNS TEXT AS $$
   SELECT 'BLI-' || LPAD(nextval('backlog_item_id_seq')::TEXT, 4, '0');
 $$ LANGUAGE SQL SECURITY DEFINER;
+
+-- ============================================================
+-- MIGRATION 07: project_tasks sprint columns
+-- (idempotent — mirrors 07_project_tasks_columns.sql)
+-- ============================================================
+
+ALTER TABLE project_tasks
+  ADD COLUMN IF NOT EXISTS sprint_id UUID REFERENCES project_sprints(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS sprint_change_reason TEXT DEFAULT NULL,
+  ADD COLUMN IF NOT EXISTS sprint_change_history JSONB DEFAULT '[]'::jsonb;
+
+CREATE INDEX IF NOT EXISTS idx_project_tasks_sprint_id ON project_tasks(sprint_id);
+
+-- ============================================================
+-- MIGRATION 08: Communications Hub column additions
+-- (idempotent — mirrors 08_communications_columns.sql)
+-- ============================================================
+
+ALTER TABLE communications_posts
+  ADD COLUMN IF NOT EXISTS likes INTEGER DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS likes_by JSONB DEFAULT '[]'::jsonb;
+
+ALTER TABLE communications_polls
+  ADD COLUMN IF NOT EXISTS voters JSONB DEFAULT '[]'::jsonb;
+
+ALTER TABLE communications_channels
+  ADD COLUMN IF NOT EXISTS member_count INTEGER DEFAULT 0;
+
+ALTER TABLE communications_event_rsvps
+  ADD COLUMN IF NOT EXISTS user_id UUID;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'communications_event_rsvps_event_id_user_id_key'
+  ) THEN
+    ALTER TABLE communications_event_rsvps
+      ADD CONSTRAINT communications_event_rsvps_event_id_user_id_key
+      UNIQUE (event_id, user_id);
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_comm_event_rsvps_user ON communications_event_rsvps(event_id, user_id);
+
+-- ============================================================
+-- MIGRATION 11: Drop Collaboration Hub chat tables
+-- (chat tables were removed — see 11_drop_chat_tables.sql)
+-- No DDL needed here; fresh installs never create them.
+-- ============================================================

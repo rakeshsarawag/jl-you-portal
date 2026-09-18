@@ -1001,9 +1001,10 @@ function DetailModal({
   const navigate = useNavigate();
   const [commentText, setCommentText] = useState('');
   const [assignName, setAssignName] = useState(ticket.assignedToName ?? '');
+  const [assignCode, setAssignCode] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   const [submittingAssign, setSubmittingAssign] = useState(false);
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
+  const [employees, setEmployees] = useState<{ id: string; name: string; code: string }[]>([]);
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; danger?: boolean; action: () => void } | null>(null);
   const [tagInput, setTagInput] = useState('');
   const [editMode, setEditMode] = useState(false);
@@ -1029,7 +1030,11 @@ function DetailModal({
       .then(json => {
         const list = (json.data ?? [])
           .filter((e: any) => e.status !== 'Inactive')
-          .map((e: any) => ({ id: e.id, name: e.employee_name ?? e.fullName ?? e.name ?? '' }))
+          .map((e: any) => ({
+            id: e.id,
+            name: e.employee_name ?? e.fullName ?? e.name ?? '',
+            code: e.employee_code ?? e.employeeCode ?? '',
+          }))
           .filter((e: any) => e.name);
         if (list.length > 0) setEmployees(list);
       })
@@ -1094,8 +1099,10 @@ function DetailModal({
     try {
       const match = employees.find(e => e.name === assignName.trim());
       const agentId = match ? match.id : assignName.trim();
-      await onAssign(ticket.id, agentId, assignName.trim());
-      toast.success(`Assigned to ${assignName}`);
+      const displayCode = assignCode || match?.code || '';
+      const displayName = displayCode ? `${assignName.trim()} (${displayCode})` : assignName.trim();
+      await onAssign(ticket.id, agentId, displayName);
+      toast.success(`Assigned to ${displayName}`);
     } catch {
       toast.error(t('itServices.assignFailed'));
     } finally {
@@ -1315,20 +1322,27 @@ function DetailModal({
             </button>
           </div>
 
-          {/* Assignment (IT Admin) */}
+          {/* Assigned To (IT Admin) */}
           {(isIT || isAdmin) && (
             <div className="border rounded-lg p-4 bg-muted">
-              <h3 className="text-sm font-semibold text-foreground mb-3">{t('itServices.assignment')}</h3>
-              {ticket.assignedToName && (
+              <h3 className="text-sm font-semibold text-foreground mb-3">Assigned To</h3>
+              {ticket.assignedToName ? (
                 <p className="text-xs text-muted-foreground mb-2">
-                  {t('itServices.currentlyAssignedTo')} <span className="font-medium text-foreground">{ticket.assignedToName}</span>
+                  Currently assigned to{' '}
+                  <span className="font-medium text-foreground">{ticket.assignedToName}</span>
                 </p>
+              ) : (
+                <p className="text-xs text-muted-foreground mb-2">Unassigned</p>
               )}
               <div className="flex gap-2">
                 <EmployeeSearchDropdown
                   value={assignName}
-                  onChange={(name) => setAssignName(name)}
-                  placeholder={t('itServices.agentName')}
+                  onChange={(name, id) => {
+                    setAssignName(name);
+                    const match = id ? employees.find(e => e.id === id) : employees.find(e => e.name === name);
+                    setAssignCode(match?.code ?? '');
+                  }}
+                  placeholder="Search employee…"
                   className="flex-1"
                 />
                 <button
@@ -1337,7 +1351,7 @@ function DetailModal({
                   className="bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center gap-1"
                 >
                   {submittingAssign && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  {t('itServices.assign')}
+                  Save
                 </button>
               </div>
             </div>
