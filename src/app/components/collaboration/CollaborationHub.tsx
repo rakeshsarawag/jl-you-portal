@@ -1416,6 +1416,7 @@ export function CollaborationHub({ accessToken, onLogout }: CollaborationHubProp
   const isManagerOrAdmin = userRole === 'admin' || userRole === 'manager' || userRole === 'hr_admin';
 
   const {
+    localId,
     channels,
     selectedChannel,
     messages,
@@ -1639,8 +1640,9 @@ export function CollaborationHub({ accessToken, onLogout }: CollaborationHubProp
 
   const handleNewDMSelect = async (user: AppUser) => {
     setShowNewDM(false);
-    if (!user.employee_id) return;
-    const ch = await findOrCreateDM(user.employee_id);
+    const targetId = user.employee_id ?? user.id;
+    if (!targetId) return;
+    const ch = await findOrCreateDM(targetId);
     if (ch) await selectChannel(ch);
   };
 
@@ -1693,17 +1695,25 @@ export function CollaborationHub({ accessToken, onLogout }: CollaborationHubProp
 
   const getDMDisplayName = (ch: ChatChannel): string => {
     if (ch.type !== 'dm') return ch.name;
-    const otherEmpId = (ch.member_employee_ids ?? []).find(id => id !== employeeId);
-    if (!otherEmpId) return ch.name;
-    const user = allUsers.find(u => u.employee_id === otherEmpId);
-    return user?.name ?? ch.name;
+    // localId (from hook) = employeeId ?? userId — filter out current user's ID
+    const otherId = (ch.member_employee_ids ?? []).find(id => id !== localId && id !== employeeId && id !== currentUser?.id);
+    if (!otherId) {
+      // fallback: strip "dm-A-B" pattern to get the other UUID then look up
+      const parts = ch.name?.replace(/^dm-/, '').split('-') ?? [];
+      const otherFromName = parts.find(p => p !== localId && p !== (employeeId ?? '') && p !== (currentUser?.id ?? ''));
+      if (!otherFromName) return ch.name ?? 'Direct Message';
+      const u = allUsers.find(a => a.id === otherFromName || a.employee_id === otherFromName);
+      return u?.name ?? 'Direct Message';
+    }
+    const user = allUsers.find(u => u.id === otherId || u.employee_id === otherId);
+    return user?.name ?? 'Direct Message';
   };
 
   const getDMPresenceStatus = (ch: ChatChannel): string | undefined => {
     if (ch.type !== 'dm') return undefined;
-    const otherEmpId = (ch.member_employee_ids ?? []).find(id => id !== employeeId);
-    if (!otherEmpId) return undefined;
-    return presenceMap[otherEmpId]?.status;
+    const otherId = (ch.member_employee_ids ?? []).find(id => id !== localId && id !== employeeId && id !== currentUser?.id);
+    if (!otherId) return undefined;
+    return presenceMap[otherId]?.status;
   };
 
   const channelDisplayName = selectedChannel
@@ -1736,6 +1746,13 @@ export function CollaborationHub({ accessToken, onLogout }: CollaborationHubProp
               <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 ${presenceColor(userPresenceStatus)} rounded-full border-2 border-[#1e1b4b]`} />
             </div>
             <span className="text-white/80 text-sm font-medium truncate flex-1">{currentUser?.name}</span>
+            <button
+              onClick={() => setShowNewDM(true)}
+              title={t('collaborationHub.newMessage')}
+              className="p-1 rounded hover:bg-white/10 transition-colors flex-shrink-0"
+            >
+              <Plus className="h-4 w-4 text-white/60" />
+            </button>
           </div>
 
           {/* Global search trigger */}
@@ -1781,15 +1798,16 @@ export function CollaborationHub({ accessToken, onLogout }: CollaborationHubProp
 
             {/* DIRECT MESSAGES */}
             <div>
-              <div className="flex items-center justify-between px-1 mb-1 group">
+              <div className="flex items-center justify-between px-1 mb-1">
                 <span className="text-white/40 text-xs font-semibold uppercase tracking-wider">
                   {t('collaborationHub.directMessages')}
                 </span>
                 <button
                   onClick={() => setShowNewDM(true)}
-                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-white/10 transition-opacity"
+                  title={t('collaborationHub.newMessage')}
+                  className="p-0.5 rounded hover:bg-white/10 transition-colors"
                 >
-                  <Plus className="h-3.5 w-3.5 text-white/50" />
+                  <Plus className="h-3.5 w-3.5 text-white/50 hover:text-white/80" />
                 </button>
               </div>
               {dmChannels.map(ch => (
@@ -1802,12 +1820,6 @@ export function CollaborationHub({ accessToken, onLogout }: CollaborationHubProp
                   dmOtherName={getDMDisplayName(ch)}
                 />
               ))}
-              <button
-                onClick={() => setShowNewDM(true)}
-                className="w-full text-left px-3 py-1 text-indigo-400 text-xs hover:underline"
-              >
-                {t('collaborationHub.newMessage')}
-              </button>
             </div>
 
             {/* GROUP DMs */}
@@ -2048,7 +2060,7 @@ export function CollaborationHub({ accessToken, onLogout }: CollaborationHubProp
                     />
                     <Textarea
                       ref={mainTextareaRef}
-                      placeholder={`${t('collaborationHub.messagePlaceholder')} ${selectedChannel.type === 'dm' ? getDMDisplayName(selectedChannel) : '#' + selectedChannel.name}`}
+                      placeholder={`Message ${selectedChannel.type === 'dm' ? getDMDisplayName(selectedChannel) : '#' + selectedChannel.name}`}
                       value={messageInput}
                       onChange={e => handleInputChange(e.target.value)}
                       onKeyDown={e => {
@@ -2057,8 +2069,8 @@ export function CollaborationHub({ accessToken, onLogout }: CollaborationHubProp
                           handleSend();
                         }
                       }}
-                      rows={1}
-                      className="resize-none border-0 rounded-none px-4 py-3 text-sm focus-visible:ring-0 min-h-[44px] max-h-[160px]"
+                      rows={3}
+                      className="resize-y border-0 rounded-none px-4 py-3 text-sm focus-visible:ring-0 min-h-[80px] max-h-[320px]"
                     />
                     <div className="flex items-center justify-between px-3 py-2 border-t border-gray-100">
                       <div className="flex items-center gap-1">

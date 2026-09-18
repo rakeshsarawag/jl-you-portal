@@ -188,7 +188,7 @@ function NotificationPanel({ onClose, navigate }: { onClose: () => void; navigat
 }
 
 function UserMenu({ currentUser, onLogout }: { currentUser: any; onLogout: () => void }) {
-  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('jl-theme') as Theme) ?? 'system');
+  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('jl-theme') as Theme) ?? 'light');
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
   const { fontScale, density, setFontScale, setDensity } = useDisplaySettings();
@@ -344,7 +344,7 @@ export function AppHeader({ onLogout }: AppHeaderProps) {
   }, []);
 
   useEffect(() => {
-    const saved = (localStorage.getItem('jl-theme') as Theme) ?? 'system';
+    const saved = (localStorage.getItem('jl-theme') as Theme) ?? 'light';
     applyTheme(saved);
   }, []);
 

@@ -3,7 +3,7 @@
  * All persistence is server-side; no localStorage.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '../../utils/constants';
+import { supabase, API_BASE, apiHeaders } from '../../utils/constants';
 import { CurrentUser } from '../../context/UserContext';
 import { toast } from 'sonner';
 import { t } from '../../../i18n';
@@ -113,6 +113,8 @@ export function useChatData(currentUser: CurrentUser | null) {
 
   const employeeId = currentUser?.employeeId ?? null;
   const userId = currentUser?.id ?? null;
+  // localId is used for all chat DB operations — employee UUID when available, auth UUID otherwise
+  const localId = employeeId ?? userId;
 
   const realtimeSubRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const presenceSubRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
@@ -175,7 +177,7 @@ export function useChatData(currentUser: CurrentUser | null) {
         .update({ status: 'offline' })
         .eq('employee_id', employeeId);
     };
-  }, [employeeId]);
+  }, [localId]);
 
   // ── Load initial presence snapshot ───────────────────────────────────────
 
@@ -193,7 +195,28 @@ export function useChatData(currentUser: CurrentUser | null) {
 
   useEffect(() => {
     void (async () => {
-      // Primary: app_users with active status
+      // Primary: fetch from directory API (uses service role, always has data)
+      try {
+        const res = await fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() });
+        if (res.ok) {
+          const json = await res.json();
+          const emps: any[] = json.data ?? json ?? [];
+          if (emps.length > 0) {
+            setAllUsers(emps.map(e => ({
+              id: e.id,
+              name: e.name ?? '',
+              email: e.email ?? '',
+              employee_id: e.id,
+              department: e.department ?? null,
+            })) as AppUser[]);
+            return;
+          }
+        }
+      } catch (_) {
+        // fall through to Supabase fallback
+      }
+
+      // Fallback: app_users with active status
       const { data: appUsers, error } = await supabase
         .from('app_users')
         .select('id, name, email, employee_id, department')
@@ -205,7 +228,7 @@ export function useChatData(currentUser: CurrentUser | null) {
         return;
       }
 
-      // Fallback: pull from employees table if app_users is empty or errored
+      // Last resort: pull from employees table directly
       if (error || !appUsers?.length) {
         const { data: emps } = await supabase
           .from('employees')
@@ -229,18 +252,29 @@ export function useChatData(currentUser: CurrentUser | null) {
   // ── Load channels ─────────────────────────────────────────────────────────
 
   const loadChannels = useCallback(async () => {
-    if (!employeeId) return;
+    if (!localId) return;
     setLoadingChannels(true);
     try {
-      const { data: memberships, error } = await supabase
+      // Query by user_id first (post-migration column), fall back to employee_id
+      let memberships: any[] | null = null;
+      const { data: byUserId } = await supabase
         .from('chat_channel_members')
-        .select('channel_id, role, last_read_at, muted')
-        .eq('employee_id', employeeId);
-
-      if (error || !memberships) {
-        toast.error(t('collaborationHub.errorLoadingChannels'));
-        return;
+        .select('channel_id, role, last_read_at, muted, user_id, employee_id')
+        .eq('user_id', localId);
+      if (byUserId && byUserId.length > 0) {
+        memberships = byUserId;
+      } else {
+        const { data: byEmpId, error } = await supabase
+          .from('chat_channel_members')
+          .select('channel_id, role, last_read_at, muted, user_id, employee_id')
+          .eq('employee_id', localId);
+        if (error) {
+          toast.error(t('collaborationHub.errorLoadingChannels'));
+          return;
+        }
+        memberships = byEmpId ?? [];
       }
+      const error = null;
 
       const channelIds = memberships.map(m => m.channel_id);
       if (channelIds.length === 0) {
@@ -268,7 +302,7 @@ export function useChatData(currentUser: CurrentUser | null) {
               .eq('channel_id', ch.id)
               .eq('is_deleted', false)
               .gt('created_at', mem.last_read_at)
-              .neq('sender_id', employeeId);
+              .neq('sender_id', localId);
             unread_count = count ?? 0;
           }
 
@@ -297,7 +331,7 @@ export function useChatData(currentUser: CurrentUser | null) {
     } finally {
       setLoadingChannels(false);
     }
-  }, [employeeId]);
+  }, [localId]);
 
   useEffect(() => {
     loadChannels();
@@ -324,12 +358,12 @@ export function useChatData(currentUser: CurrentUser | null) {
       }
 
       // Enrich with sender info + reactions + reply counts
-      const enriched = await enrichMessages(data, employeeId);
+      const enriched = await enrichMessages(data, localId);
       setMessages(enriched);
     } finally {
       setLoadingMessages(false);
     }
-  }, [employeeId]);
+  }, [localId]);
 
   // ── Enrich messages with sender + reactions ───────────────────────────────
 
@@ -386,11 +420,11 @@ export function useChatData(currentUser: CurrentUser | null) {
     await loadMessages(channel.id);
 
     // Mark as read
-    if (employeeId) {
+    if (localId) {
       void supabase.from('chat_channel_members')
         .update({ last_read_at: new Date().toISOString() })
         .eq('channel_id', channel.id)
-        .eq('employee_id', employeeId);
+        .or(`user_id.eq.${localId},employee_id.eq.${localId}`);
     }
 
     // Realtime subscription
@@ -416,7 +450,7 @@ export function useChatData(currentUser: CurrentUser | null) {
             return;
           }
           if (raw.is_deleted) return;
-          const enriched = await enrichMessages([raw], employeeId);
+          const enriched = await enrichMessages([raw], localId);
           setMessages(prev => {
             if (prev.find(m => m.id === raw.id)) return prev;
             return [...prev, ...enriched];
@@ -428,14 +462,14 @@ export function useChatData(currentUser: CurrentUser | null) {
         { event: 'UPDATE', schema: 'public', table: 'chat_messages', filter: `channel_id=eq.${channel.id}` },
         async (payload) => {
           const updated = payload.new as ChatMessage;
-          const enriched = await enrichMessages([updated], employeeId);
+          const enriched = await enrichMessages([updated], localId);
           setMessages(prev => prev.map(m => m.id === updated.id ? enriched[0] : m));
         }
       )
       .subscribe();
 
     realtimeSubRef.current = sub;
-  }, [employeeId, loadMessages]);
+  }, [localId, loadMessages]);
 
   // ── Load thread replies ───────────────────────────────────────────────────
 
@@ -448,10 +482,10 @@ export function useChatData(currentUser: CurrentUser | null) {
       .order('created_at', { ascending: true });
 
     if (!error && data) {
-      const enriched = await enrichMessages(data, employeeId);
+      const enriched = await enrichMessages(data, localId);
       setThreadMessages(enriched);
     }
-  }, [employeeId]);
+  }, [localId]);
 
   const openThread = useCallback(async (msg: ChatMessage) => {
     setThreadParent(msg);
@@ -470,13 +504,13 @@ export function useChatData(currentUser: CurrentUser | null) {
     channelId: string,
     parentId?: string
   ) => {
-    if (!employeeId) return;
+    if (!localId) return;
     const trimmed = content.trim();
     if (!trimmed) return;
 
     const { error } = await supabase.from('chat_messages').insert([{
       channel_id: channelId,
-      sender_id: employeeId,
+      sender_id: localId,
       thread_parent_id: parentId ?? null,
       content: trimmed,
       message_type: 'text',
@@ -493,16 +527,16 @@ export function useChatData(currentUser: CurrentUser | null) {
     void supabase.from('chat_channels')
       .update({ last_message_at: new Date().toISOString(), last_message_preview: trimmed.slice(0, 100) })
       .eq('id', channelId);
-  }, [employeeId]);
+  }, [localId]);
 
   // ── Edit message ──────────────────────────────────────────────────────────
 
   const editMessage = useCallback(async (messageId: string, newContent: string) => {
-    if (!employeeId) return;
+    if (!localId) return;
     const { error } = await supabase.from('chat_messages')
       .update({ content: newContent.trim(), is_edited: true })
       .eq('id', messageId)
-      .eq('sender_id', employeeId);
+      .eq('sender_id', localId);
     if (error) toast.error(t('collaborationHub.messageSendError'));
     else {
       setMessages(prev => prev.map(m =>
@@ -512,12 +546,12 @@ export function useChatData(currentUser: CurrentUser | null) {
         m.id === messageId ? { ...m, content: newContent.trim(), is_edited: true } : m
       ));
     }
-  }, [employeeId]);
+  }, [localId]);
 
   // ── Delete message ────────────────────────────────────────────────────────
 
   const deleteMessage = useCallback(async (messageId: string) => {
-    if (!employeeId) return;
+    if (!localId) return;
     const { error } = await supabase.from('chat_messages')
       .update({ is_deleted: true })
       .eq('id', messageId);
@@ -526,24 +560,24 @@ export function useChatData(currentUser: CurrentUser | null) {
       setMessages(prev => prev.filter(m => m.id !== messageId));
       setThreadMessages(prev => prev.filter(m => m.id !== messageId));
     }
-  }, [employeeId]);
+  }, [localId]);
 
   // ── Toggle reaction ───────────────────────────────────────────────────────
 
   const toggleReaction = useCallback(async (messageId: string, emoji: string) => {
-    if (!employeeId) return;
+    if (!localId) return;
     const { data: existing } = await supabase
       .from('chat_message_reactions')
       .select('id')
       .eq('message_id', messageId)
-      .eq('employee_id', employeeId)
+      .eq('employee_id', localId)
       .eq('emoji', emoji)
       .maybeSingle();
 
     if (existing) {
       void supabase.from('chat_message_reactions').delete().eq('id', existing.id);
     } else {
-      void supabase.from('chat_message_reactions').insert([{ message_id: messageId, employee_id: employeeId, emoji }]);
+      void supabase.from('chat_message_reactions').insert([{ message_id: messageId, employee_id: localId, emoji }]);
     }
 
     // Optimistic update
@@ -557,7 +591,7 @@ export function useChatData(currentUser: CurrentUser | null) {
             ...m,
             reactions: reactions.map(r =>
               r.emoji === emoji
-                ? { ...r, count: r.count - 1, reacted_by_me: false, user_ids: r.user_ids.filter(id => id !== employeeId) }
+                ? { ...r, count: r.count - 1, reacted_by_me: false, user_ids: r.user_ids.filter(id => id !== localId) }
                 : r
             ).filter(r => r.count > 0),
           };
@@ -572,13 +606,13 @@ export function useChatData(currentUser: CurrentUser | null) {
               ),
             };
           }
-          return { ...m, reactions: [...reactions, { emoji, count: 1, reacted_by_me: true, user_ids: [employeeId] }] };
+          return { ...m, reactions: [...reactions, { emoji, count: 1, reacted_by_me: true, user_ids: [localId] }] };
         }
       });
 
     setMessages(updateReactions);
     setThreadMessages(updateReactions);
-  }, [employeeId]);
+  }, [localId]);
 
   // ── Create channel ────────────────────────────────────────────────────────
 
@@ -588,13 +622,13 @@ export function useChatData(currentUser: CurrentUser | null) {
     isPrivate: boolean,
     memberEmployeeIds: string[] = []
   ) => {
-    if (!employeeId) return null;
+    if (!localId) return null;
     const { data: ch, error } = await supabase.from('chat_channels').insert([{
       name: name.toLowerCase().replace(/\s+/g, '-'),
       description: description || null,
       type: 'channel',
       is_private: isPrivate,
-      created_by: employeeId,
+      created_by: localId,
       last_message_at: null,
     }]).select().single();
 
@@ -603,73 +637,74 @@ export function useChatData(currentUser: CurrentUser | null) {
       return null;
     }
 
-    // Add creator as admin
+    // Add creator as admin, additional members as member
     void supabase.from('chat_channel_members').insert([
-      { channel_id: ch.id, employee_id: employeeId, role: 'admin' },
-      ...memberEmployeeIds.filter(id => id !== employeeId).map(id => ({
-        channel_id: ch.id, employee_id: id, role: 'member'
+      { channel_id: ch.id, employee_id: localId, user_id: localId, role: 'admin' },
+      ...memberEmployeeIds.filter(id => id !== localId).map(id => ({
+        channel_id: ch.id, employee_id: id, user_id: id, role: 'member'
       })),
     ]);
 
     toast.success(t('collaborationHub.channelCreated'));
     await loadChannels();
     return ch as ChatChannel;
-  }, [employeeId, loadChannels]);
+  }, [localId, loadChannels]);
 
   // ── Find or create DM ─────────────────────────────────────────────────────
 
-  const findOrCreateDM = useCallback(async (otherEmployeeId: string): Promise<ChatChannel | null> => {
-    if (!employeeId || otherEmployeeId === employeeId) return null;
+  const findOrCreateDM = useCallback(async (otherUserId: string): Promise<ChatChannel | null> => {
+    if (!localId || otherUserId === localId) return null;
 
-    // Check if DM already exists
-    const { data: myMemberships } = await supabase
-      .from('chat_channel_members')
-      .select('channel_id')
-      .eq('employee_id', employeeId);
+    // Check if DM already exists by looking for channel names with both IDs
+    const possibleNames = [
+      `dm-${localId}-${otherUserId}`,
+      `dm-${otherUserId}-${localId}`,
+    ];
+    const { data: existingChannels } = await supabase
+      .from('chat_channels')
+      .select('*')
+      .eq('type', 'dm')
+      .in('name', possibleNames);
 
-    const myChannelIds = (myMemberships ?? []).map((m: { channel_id: string }) => m.channel_id);
-
-    if (myChannelIds.length > 0) {
-      const { data: dmChannels } = await supabase
-        .from('chat_channels')
-        .select('id, type')
-        .eq('type', 'dm')
-        .in('id', myChannelIds);
-
-      for (const ch of dmChannels ?? []) {
-        const { data: members } = await supabase
-          .from('chat_channel_members')
-          .select('employee_id')
-          .eq('channel_id', ch.id);
-        const memberIds = (members ?? []).map((m: { employee_id: string }) => m.employee_id);
-        if (memberIds.includes(otherEmployeeId) && memberIds.length === 2) {
-          // Found existing DM
-          const existing = channels.find(c => c.id === ch.id);
-          if (existing) return existing;
-          await loadChannels();
-          return channels.find(c => c.id === ch.id) ?? null;
-        }
-      }
+    if (existingChannels && existingChannels.length > 0) {
+      const existing = channels.find(c => c.id === existingChannels[0].id);
+      if (existing) return existing;
+      return {
+        ...existingChannels[0],
+        type: 'dm',
+        member_employee_ids: [localId, otherUserId],
+      } as ChatChannel;
     }
 
-    // Create new DM
+    // Create new DM channel
     const { data: ch, error } = await supabase.from('chat_channels').insert([{
-      name: `dm-${employeeId}-${otherEmployeeId}`,
+      name: `dm-${localId}-${otherUserId}`,
       type: 'dm',
       is_private: true,
-      created_by: employeeId,
+      created_by: localId,
     }]).select().single();
 
-    if (error || !ch) return null;
+    if (error || !ch) {
+      console.error('[findOrCreateDM] channel create error:', error);
+      return null;
+    }
 
-    void supabase.from('chat_channel_members').insert([
-      { channel_id: ch.id, employee_id: employeeId, role: 'member' },
-      { channel_id: ch.id, employee_id: otherEmployeeId, role: 'member' },
+    // Insert both members — use user_id column (post-migration 09, no FK constraint)
+    const { error: memErr } = await supabase.from('chat_channel_members').insert([
+      { channel_id: ch.id, employee_id: localId, user_id: localId, role: 'member' },
+      { channel_id: ch.id, employee_id: otherUserId, user_id: otherUserId, role: 'member' },
     ]);
+    if (memErr) console.error('[findOrCreateDM] members insert error:', memErr);
 
-    await loadChannels();
-    return ch as ChatChannel;
-  }, [employeeId, channels, loadChannels]);
+    // Refresh sidebar in background
+    void loadChannels();
+
+    return {
+      ...ch,
+      type: 'dm',
+      member_employee_ids: [localId, otherUserId],
+    } as ChatChannel;
+  }, [localId, channels, loadChannels]);
 
   // ── Upload file ───────────────────────────────────────────────────────────
 
@@ -725,10 +760,11 @@ export function useChatData(currentUser: CurrentUser | null) {
     if (channelId) q = q.eq('channel_id', channelId);
     const { data } = await q.limit(30);
     if (!data) return [];
-    return enrichMessages(data, employeeId);
-  }, [employeeId]);
+    return enrichMessages(data, localId);
+  }, [localId]);
 
   return {
+    localId,
     channels,
     selectedChannel,
     messages,

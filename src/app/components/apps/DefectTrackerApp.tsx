@@ -24,6 +24,7 @@ import {
 import { t } from "../../../i18n/index";
 import { useUser } from "../../context/UserContext";
 import EmployeeSearchDropdown from "../ui/EmployeeSearchDropdown";
+import { useSectionPermission } from "../SectionGuard";
 
 // ── Utility functions ─────────────────────────────────────────────────────────
 
@@ -194,18 +195,20 @@ interface SideNavProps {
   onNavigate: (s: Screen, extra?: any) => void;
   mobileOpen: boolean;
   onMobileClose: () => void;
+  permissions: Record<string, boolean>;
 }
 
-function SideNav({ screen, onNavigate, mobileOpen, onMobileClose }: SideNavProps) {
+function SideNav({ screen, onNavigate, mobileOpen, onMobileClose, permissions }: SideNavProps) {
   const navigate = useNavigate();
 
-  const items: { key: Screen; label: string; icon: React.ReactNode }[] = [
+  const allItems: { key: Screen; label: string; icon: React.ReactNode; permKey?: string }[] = [
     { key: "dashboard", label: t("defectTracker.dashboard"), icon: <LayoutDashboard className="h-4 w-4" /> },
-    { key: "all-defects", label: t("defectTracker.allDefects"), icon: <List className="h-4 w-4" /> },
-    { key: "sla-tracker", label: t("defectTracker.slaTracker"), icon: <Clock className="h-4 w-4" /> },
+    { key: "all-defects", label: t("defectTracker.allDefects"), icon: <List className="h-4 w-4" />, permKey: "secViewDefects" },
+    { key: "sla-tracker", label: t("defectTracker.slaTracker"), icon: <Clock className="h-4 w-4" />, permKey: "secManageSla" },
     { key: "by-project", label: t("defectTracker.byProject"), icon: <Folder className="h-4 w-4" /> },
-    { key: "analytics", label: t("defectTracker.analytics"), icon: <BarChart3 className="h-4 w-4" /> },
+    { key: "analytics", label: t("defectTracker.analytics"), icon: <BarChart3 className="h-4 w-4" />, permKey: "secAnalytics" },
   ];
+  const items = allItems.filter((item) => !item.permKey || permissions[item.permKey]);
 
   const navContent = (
     <>
@@ -875,9 +878,15 @@ function LogDefectModal({
 function AllDefectsScreen({
   initialFilters,
   onNavigateDetail,
+  canLog = true,
+  canDelete = true,
+  canExport = true,
 }: {
   initialFilters?: Partial<DefectFilters & { myDefects?: boolean }>;
   onNavigateDetail: (id: string) => void;
+  canLog?: boolean;
+  canDelete?: boolean;
+  canExport?: boolean;
 }) {
   const { defects, loading, loadDefects, createDefect, deleteDefect, masterData, loadMasterData } = useDefectTrackerData();
   const { currentUser: user } = useUser();
@@ -1113,13 +1122,15 @@ function AllDefectsScreen({
             >
               <Eye className="h-3.5 w-3.5" />
             </button>
-            <button
-              onClick={(e) => handleDelete(d.id, e)}
-              className="p-1 text-gray-400 hover:text-red-600 rounded"
-              title="Delete"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            {canDelete && (
+              <button
+                onClick={(e) => handleDelete(d.id, e)}
+                className="p-1 text-gray-400 hover:text-red-600 rounded"
+                title="Delete"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         </td>
       </tr>
@@ -1131,13 +1142,15 @@ function AllDefectsScreen({
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-gray-900">{t("defectTracker.allDefects")}</h1>
-        <button
-          onClick={() => setShowLogModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-colors"
-        >
-          <Plus className="h-4 w-4" />
-          {t("defectTracker.logDefect")}
-        </button>
+        {canLog && (
+          <button
+            onClick={() => setShowLogModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700 transition-colors"
+          >
+            <Plus className="h-4 w-4" />
+            {t("defectTracker.logDefect")}
+          </button>
+        )}
       </div>
 
       {/* Filter Bar */}
@@ -1364,9 +1377,11 @@ function AllDefectsScreen({
             <button onClick={() => setView("kanban")} className={`px-3 py-1.5 text-xs font-medium ${view === "kanban" ? "bg-red-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>Kanban</button>
             <button onClick={() => setView("timeline")} className={`px-3 py-1.5 text-xs font-medium ${view === "timeline" ? "bg-red-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>Timeline</button>
           </div>
-          <button onClick={exportCSV} className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">
-            <Download className="h-3.5 w-3.5" /> Export
-          </button>
+          {canExport && (
+            <button onClick={exportCSV} className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">
+              <Download className="h-3.5 w-3.5" /> Export
+            </button>
+          )}
         </div>
       </div>
 
@@ -1376,7 +1391,7 @@ function AllDefectsScreen({
           <span className="text-sm font-medium text-blue-800">{selectedIds.size} selected</span>
           <button className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700">Reassign</button>
           <button className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700">Change Severity</button>
-          <button className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700" onClick={exportCSV}>Export</button>
+          {canExport && <button className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700" onClick={exportCSV}>Export</button>}
           <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-blue-500 hover:text-blue-700"><X className="h-4 w-4" /></button>
         </div>
       )}
@@ -1584,9 +1599,11 @@ function AddLinkModal({ defectId, onClose, onAdd }: { defectId: string; onClose:
 function DefectDetailScreen({
   defectId,
   onBack,
+  canUpdate = true,
 }: {
   defectId: string;
   onBack: () => void;
+  canUpdate?: boolean;
 }) {
   const { selectedDefect, loading, loadDefectDetail, updateDefect, addComment, addLink, masterData, loadMasterData } = useDefectTrackerData();
   const { currentUser: user } = useUser();
@@ -2508,7 +2525,7 @@ function DefectDetailScreen({
 
 // ── SCREEN 4: SLA Tracker ─────────────────────────────────────────────────────
 
-function SLATrackerScreen({ onNavigateDetail }: { onNavigateDetail: (id: string) => void }) {
+function SLATrackerScreen({ onNavigateDetail, canEscalate = true, canExport = true }: { onNavigateDetail: (id: string) => void; canEscalate?: boolean; canExport?: boolean }) {
   const { slaData, loading, loadSLAData } = useDefectTrackerData();
   const [slaDateFrom, setSlaDateFrom] = useState("");
   const [slaDateTo, setSlaDateTo] = useState("");
@@ -2562,9 +2579,11 @@ function SLATrackerScreen({ onNavigateDetail }: { onNavigateDetail: (id: string)
             className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none w-28"
           />
           <button onClick={() => loadSLAData()} className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700">Apply</button>
-          <button onClick={exportSLACSV} className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">
-            <Download className="h-3.5 w-3.5" /> Export CSV
-          </button>
+          {canExport && (
+            <button onClick={exportSLACSV} className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">
+              <Download className="h-3.5 w-3.5" /> Export CSV
+            </button>
+          )}
         </div>
       </div>
 
@@ -2657,12 +2676,14 @@ function SLATrackerScreen({ onNavigateDetail }: { onNavigateDetail: (id: string)
                   <td className="py-2 pr-3 font-semibold text-red-800">{formatRemaining(d.slaFixRemainingMins)}</td>
                   <td className="py-2 flex gap-2">
                     <button onClick={() => onNavigateDetail(d.id)} className="text-xs text-red-700 underline hover:text-red-900">View</button>
-                    <button
-                      onClick={() => toast.success(`Escalation triggered for ${d.defectId}`)}
-                      className="text-xs bg-red-600 text-white px-2 py-0.5 rounded hover:bg-red-700"
-                    >
-                      Escalate
-                    </button>
+                    {canEscalate && (
+                      <button
+                        onClick={() => toast.success(`Escalation triggered for ${d.defectId}`)}
+                        className="text-xs bg-red-600 text-white px-2 py-0.5 rounded hover:bg-red-700"
+                      >
+                        Escalate
+                      </button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -2869,7 +2890,7 @@ function ByProjectScreen({ onNavigate }: { onNavigate: (s: Screen, extra?: any) 
 
 // ── SCREEN 6: Analytics ───────────────────────────────────────────────────────
 
-function AnalyticsScreen() {
+function AnalyticsScreen({ canExport = true }: { canExport?: boolean }) {
   const { analyticsData, loading, loadAnalytics } = useDefectTrackerData();
   const [projectFilter, setProjectFilter] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -2921,12 +2942,14 @@ function AnalyticsScreen() {
           <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none" />
           <input value={sprintFilter} onChange={(e) => setSprintFilter(e.target.value)} placeholder="Sprint..." className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none w-28" />
           <button onClick={applyFilters} className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-sm font-semibold hover:bg-red-700">Apply</button>
-          <button
-            onClick={exportAnalyticsPDF}
-            className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
-          >
-            <Download className="h-3.5 w-3.5" /> {t("defect.analytics.exportPDF")}
-          </button>
+          {canExport && (
+            <button
+              onClick={exportAnalyticsPDF}
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+            >
+              <Download className="h-3.5 w-3.5" /> {t("defect.analytics.exportPDF")}
+            </button>
+          )}
         </div>
       </div>
 
@@ -3369,6 +3392,15 @@ function SettingsScreen() {
 // ── Main Export ───────────────────────────────────────────────────────────────
 
 export function DefectTrackerApp({ accessToken, onLogout }: Props) {
+  const secViewDefects = useSectionPermission("defect-tracker", "view_defects");
+  const secLogDefect = useSectionPermission("defect-tracker", "log_defect");
+  const secUpdateDefects = useSectionPermission("defect-tracker", "update_defects");
+  const secDeleteDefects = useSectionPermission("defect-tracker", "delete_defects");
+  const secManageSla = useSectionPermission("defect-tracker", "manage_sla");
+  const secEscalate = useSectionPermission("defect-tracker", "escalate");
+  const secAnalytics = useSectionPermission("defect-tracker", "analytics");
+  const secExport = useSectionPermission("defect-tracker", "export");
+
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [screenExtra, setScreenExtra] = useState<any>(null);
   const [detailDefectId, setDetailDefectId] = useState<string | null>(null);
@@ -3392,6 +3424,7 @@ export function DefectTrackerApp({ accessToken, onLogout }: Props) {
         onNavigate={handleNavigate}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
+        permissions={{ secViewDefects, secManageSla, secAnalytics }}
       />
 
       {/* Mobile top bar */}
@@ -3417,22 +3450,30 @@ export function DefectTrackerApp({ accessToken, onLogout }: Props) {
           <AllDefectsScreen
             initialFilters={screenExtra}
             onNavigateDetail={handleNavigateDetail}
+            canLog={secLogDefect}
+            canDelete={secDeleteDefects}
+            canExport={secExport}
           />
         )}
         {screen === "defect-detail" && detailDefectId && (
           <DefectDetailScreen
             defectId={detailDefectId}
             onBack={() => setScreen("all-defects")}
+            canUpdate={secUpdateDefects}
           />
         )}
         {screen === "sla-tracker" && (
-          <SLATrackerScreen onNavigateDetail={handleNavigateDetail} />
+          <SLATrackerScreen
+            onNavigateDetail={handleNavigateDetail}
+            canEscalate={secEscalate}
+            canExport={secExport}
+          />
         )}
         {screen === "by-project" && (
           <ByProjectScreen onNavigate={handleNavigate} />
         )}
         {screen === "analytics" && (
-          <AnalyticsScreen />
+          <AnalyticsScreen canExport={secExport} />
         )}
         {screen === "settings" && (
           <SettingsScreen />

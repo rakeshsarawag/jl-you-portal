@@ -17,7 +17,8 @@ import {
   Moon,
 } from 'lucide-react';
 import { useNavigate } from 'react-router';
-import { supabase } from '../utils/constants';
+import { supabase, API_BASE, apiHeaders, safeJson } from '../utils/constants';
+import { Megaphone } from 'lucide-react';
 import { useUser } from '../context/UserContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { t } from '../../i18n';
@@ -368,6 +369,7 @@ export function NotificationBell() {
   });
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
+  const [announcements, setAnnouncements] = useState<{ id: string; title: string; body?: string; content?: string; created_at?: string; published_at?: string }[]>([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const tabBarRef = useRef<HTMLDivElement>(null);
@@ -412,6 +414,19 @@ export function NotificationBell() {
   useEffect(() => {
     fetchNotifications();
   }, [fetchNotifications]);
+
+  // ── Fetch org announcements ────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!open) return;
+    fetch(`${API_BASE}/communications/announcements`, { headers: apiHeaders() })
+      .then(r => safeJson(r))
+      .then(data => {
+        const list = Array.isArray(data) ? data : (data?.data ?? data?.announcements ?? []);
+        setAnnouncements(list.slice(0, 5));
+      })
+      .catch(() => {});
+  }, [open]);
 
   // ── Load quiet hours settings ───────────────────────────────────────────────
 
@@ -737,6 +752,38 @@ export function NotificationBell() {
           )}
 
           {/* Notification list */}
+          {/* ── Org Announcements section ──────────────────────────────── */}
+          {announcements.length > 0 && (selectedTab === 'all' || selectedTab === 'communications') && (
+            <div className="border-b border-gray-100 flex-shrink-0">
+              <div className="px-4 py-2 flex items-center gap-2 bg-amber-50">
+                <Megaphone size={13} className="text-amber-600 flex-shrink-0" />
+                <span className="text-xs font-semibold text-amber-700 uppercase tracking-wide">Org Announcements</span>
+              </div>
+              {announcements.map(a => {
+                const dateStr = a.published_at ?? a.created_at;
+                const formatted = dateStr ? new Date(dateStr).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
+                const body = a.body ?? a.content ?? '';
+                return (
+                  <div
+                    key={a.id}
+                    className="px-4 py-2.5 border-b border-gray-50 last:border-0 cursor-pointer hover:bg-amber-50/50 transition-colors"
+                    onClick={() => { navigate('/communications'); setOpen(false); }}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="text-sm font-medium text-gray-800 leading-snug">{a.title}</p>
+                      {formatted && <span className="text-[10px] text-gray-400 whitespace-nowrap flex-shrink-0 mt-0.5">{formatted}</span>}
+                    </div>
+                    {body && (
+                      <p className="text-xs text-gray-500 mt-0.5 leading-relaxed line-clamp-2">
+                        {body.length > 90 ? body.slice(0, 90).trimEnd() + '…' : body}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div className="overflow-y-auto flex-1 max-h-[350px]" role="list" aria-label="Notifications">
             {loading ? (
               <>

@@ -377,15 +377,6 @@ export function Launchpad({ accessToken, onLogout }: LaunchpadProps) {
           {renderPersonaWidgets()}
         </motion.div>
 
-        {/* ── Org Announcements ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, delay: 0.08 }}
-        >
-          <OrgAnnouncementsWidget navigate={navigate} />
-        </motion.div>
-
         {/* ── Celebrations ── */}
         <motion.div
           initial={{ opacity: 0, y: 12 }}
@@ -722,18 +713,18 @@ function WorldClockTile() {
   }, []);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-4">
-      <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-violet-500 flex-shrink-0">
-        <Globe size={18} className="text-white" />
+    <div className="bg-card border border-border rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 col-span-2 sm:col-span-1">
+      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center bg-violet-500 flex-shrink-0">
+        <Globe size={16} className="text-white" />
       </div>
-      <div className="flex flex-1 items-center justify-around">
+      <div className="flex flex-1 items-center justify-between sm:justify-around w-full flex-wrap gap-2 sm:gap-0">
         {WORLD_CLOCKS.map(({ label, tz, flag }) => {
           const timeStr = now.toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
           return (
-            <div key={tz} className="flex flex-col items-center gap-0.5">
-              <span className="text-base leading-none">{flag}</span>
-              <span className="text-[10px] text-muted-foreground font-medium">{label}</span>
-              <span className="text-xs font-bold text-foreground font-mono tabular-nums">{timeStr}</span>
+            <div key={tz} className="flex flex-col items-center gap-0.5 min-w-[3.5rem]">
+              <span className="text-sm sm:text-base leading-none">{flag}</span>
+              <span className="text-[9px] sm:text-[10px] text-muted-foreground font-medium">{label}</span>
+              <span className="text-[10px] sm:text-xs font-bold text-foreground font-mono tabular-nums">{timeStr}</span>
             </div>
           );
         })}
@@ -759,27 +750,9 @@ function AdminWidgets({ dash, navigate, userId }: { dash: ReturnType<typeof useE
         <StatTile label="Active IT Tickets" value={stats.it_open_tickets ?? '—'} icon={Laptop} color="bg-cyan-500" loading={statsLoading} />
         <WorldClockTile />
       </div>
+      {/* WorldClockTile spans full row on mobile via col-span-2, handled inside the tile */}
 
       <WorkflowActivityWidget userId={userId} />
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'User Management', path: '/user-management', icon: Shield },
-          { label: 'Permissions', path: '/permissions', icon: Settings },
-          { label: 'Master Data', path: '/master-data', icon: Database },
-          { label: 'Analytics', path: '/executive-dashboard', icon: BarChart3 },
-        ].map(item => (
-          <button
-            key={item.path}
-            onClick={() => navigate(item.path)}
-            className="bg-card border border-border rounded-xl p-4 flex items-center gap-3 hover:border-primary/40 hover:shadow-sm transition-all text-left"
-          >
-            <item.icon size={18} className="text-muted-foreground" />
-            <span className="text-sm font-medium text-foreground">{item.label}</span>
-            <ChevronRight size={14} className="text-muted-foreground ml-auto" />
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

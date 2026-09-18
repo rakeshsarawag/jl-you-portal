@@ -18,6 +18,7 @@ import {
 import { useOKRData, OKR, KeyResult } from '../../hooks/useOKRData';
 import { useAuditLogger } from '../../../hooks/useAuditLogger';
 import { useUser } from '../../context/UserContext';
+import { useSectionPermission } from "../SectionGuard";
 import { OKR_STATUSES, OKR_TYPES, OKR_QUARTERS, KR_UNITS } from '../../../constants/apps/okr';
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { useDepartmentOptions } from '../../hooks/useSharedData';
@@ -2154,6 +2155,7 @@ function OKRFormModal({
   isManager,
   selectedCycleId,
   allOkrs = [],
+  canAlign = true,
 }: {
   initial?: Partial<OKR>;
   ownerDefault: string;
@@ -2163,6 +2165,7 @@ function OKRFormModal({
   isManager?: boolean;
   selectedCycleId?: string;
   allOkrs?: OKR[];
+  canAlign?: boolean;
 }) {
   const { options: departments = [] } = useDepartmentOptions();
   const [form, setForm] = useState<OKRFormData>({
@@ -2387,7 +2390,7 @@ function OKRFormModal({
                 </select>
               </div>
             </div>
-            <div>
+            {canAlign && <div>
               <label className="block text-sm font-medium text-foreground mb-1">{t('okr.parentOKRId')}</label>
               <div className="relative">
                 <input
@@ -2431,7 +2434,7 @@ function OKRFormModal({
                   </div>
                 )}
               </div>
-            </div>
+            </div>}
             <div className="flex justify-end gap-3 pt-2">
               <button type="button" onClick={handleClose} className="px-4 py-2 text-sm text-muted-foreground hover:bg-muted rounded-lg">
                 {t('common.cancel')}
@@ -3147,6 +3150,10 @@ export function OKRManagementEnhanced({
   onLogout: () => void;
 }) {
   const { currentUser } = useUser();
+  const secCreate = useSectionPermission("okr", "create");
+  const secUpdateProgress = useSectionPermission("okr", "update_progress");
+  const secAlign = useSectionPermission("okr", "align");
+  const secReports = useSectionPermission("okr", "reports");
   const { log } = useAuditLogger();
   const {
     okrs, stats, loading, error,
@@ -3563,13 +3570,15 @@ export function OKRManagementEnhanced({
               </button>
             )}
             <ReportDefectButton appName="OKR Management" />
-            <button
-              onClick={() => { setEditingOKR(null); setShowOKRForm(true); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              <Plus size={14} />
-              <span className="hidden sm:inline">New OKR</span>
-            </button>
+            {secCreate && (
+              <button
+                onClick={() => { setEditingOKR(null); setShowOKRForm(true); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                <Plus size={14} />
+                <span className="hidden sm:inline">New OKR</span>
+              </button>
+            )}
           </div>
         </div>
         {/* Cycle status badge */}
@@ -3597,7 +3606,7 @@ export function OKRManagementEnhanced({
             { key: 'list', icon: <Target size={14} />, label: 'OKRs' },
             { key: 'cycles', icon: <Calendar size={14} />, label: 'Cycles' },
             { key: 'history', icon: <History size={14} />, label: 'History' },
-            { key: 'analytics', icon: <TrendingUp size={14} />, label: t('okr.analytics.tab') },
+            ...(secReports ? [{ key: 'analytics', icon: <TrendingUp size={14} />, label: t('okr.analytics.tab') }] : []),
             { key: 'timeline', icon: <Columns size={14} />, label: t('okr.timeline.tab') },
             ...(isAdmin ? [{ key: 'eoq', icon: <Award size={14} />, label: t('okr.eoq.tab') }] : []),
           ].map(({ key, icon, label }) => (
@@ -3827,7 +3836,7 @@ export function OKRManagementEnhanced({
                           setShowOKRForm(true);
                         }
                       }}
-                      onCheckIn={() => setCheckInOKR(okr)}
+                      onCheckIn={secUpdateProgress ? () => setCheckInOKR(okr) : () => {}}
                       onDelete={() => handleDeleteOKR(okr)}
                       onGrade={() => setGradingOKR(okr)}
                     />
@@ -3849,6 +3858,7 @@ export function OKRManagementEnhanced({
           isAdmin={isAdmin}
           isManager={isManager}
           allOkrs={okrs}
+          canAlign={secAlign}
         />
       )}
 
@@ -3882,7 +3892,7 @@ export function OKRManagementEnhanced({
           onUpdateKR={(krId, val, note) =>
             updateKRProgress(viewingOKR.id, krId, val, note, userId)
           }
-          onCheckIn={() => { setCheckInOKR(viewingOKR); setViewingOKR(null); }}
+          onCheckIn={secUpdateProgress ? () => { setCheckInOKR(viewingOKR); setViewingOKR(null); } : () => {}}
           onClose={() => setViewingOKR(null)}
         />
       )}

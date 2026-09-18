@@ -38,6 +38,7 @@ import {
 import { toast } from 'sonner';
 import { t } from '../../../i18n';
 import { useUser } from '../../context/UserContext';
+import { useSectionPermission } from "../SectionGuard";
 import { API_BASE, publicAnonKey } from '../../utils/constants';
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { useClientOptions } from '../../hooks/useSharedData';
@@ -82,6 +83,10 @@ interface Invoice {
 
 export function InvoiceGenerationDB({ accessToken, onLogout }: InvoiceGenerationDBProps) {
   const { currentUser } = useUser();
+  const secCreate = useSectionPermission("invoices", "create");
+  const secApprove = useSectionPermission("invoices", "approve");
+  const secSend = useSectionPermission("invoices", "send");
+  const secReports = useSectionPermission("invoices", "reports");
   const { options: clients = [] } = useClientOptions();
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(false);
@@ -647,7 +652,7 @@ ${invoice.notes ? `Notes: ${invoice.notes}` : ''}
               <RefreshCw className="h-4 w-4 mr-2" />
               Refresh
             </Button>
-            {canCreateInvoice && (
+            {canCreateInvoice && secCreate && (
               <Button onClick={() => setShowNewInvoice(!showNewInvoice)}>
                 <Plus className="h-4 w-4 mr-2" />
                 New Invoice
@@ -723,16 +728,18 @@ ${invoice.notes ? `Notes: ${invoice.notes}` : ''}
           >
             Invoices
           </button>
-          <button
-            onClick={() => setActiveMainTab('analytics')}
-            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeMainTab === 'analytics'
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Revenue Analytics
-          </button>
+          {secReports && (
+            <button
+              onClick={() => setActiveMainTab('analytics')}
+              className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                activeMainTab === 'analytics'
+                  ? 'border-blue-600 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Revenue Analytics
+            </button>
+          )}
         </div>
 
         {activeMainTab === 'analytics' && (
@@ -1127,18 +1134,22 @@ ${invoice.notes ? `Notes: ${invoice.notes}` : ''}
                           <td className="px-4 py-3 text-gray-500">{inv.createdBy}</td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2 justify-end">
-                              <button
-                                onClick={() => handleApproveInvoice(inv.id)}
-                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 transition-colors"
-                              >
-                                <CheckCircle className="h-3 w-3" /> Approve
-                              </button>
-                              <button
-                                onClick={() => setRejectingInvoiceId(rejectingInvoiceId === inv.id ? null : inv.id)}
-                                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 border border-red-200 text-xs font-medium hover:bg-red-100 transition-colors"
-                              >
-                                Reject
-                              </button>
+                              {secApprove && (
+                                <button
+                                  onClick={() => handleApproveInvoice(inv.id)}
+                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-medium hover:bg-green-700 transition-colors"
+                                >
+                                  <CheckCircle className="h-3 w-3" /> Approve
+                                </button>
+                              )}
+                              {secApprove && (
+                                <button
+                                  onClick={() => setRejectingInvoiceId(rejectingInvoiceId === inv.id ? null : inv.id)}
+                                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-50 text-red-600 border border-red-200 text-xs font-medium hover:bg-red-100 transition-colors"
+                                >
+                                  Reject
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1279,14 +1290,14 @@ ${invoice.notes ? `Notes: ${invoice.notes}` : ''}
                       Download
                     </Button>
 
-                    {invoice.status === 'draft' && canSendInvoice && (
+                    {invoice.status === 'draft' && canSendInvoice && secSend && (
                       <Button size="sm" onClick={() => handleSendInvoice(invoice.id)} className="gap-1">
                         <Send className="h-3 w-3" />
                         {isAdmin ? 'Send to Client' : 'Submit for Approval'}
                       </Button>
                     )}
 
-                    {invoice.status === 'approved' && canSendInvoice && (
+                    {invoice.status === 'approved' && canSendInvoice && secSend && (
                       <Button size="sm" onClick={() => handleSendInvoice(invoice.id)} className="gap-1 bg-indigo-600 hover:bg-indigo-700">
                         <Send className="h-3 w-3" />
                         Send to Client

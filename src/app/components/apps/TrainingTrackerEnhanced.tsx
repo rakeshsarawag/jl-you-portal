@@ -9,6 +9,7 @@ import {
   MapPin, Video, Globe, FileText,
 } from 'lucide-react';
 import { useUser } from '../../context/UserContext';
+import { useSectionPermission } from "../SectionGuard";
 import { useTrainingData, Course, Enrollment } from '../../hooks/useTrainingData';
 import { t } from '../../../i18n/index';
 import { supabase, API_BASE, publicAnonKey } from '../../utils/constants';
@@ -2766,6 +2767,10 @@ export function TrainingTrackerEnhanced({
   onLogout: () => void;
 }) {
   const { currentUser } = useUser();
+  const secEnroll = useSectionPermission("training", "enroll");
+  const secManageSessions = useSectionPermission("training", "manage_sessions");
+  const secIssueCertificates = useSectionPermission("training", "issue_certificates");
+  const secReports = useSectionPermission("training", "reports");
   const roles: string[] = currentUser?.roles ?? [];
   const userId = currentUser?.id ?? '';
   const employeeId = currentUser?.employeeId ?? userId;
@@ -2845,7 +2850,7 @@ export function TrainingTrackerEnhanced({
       try {
         const updated = await updateProgress(enrollmentId, progress);
         toast.success(t('common.success'));
-        if (progress === 100) {
+        if (progress === 100 && secIssueCertificates) {
           try {
             await issueCertificate(enrollmentId);
             toast.success(t('training.certificate') + ' issued!');
@@ -2964,9 +2969,9 @@ export function TrainingTrackerEnhanced({
     { key: 'learning-paths', label: t('training.learningPath.tab') },
     { key: 'certificates', label: t('training.certificates.tab') },
     { key: 'calendar', label: t('training.calendar.tab') },
-    ...(canSeeCompliance(roles) ? [{ key: 'gap-analysis' as TabKey, label: t('training.gapAnalysis.tab') }] : []),
+    ...(canSeeCompliance(roles) && secReports ? [{ key: 'gap-analysis' as TabKey, label: t('training.gapAnalysis.tab') }] : []),
     ...(canSeeTeam(roles) ? [{ key: 'team' as TabKey, label: t('training.teamOverview') }] : []),
-    ...(canSeeCompliance(roles) ? [{ key: 'compliance' as TabKey, label: t('training.compliance.tab') }] : []),
+    ...(canSeeCompliance(roles) && secReports ? [{ key: 'compliance' as TabKey, label: t('training.compliance.tab') }] : []),
     { key: 'training-needs', label: t('training.needs.tab') },
   ];
 
@@ -2990,7 +2995,7 @@ export function TrainingTrackerEnhanced({
               <Plus className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{t('training.needs.request')}</span>
             </button>
-            {canManageCourses(roles) && (
+            {canManageCourses(roles) && secManageSessions && (
               <button
                 onClick={() => { setEditCourse(null); setShowCourseForm(true); }}
                 className="flex items-center gap-1.5 bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-indigo-700"
@@ -3246,14 +3251,14 @@ export function TrainingTrackerEnhanced({
                             <CheckCircle2 className="h-3.5 w-3.5" />
                             {t('training.enroll')}
                           </span>
-                        ) : (
+                        ) : secEnroll ? (
                           <button
                             onClick={() => handleEnroll(course.id)}
                             className="text-xs font-medium bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors"
                           >
                             {t('training.enroll')}
                           </button>
-                        )}
+                        ) : null}
                         {canManageCourses(roles) && (
                           <div className="ml-auto flex gap-1 sm:opacity-0 group-hover:opacity-100">
                             <button
@@ -3347,13 +3352,15 @@ export function TrainingTrackerEnhanced({
                 </select>
                 <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
               </div>
-              <button
-                onClick={() => setShowEnrollTeam(true)}
-                className="ml-auto flex items-center gap-1.5 bg-indigo-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-indigo-700"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                {t('training.enrollTeam')}
-              </button>
+              {secEnroll && (
+                <button
+                  onClick={() => setShowEnrollTeam(true)}
+                  className="ml-auto flex items-center gap-1.5 bg-indigo-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-indigo-700"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  {t('training.enrollTeam')}
+                </button>
+              )}
             </div>
 
             <div className="overflow-x-auto rounded-xl border border-border bg-card">
