@@ -1,0 +1,1275 @@
+================================================================================
+HR SUITE — EMPLOYEE DASHBOARD
+Specification: Part 2a
+File: EmployeeDashboardEnhancedV2.tsx
+Tech Stack: React + Supabase + Tailwind CSS v4
+App Accent: #6366F1 (Indigo)
+Auth / RBAC: Permissions App
+Config / Lookups: Master Data App
+Push Notifications: Web Push API (VAPID)
+Date: 2026-09-04
+================================================================================
+
+
+SECTION 1 — FIX PLAN (Gap Resolution with API and DB Changes)
+================================================================================
+
+Current known gaps:
+  G1 — No admin encashment view
+  G2 — No shift roster
+  G3 — No payslip panel
+  G4 — Team Calendar is manager-only
+  G5 — No attendance regularization
+  G6 — No comp-off tracking
+  G7 — No WFH approval workflow (self-toggle instead of request/approve)
+
+--------------------------------------------------------------------------------
+G1 — HR Admin Encashment View
+--------------------------------------------------------------------------------
+Problem:
+  Approvals tab currently shows only direct-reports' encashment requests.
+  HR Admins need visibility into ALL employees' encashment requests.
+
+Fix:
+  Add an "Encashment" sub-tab inside the Approvals tab, visible only when the
+  logged-in user has role = HR_ADMIN or SUPER_ADMIN.
+
+  The sub-tab queries without a userId filter:
+    GET /employee-dashboard/leave-encashments
+      Query params: status (optional), department (optional), page, limit
+    For manager role:
+      GET /employee-dashboard/leave-encashments?managerId={userId}
+    For HR_ADMIN / SUPER_ADMIN:
+      GET /employee-dashboard/leave-encashments
+      (no userId or managerId filter — returns all)
+
+  Backend must enforce this via the Permissions App role check on the endpoint;
+  non-admin callers without a managerId param receive 403.
+
+No new DB tables required. Existing leave_encashments table is used.
+Add index on leave_encashments(status) if not present.
+
+--------------------------------------------------------------------------------
+G2 — Shift Schedule Tab
+--------------------------------------------------------------------------------
+New DB Table — employee_shifts:
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id     uuid NOT NULL REFERENCES employees(id)
+  shift_id        uuid NOT NULL REFERENCES shifts(id)
+  effective_from  date NOT NULL
+  effective_to    date                          -- NULL = open-ended (current)
+  created_by      uuid REFERENCES employees(id)
+  created_at      timestamptz DEFAULT now()
+  updated_at      timestamptz DEFAULT now()
+
+  Index: (employee_id, effective_from DESC)
+  RLS: employee can SELECT own rows; manager can SELECT team rows; HR can SELECT all.
+
+New DB Table — shifts (if not already in Master Data):
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  name        text NOT NULL          -- e.g. "General", "Morning", "Night"
+  start_time  time NOT NULL          -- e.g. 09:00
+  end_time    time NOT NULL          -- e.g. 18:00
+  type        text                   -- GENERAL | MORNING | EVENING | NIGHT | ROTATIONAL
+  color_hex   text                   -- for UI color-coding, e.g. #6366F1
+  is_active   boolean DEFAULT true
+  created_at  timestamptz DEFAULT now()
+
+New DB Table — shift_swap_requests:
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  requester_id    uuid NOT NULL REFERENCES employees(id)
+  swap_with_id    uuid NOT NULL REFERENCES employees(id)
+  requester_date  date NOT NULL
+  swap_date       date NOT NULL
+  reason          text NOT NULL
+  status          text DEFAULT 'Pending'   -- Pending | Approved | Rejected
+  manager_notified_at timestamptz
+  reviewed_by     uuid REFERENCES employees(id)
+  reviewed_at     timestamptz
+  created_at      timestamptz DEFAULT now()
+  updated_at      timestamptz DEFAULT now()
+
+New API Endpoints:
+  GET  /attendance/shifts/{userId}
+       Returns: array of { shift, effective_from, effective_to }
+       Scope: own record for employee; team for manager; all for HR.
+
+  GET  /attendance/shifts/{userId}/weekly?week={YYYY-WNN}
+       Returns: 7-element array, one per day, with shift assignment per day.
+
+  GET  /attendance/shifts/{userId}/monthly?month={YYYY-MM}
+       Returns: array of { date, shift } for the month.
+
+  POST /attendance/shift-swap-request
+       Body: { swap_with_id, requester_date, swap_date, reason }
+       Returns: created shift_swap_request record.
+
+  GET  /attendance/shift-swap-requests/{userId}
+       Returns: requests where requester_id = userId OR swap_with_id = userId.
+
+  PATCH /attendance/shift-swap-requests/{id}
+       Body: { status: "Approved" | "Rejected", comment? }
+       Restricted to: swap_with_id (peer approval) and manager (final sign-off).
+
+--------------------------------------------------------------------------------
+G3 — Payslip Tab
+--------------------------------------------------------------------------------
+New DB Table — payslips:
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id    uuid NOT NULL REFERENCES employees(id)
+  month          integer NOT NULL       -- 1–12
+  year           integer NOT NULL
+  gross          numeric(12,2) NOT NULL
+  deductions     numeric(12,2) NOT NULL
+  net            numeric(12,2) NOT NULL
+  pdf_url        text                   -- signed URL or storage path
+  earnings_json  jsonb                  -- { basic, hra, special, bonus, arrears }
+  deductions_json jsonb                 -- { pf, prof_tax, tds, lop_deduction }
+  created_at     timestamptz DEFAULT now()
+
+  Unique constraint: (employee_id, month, year)
+  RLS: employee can SELECT own rows only; Finance/HR role can SELECT all.
+  Note: payslip data is INSERT/UPDATE only by Finance app or payroll integration.
+        Employee Dashboard is read-only on this table.
+
+New API Endpoints:
+  GET /payslips/{userId}
+      Returns: list of available payslip month/year pairs (for dropdown).
+
+  GET /payslips/{userId}/{year}/{month}
+      Returns: full payslip record including earnings_json and deductions_json.
+
+  GET /payslips/{userId}/{year}/{month}/pdf
+      Returns: { pdf_url: "<signed URL>" } (URL valid for 15 minutes).
+      Backend generates a fresh signed URL from storage on each request.
+
+--------------------------------------------------------------------------------
+G4 — Team Calendar Permission Scoping
+--------------------------------------------------------------------------------
+Problem:
+  Team Calendar tab is hidden for non-manager roles.
+
+Fix:
+  Make Team Calendar tab visible to ALL authenticated employees.
+  Scope data server-side based on role:
+
+  Employee (role = EMPLOYEE):
+    GET /team-calendar?userId={id}&scope=self
+    Returns only the requesting employee's own approved leaves, WFH records,
+    and public holidays.
+
+  Manager (role = MANAGER or TEAM_LEAD):
+    GET /team-calendar?managerId={id}&scope=team
+    Returns all direct reports' leaves, WFH, and public holidays.
+
+  HR / Super Admin:
+    GET /team-calendar?scope=all&department={dept}  (optional dept filter)
+    Returns all employees' leaves, WFH, and public holidays.
+
+  Frontend: render "Filter by employee" dropdown only when role >= MANAGER.
+  Color coding:
+    Blue chip  = Approved Leave
+    Orange chip = WFH (approved)
+    Gray chip  = Public Holiday
+  Employee name on chip is shown only in manager / HR view.
+
+No schema changes required. Endpoint behavior changes only.
+
+--------------------------------------------------------------------------------
+G5 — Attendance Regularization
+--------------------------------------------------------------------------------
+New DB Table — attendance_corrections:
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id         uuid NOT NULL REFERENCES employees(id)
+  date                date NOT NULL
+  expected_checkin    time NOT NULL
+  expected_checkout   time NOT NULL
+  reason              text NOT NULL       -- min 20 chars enforced in backend
+  status              text DEFAULT 'Pending'  -- Pending | Approved | Rejected
+  reviewed_by         uuid REFERENCES employees(id)
+  reviewed_at         timestamptz
+  review_comment      text
+  created_at          timestamptz DEFAULT now()
+  updated_at          timestamptz DEFAULT now()
+
+  Index: (employee_id, date)
+  RLS: employee can SELECT/INSERT own rows; manager can SELECT team + PATCH status.
+
+New API Endpoints:
+  POST /attendance/correction-request
+       Body: { date, expected_checkin, expected_checkout, reason }
+       Validations (server-side):
+         - date <= today
+         - date >= first day of previous month
+         - pending corrections for employee < 3
+         - expected_checkin < expected_checkout
+         - reason length >= 20
+       Returns: created attendance_corrections record.
+
+  GET  /attendance/corrections/{userId}
+       Returns: all correction requests for userId.
+       Scope: employee sees own; manager sees team.
+
+  PATCH /attendance/corrections/{id}
+       Body: { status: "Approved" | "Rejected", review_comment? }
+       Restricted to direct manager of the employee.
+       On Approved: updates attendance record for that date with expected times.
+
+--------------------------------------------------------------------------------
+G6 — Comp-Off Tracking
+--------------------------------------------------------------------------------
+New DB Table — comp_off_requests:
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id  uuid NOT NULL REFERENCES employees(id)
+  worked_date  date NOT NULL
+  reason       text NOT NULL
+  is_holiday   boolean DEFAULT false
+  hours        numeric(4,2) NOT NULL      -- hours worked (e.g. 8.0)
+  status       text DEFAULT 'Pending'    -- Pending | Approved | Rejected
+  approved_by  uuid REFERENCES employees(id)
+  approved_at  timestamptz
+  expires_at   date                       -- worked_date + 90 days, set on approval
+  created_at   timestamptz DEFAULT now()
+  updated_at   timestamptz DEFAULT now()
+
+  Index: (employee_id, status)
+  RLS: employee can SELECT/INSERT own rows; manager can SELECT team + PATCH.
+
+New API Endpoints:
+  POST /leaves/comp-off-request
+       Body: { worked_date, reason, is_holiday, hours }
+       Validations:
+         - worked_date must be a Saturday, Sunday, or a public holiday
+         - worked_date >= today - 7 days (submission within 7 days)
+         - pending comp-off requests < 3
+       Returns: created comp_off_requests record.
+
+  GET  /leaves/comp-off-requests/{userId}
+       Returns: all comp-off requests for userId with status and expiry.
+
+  PATCH /leaves/comp-off-requests/{id}
+       Body: { status: "Approved" | "Rejected", comment? }
+       On Approved:
+         - Sets expires_at = worked_date + 90 days
+         - POSTs to leave_balances: increments Comp Off balance by (hours / 8) days
+         - Triggers push notification: compoff_approved
+
+Expiry Handling:
+  A scheduled function (cron, daily at midnight) checks comp_off_requests where
+  status = Approved and expires_at <= today and leave_balances.comp_off > 0,
+  then decrements the balance and marks the comp-off as expired.
+
+--------------------------------------------------------------------------------
+G7 — WFH Approval Workflow (Replace Self-Toggle)
+--------------------------------------------------------------------------------
+Remove:
+  - WFH self-service toggle button from Overview tab.
+
+New DB Table — wfh_requests:
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id  uuid NOT NULL REFERENCES employees(id)
+  date         date NOT NULL
+  reason       text NOT NULL
+  available_on_call boolean DEFAULT true
+  status       text DEFAULT 'Pending'    -- Pending | Approved | Rejected
+  approved_by  uuid REFERENCES employees(id)
+  approved_at  timestamptz
+  reject_reason text
+  created_at   timestamptz DEFAULT now()
+  updated_at   timestamptz DEFAULT now()
+
+  Unique constraint: (employee_id, date)
+  RLS: employee can SELECT/INSERT own rows; manager can SELECT team + PATCH.
+
+New API Endpoints:
+  POST /attendance/wfh-request
+       Body: { date, reason, available_on_call }
+       Validations:
+         - date >= today + WFH_POLICIES.advance_notice_hours / 24
+         - date is not a public holiday
+         - WFH days this week < WFH_POLICIES.max_wfh_days_per_week
+       Returns: created wfh_requests record.
+
+  GET  /attendance/wfh-requests/{userId}
+       Returns: all WFH requests for userId.
+
+  PATCH /attendance/wfh-requests/{id}
+       Body: { status: "Approved" | "Rejected", reject_reason? }
+       On Approved: creates an attendance record for that date with type = WFH.
+
+Master Data Config (WFH_POLICIES):
+  advance_notice_hours    integer  DEFAULT 24
+  max_wfh_days_per_week   integer  DEFAULT 2
+
+
+================================================================================
+SECTION 2 — FEATURE ENHANCEMENTS (Industry Standard)
+================================================================================
+
+--------------------------------------------------------------------------------
+2.1 Shift Schedule Tab
+--------------------------------------------------------------------------------
+Weekly View:
+  5-column grid (Mon-Fri). Each cell shows:
+    - Shift name (e.g. "General")
+    - Time range (e.g. "9:00 AM – 6:00 PM")
+    - Color-coded chip by shift type:
+        GENERAL     = Indigo  (#6366F1)
+        MORNING     = Amber   (#F59E0B)
+        EVENING     = Orange  (#F97316)
+        NIGHT       = Slate   (#64748B)
+        ROTATIONAL  = Teal    (#14B8A6)
+  Weekend columns shown as gray/dimmed with "Weekend" label.
+  If employee is on leave that day, show leave chip overlaid on shift cell.
+
+Monthly Roster View:
+  Calendar grid (1 cell per day).
+  Each day cell shows a colored shift chip (e.g. "GEN", "MOR") from the
+  employee_shifts assignment for that day.
+  Holidays shown as gray cells with holiday name tooltip.
+  Toggle between Weekly and Monthly view via pill toggle at top.
+
+Shift Swap Request:
+  [Request Shift Swap] button in Shift Schedule tab header.
+  Opens a modal / side panel:
+    Step 1 — Select Date: date picker (calendar showing own schedule).
+    Step 2 — Select Colleague: employee search/dropdown filtered to same dept/team.
+    Step 3 — Reason: textarea (required, min 10 chars).
+    Submit → POST /attendance/shift-swap-request.
+
+  On submission:
+    - Colleague receives push notification: shift_swap_requested (action_required).
+    - Colleague approves / rejects in Approvals tab > Shift Swap sub-tab.
+    - On colleague approval: manager receives notification for final sign-off.
+    - On manager approval: both employees' shift assignments are swapped in
+      employee_shifts for the respective dates.
+
+  Shift Swap History:
+    Table below the calendar:
+    Columns: Date | Swap With | Their Date | Status chip | Requested On | Actions (Cancel if Pending)
+
+--------------------------------------------------------------------------------
+2.2 Attendance Regularization
+--------------------------------------------------------------------------------
+Entry Point:
+  [Regularize Punch] button in Attendance tab header (secondary outlined style).
+
+Request Form (modal):
+  Date picker:
+    - Default: today
+    - Allowed range: first day of previous month to today (inclusive)
+    - Disables future dates
+  Expected Check-in: time input (HH:MM, 24h or AM/PM based on locale)
+  Expected Check-out: time input
+  Reason: textarea (required, min 20 chars, char counter shown)
+  [Submit Request] button (primary indigo)
+
+Form Validations (client-side mirroring server rules):
+  - date <= today
+  - date >= first of previous calendar month
+  - expected_checkin < expected_checkout
+  - reason.length >= 20
+  - count of pending corrections for user < 3 (checked via
+    GET /attendance/corrections/{userId}?status=Pending before submit)
+
+After Submit:
+  Toast: "Regularization request submitted. Your manager will review it."
+  Form resets.
+
+Pending Corrections Table (Attendance tab, below calendar heatmap):
+  Columns: Date | Expected In | Expected Out | Reason (truncated) | Status | Submitted On | Action
+  Status chips: Pending (yellow) | Approved (green) | Rejected (red)
+  Action: [Cancel] available only for Pending items.
+
+--------------------------------------------------------------------------------
+2.3 WFH Request Workflow
+--------------------------------------------------------------------------------
+Replace self-toggle WFH button (Overview tab) with:
+  - Informational chip: "WFH Today" (blue, read-only, shown if today is approved WFH)
+  - [Request WFH] link/button below clock-in widget
+
+WFH Request Form (modal):
+  Date picker (default: tomorrow; min: today or today+1 based on advance notice)
+  Reason: textarea (required)
+  Available on call: toggle (default ON) with label "I will be reachable on call/chat"
+  [Submit] button
+
+After Submit:
+  Toast: "WFH request submitted. Awaiting manager approval."
+  Manager receives push notification: wfh_requested (action_required).
+
+Approvals Tab — WFH Sub-tab:
+  Cards showing: Employee | Date | Reason | On-call status | [Approve] | [Reject]
+  [Bulk Approve All] button at top.
+  On Approve: creates attendance record for date with type=WFH; employee notified.
+  On Reject: reason field (required on reject); employee notified with reason.
+
+WFH History (Overview tab or My Leaves tab, "WFH Requests" section):
+  Table: Date | Reason | On-call | Status | Requested On | Action (Cancel if Pending)
+
+--------------------------------------------------------------------------------
+2.4 Comp-Off Tracking
+--------------------------------------------------------------------------------
+Entry Point:
+  [Submit Comp-Off] button on Overview tab Quick Actions row.
+
+Request Form (modal):
+  Date Worked: date picker
+    - Allowed: past 7 days only
+    - Client-side highlight of Saturdays, Sundays, and public holidays
+  Is it a holiday?: checkbox (pre-checked if selected date is a holiday)
+  Hours Worked: number input (1–24, step 0.5)
+  Description: textarea (required, min 10 chars)
+  Proof attachment: optional file upload (image or PDF, max 5MB)
+  [Submit] button
+
+Validation:
+  - worked_date must be a Saturday/Sunday or public holiday (server checks)
+  - worked_date >= today - 7
+  - pending comp-off requests < 3
+  - hours > 0
+
+After Approval:
+  leave_balances entry updated: type = Comp Off, balance += (hours / 8)
+  Expiry set: expires_at = worked_date + 90 days
+  Employee receives push notification: compoff_approved
+
+Comp-Off Balance card:
+  Shown on Overview tab leave balance row and My Leaves tab balance cards.
+  If comp-off balance > 0 and nearest expiry <= 14 days: show warning chip
+  "Expires in {N} days" in amber.
+
+--------------------------------------------------------------------------------
+2.5 Payslip Tab
+--------------------------------------------------------------------------------
+Access Control:
+  Visible to all employees (own payslips only).
+  Finance / HR Admin can view any employee's payslips via admin portal
+  (not Employee Dashboard).
+
+Month/Year Selector:
+  Dropdown showing last 12 calendar months (e.g. "August 2026", "July 2026", …).
+  Default: most recent month with a payslip record.
+
+Payslip Card (white card, rounded-12, shadow):
+  Header row: "{Month Name} {Year}" bold | "Salary credited on 28th {month}" gray
+  Summary cards row (3 cards):
+    Gross Salary    — green accent
+    Total Deductions — red accent
+    Net Pay          — indigo accent (#6366F1)
+
+Earnings Table:
+  Columns: Earning Component | Amount (INR)
+  Rows: Basic | HRA | Special Allowance | Bonus | Arrears
+  Total Earnings row (bold)
+
+Deductions Table:
+  Columns: Deduction Component | Amount (INR)
+  Rows: Provident Fund | Professional Tax | TDS (Income Tax) | LOP Deduction
+  Total Deductions row (bold)
+
+[Download PDF] button (outlined, indigo):
+  On click: calls GET /payslips/{userId}/{year}/{month}/pdf
+  Opens signed URL in new tab (PDF rendered by Finance/payroll system).
+  Shows spinner while fetching URL; error toast on failure.
+
+Informational note below:
+  "Payslip data is read-only. For corrections, contact Finance."
+
+--------------------------------------------------------------------------------
+2.6 Leave Analytics (Manager / HR, Overview Tab)
+--------------------------------------------------------------------------------
+Visible to: role = MANAGER, TEAM_LEAD, HR_ADMIN, SUPER_ADMIN only.
+Shown as a collapsible card on Overview tab below Quick Actions, above two-column section.
+
+Team Leave Utilization (grouped bar chart):
+  X-axis: employee names (or avatar + short name)
+  Y-axis: days taken
+  Bars grouped by leave type (Earned, Sick, Casual, Comp-Off) — stacked bars
+  Color per leave type (matches leave balance card colors)
+  Period selector: Current Month | Last 3 Months | Current Year
+  Data source: GET /team-calendar/leave-summary?managerId={id}&period={period}
+
+Monthly Trend Table:
+  Columns: Employee Name | Days Taken This Month | Earned | Sick | Casual | Comp-Off
+  Sorted by Days Taken descending
+  Pagination: show top 10, [View All] link opens full table in modal
+
+--------------------------------------------------------------------------------
+2.7 Birthday and Work Anniversary Notifications
+--------------------------------------------------------------------------------
+Data source: employees.date_of_birth, employees.joining_date
+
+Birthday Strip (Overview tab):
+  Condition: employees.date_of_birth day+month = today's day+month
+  Banner shown at very top of Overview tab content area (above Clock-in widget):
+    Background: soft indigo gradient (#EEF2FF to #E0E7FF)
+    Text: "Today is your birthday! Wishing you a wonderful day!"
+    Emoji: included (birthday cake) — user-facing UI only
+    Dismissible: close button (X), dismissed state stored in localStorage for the day
+
+Work Anniversary Strip (Overview tab):
+  Condition: employees.joining_date day+month = today's day+month
+  Banner (below birthday strip if both apply):
+    Background: soft amber gradient (#FFFBEB to #FEF3C7)
+    Text: "Happy Work Anniversary! {N} years with {company_name} — thank you for being here."
+    N = current year - year of joining_date
+    Dismissible
+
+
+================================================================================
+SECTION 3 — ENHANCED TAB SPECIFICATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1 Overview Tab
+--------------------------------------------------------------------------------
+Layout: single-column, full-width cards stacked vertically with 16px gap.
+
+[A] Birthday / Anniversary Banner (conditional, dismissible — described in 2.7)
+
+[B] Clock-in Widget (white card, border border-gray-200, rounded-xl, p-5, h-auto min-h-[100px]):
+  Layout: 3-column flex row (left | center | right), vertically centered.
+
+  Left column:
+    Line 1: "Good Morning, {firstName}!" — text-xl font-semibold text-gray-800
+    Line 2: "{Weekday}, {Month} {Day}, {Year}" — text-sm text-gray-500
+    Line 3: Shift chip — "{shift_name} · {start_time} – {end_time}"
+             chip style: bg-indigo-50 text-indigo-700 text-xs px-2 py-0.5 rounded-full
+
+  Center column (flex-1, text-center):
+    If NOT clocked in today:
+      [Clock In] button — bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg
+                          text-base font-medium, left icon: play circle
+    If clocked in but NOT clocked out:
+      [Clock Out] button — bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-lg
+                           text-base font-medium, left icon: stop circle
+    If both done (full day recorded):
+      "Attendance recorded — {checkin} to {checkout}" — green text with check icon
+
+  Right column (text-right):
+    If today is approved WFH: "WFH Today" chip — bg-blue-100 text-blue-700 text-xs
+    [Request WFH] — text-indigo-600 text-sm underline cursor-pointer
+    If today is approved Leave: "On Leave" chip — bg-orange-100 text-orange-700 text-xs
+
+[C] Stats Strip (5 mini white cards, flex row, gap-3):
+  Present | Absent | Late Arrivals | WFH Days | Leave Taken
+  Each card: rounded-lg border border-gray-100 p-3, number text-2xl font-bold text-gray-800,
+             label text-xs text-gray-500 below, "This Month" caption text-[10px] text-gray-400
+
+[D] Leave Balance Row (horizontal scroll, flex gap-3, overflow-x-auto, pb-2):
+  5 cards, each min-w-[160px], rounded-xl p-4 with left border (4px) color:
+    Earned Leave  — border-green-500   bg-green-50
+    Sick Leave    — border-orange-500  bg-orange-50
+    Casual Leave  — border-blue-500    bg-blue-50
+    Comp-Off      — border-purple-500  bg-purple-50
+    Floater       — border-teal-500    bg-teal-50
+  Each card:
+    Leave type name — text-sm font-medium text-gray-700
+    Days remaining — text-2xl font-bold (matching border color)
+    "of {total} days" — text-xs text-gray-500
+    If comp-off and expiring within 14 days: amber chip "Expires in {N}d"
+
+[E] Quick Actions Row (4 ghost button cards, flex row, gap-3, each flex-1):
+  [Apply Leave] [Request WFH] [Regularize Punch] [Submit Comp-Off]
+  Style: white card, border border-gray-200 rounded-xl p-4 cursor-pointer
+         hover:border-indigo-400 hover:bg-indigo-50 transition
+         Icon above (24px, indigo) | label below text-sm font-medium text-gray-700
+
+[F] Leave Analytics Card (manager/HR only, collapsible — see 2.6)
+
+[G] Two-column section (grid grid-cols-2 gap-4):
+
+  Left — "Upcoming" card (white, rounded-xl, p-4):
+    Header: "Upcoming" text-base font-semibold text-gray-800
+    List (3 items max):
+      Each item: icon | label bold | date/chip right-aligned
+      Holiday items:  beach umbrella icon | holiday name | date chip gray
+      Training items: book icon | course name | "Due {date}" amber chip
+    If no items: "Nothing upcoming in the next 14 days." gray text
+
+  Right — "Announcements" card (white, rounded-xl, p-4):
+    Header: "Announcements" text-base font-semibold | [View All →] link right
+    Data: GET /communications/announcements?limit=3&audience={dept_or_all}
+    3 rows, each:
+      Title — text-sm font-medium text-gray-800 (truncate to 1 line)
+      "{source} · {relative time}" — text-xs text-gray-400
+      Divider between rows
+    Click row: navigate to Communications Hub app
+
+--------------------------------------------------------------------------------
+3.2 Attendance Tab
+--------------------------------------------------------------------------------
+[A] Tab header row:
+  "Attendance" heading | Month/Year navigation (← {Month Year} →) | [Regularize Punch] button
+
+[B] Monthly Summary Strip (7 mini stat chips, flex row):
+  Total Working Days | Present | Absent | Late | WFH | LOP | Holidays
+
+[C] Calendar Heatmap (existing feature — keep as-is):
+  Color cells by attendance type. Legend below calendar.
+
+[D] Regularization Section (white card):
+  Header: "Attendance Regularization Requests"
+  [+ Regularize Punch] button (right-aligned) — opens modal (see 2.2)
+  Pending/history corrections table (see 2.2 for columns).
+
+[E] Attendance History Table (existing feature — keep):
+  Date | Day | Check-in | Check-out | Hours | Status | Remarks
+
+--------------------------------------------------------------------------------
+3.3 My Leaves Tab
+--------------------------------------------------------------------------------
+[A] Leave Balance Cards Row (same style as Overview [D], but height auto):
+  5 cards, horizontal scroll.
+
+[B] Apply Leave Form (white card, collapsible — default expanded):
+  Section title: "Apply for Leave" | [Collapse ∧] toggle
+  Form fields:
+    Leave Type:  select dropdown (options from LEAVE_TYPES config)
+    Start Date:  date picker (min: today, highlights holidays in red)
+    End Date:    date picker (min: start date)
+    Half Day:    toggle (enabled only when start date = end date)
+    Reason:      textarea (required, min 10 chars)
+    Attachment:  file input optional (doctor certificate etc.)
+  Balance preview line (below date selection, dynamic):
+    "You have {N} days remaining after this request."
+    If balance insufficient: amber warning "Insufficient balance. This will be marked LOP."
+    If dates include a holiday: info note "Note: {holiday name} on {date} is excluded."
+  [Submit Leave Application] button (primary indigo, full-width)
+
+[C] Leave History Table:
+  Columns: Type chip | From | To | Days | Reason | Status badge | Applied On | Action
+  Status badges:
+    Pending    — yellow bg-yellow-100 text-yellow-800
+    Approved   — green  bg-green-100  text-green-800
+    Rejected   — red    bg-red-100    text-red-800
+    Cancelled  — gray   bg-gray-100   text-gray-600
+    Withdrawn  — gray
+  Action column:
+    Pending: [Withdraw] button (soft red outlined)
+    Approved (future leave): [Cancel] button (soft red outlined)
+    Others: "-"
+  Pagination: 10 rows per page.
+
+[D] Leave Encashment Section (shown only if earned_leave_balance >= LEAVE_POLICIES.min_encashable_balance):
+  Header: "Leave Encashment" | [Encash Leave] button
+  Encashment form (modal on button click):
+    Days to encash: number input (min: 1, max: min(available, 10))
+    Reason: textarea (required)
+    Preview: "Encashing {N} days — Remaining balance will be {R} days"
+    [Submit Request] button
+  Encashment History Table:
+    Days Requested | Status | Applied On | Approved By | Remarks
+
+--------------------------------------------------------------------------------
+3.4 Approvals Tab (Manager / HR / Team Lead)
+--------------------------------------------------------------------------------
+Access: visible only to roles MANAGER, TEAM_LEAD, HR_ADMIN, SUPER_ADMIN.
+
+[A] Sub-tabs row (pill tab style, with pending count badge):
+  Leave ({N}) | WFH ({N}) | Regularization ({N}) | Comp-Off ({N}) | Encashment ({N})
+  Encashment sub-tab visible only to HR_ADMIN / SUPER_ADMIN.
+
+[B] Filter row (below sub-tabs):
+  Department dropdown (for HR with multiple teams) | Status filter (Pending/All)
+
+[C] [Bulk Approve All] button (top right of each sub-tab, indigo outlined):
+  Confirms in a dialog before bulk-approving all pending items in current sub-tab.
+
+[D] Approval Card (per pending item, white card, rounded-xl, p-4, border-l-4 border-indigo-400):
+  Left: employee avatar (40px circle with initials fallback) | employee name bold | team/dept text-xs gray
+  Middle: request summary — type chip | date range | days count | reason (truncated to 2 lines)
+  Right:
+    [Approve] button — bg-green-500 text-white px-4 py-2 rounded-lg
+    [Reject]  button — bg-red-100 text-red-700 border border-red-300 px-4 py-2 rounded-lg
+    Comment input — text input (optional for approve, required for reject), shown below buttons
+
+[E] After action:
+  Card collapses with slide-up animation.
+  Approved: green toast "Approved — {employee name}'s {type} request."
+  Rejected: red toast "Rejected — {employee name}'s {type} request."
+  Pending count badge on sub-tab decrements.
+
+--------------------------------------------------------------------------------
+3.5 Team Calendar Tab
+--------------------------------------------------------------------------------
+Access: ALL authenticated employees (data scoped per role — see G4 fix).
+
+[A] Tab header row:
+  "Team Calendar" | Month/Year navigation (← {Month Year} →)
+  Filter: [All Types ▾] chip (Leave / WFH / Holiday)
+  Manager+ view: [All Employees ▾] dropdown filter
+
+[B] Calendar Grid (month view, 7 columns Sun–Sat or Mon–Sun based on locale):
+  Each day cell: date number top-right
+  Chips in cell (max 3 visible, "+N more" overflow chip):
+    Blue chip   — Approved Leave: "{Employee Name} (if manager view)" or "You" (employee)
+    Orange chip — WFH: same naming
+    Gray chip   — Public Holiday: holiday name
+  Chip style: rounded-full text-[10px] font-medium px-2 py-0.5 truncate max-w-[120px]
+  Clicking a chip opens a popover with full details.
+
+[C] Legend row below calendar:
+  Colored dot + label: Approved Leave | WFH | Public Holiday
+
+[D] Today's cell is highlighted: bg-indigo-50 border border-indigo-400 rounded-lg
+
+--------------------------------------------------------------------------------
+3.6 Payslip Tab (New)
+--------------------------------------------------------------------------------
+[A] Header row:
+  "Payslips" heading | Month/Year dropdown (last 12 months) | [Download PDF] button (outlined indigo)
+
+[B] Summary Cards row (3 cards):
+  Gross Salary   — text-2xl font-bold text-green-700  | bg-green-50  border-green-200
+  Total Deductions — text-2xl font-bold text-red-700   | bg-red-50    border-red-200
+  Net Pay          — text-2xl font-bold text-indigo-700 | bg-indigo-50 border-indigo-200
+  Below each amount: label text-xs text-gray-500
+
+[C] Two-column table section:
+  Left — Earnings Table (white card):
+    Header: "Earnings"
+    Rows: Basic | HRA | Special Allowance | Bonus | Arrears
+    Footer: Total Earnings (bold, green)
+  Right — Deductions Table (white card):
+    Header: "Deductions"
+    Rows: Provident Fund | Professional Tax | TDS | LOP Deduction
+    Footer: Total Deductions (bold, red)
+
+[D] Info note: "Salary credited on 28th of each month. For payslip corrections, contact Finance."
+
+[E] Empty state (no payslip for selected month):
+  Illustration placeholder | "No payslip available for {Month Year}."
+
+--------------------------------------------------------------------------------
+3.7 Shift Schedule Tab (New)
+--------------------------------------------------------------------------------
+[A] Header row:
+  "Shift Schedule" heading | [Weekly ○ Monthly] pill toggle | [Request Shift Swap] button
+
+[B] Weekly View:
+  5-column grid (Mon–Fri), each column 1/5 width.
+  Column header: "Mon Apr 7" style (day + date).
+  Each cell: shift color chip (full width of cell), shift name + time inside.
+  If on leave: leave chip overlaid (semi-transparent with leave type).
+  Empty cell for weekend days; shown as dimmed with "Weekend" text.
+
+[C] Monthly Roster View:
+  Calendar grid (same base as Team Calendar).
+  Each day cell: small colored shift chip (abbreviated shift name, e.g. "GEN").
+  Click cell: popover showing full shift details.
+
+[D] Shift Swap History Table (below calendar/grid):
+  Columns: Requested Date | Swap Date | Swap With | Status | Requested On | Action (Cancel if Pending)
+
+
+================================================================================
+SECTION 4 — VALIDATION RULES
+================================================================================
+
+Leave Application:
+  - start_date <= end_date
+  - start_date cannot be a public holiday (warn user; exclude holidays from day count)
+  - minimum notice days: from LEAVE_TYPES[type].min_notice_days config
+  - maximum continuous days: from LEAVE_TYPES[type].max_continuous_days config
+  - balance check: if requested days > available balance:
+      warn "Insufficient balance — this will create {N} LOP days"
+      user must confirm to proceed with LOP
+  - no overlapping with existing approved/pending leaves for same employee
+  - half-day selection: only allowed when start_date = end_date
+  - cannot apply leave for a date in the past (unless policy allows; check LEAVE_POLICIES)
+
+WFH Request:
+  - date >= today + CEIL(WFH_POLICIES.advance_notice_hours / 24) days
+  - date is not a public holiday
+  - WFH days in the same calendar week (Mon–Sun) < WFH_POLICIES.max_wfh_days_per_week
+    (count approved + pending WFH for the week)
+  - no duplicate WFH request for the same date
+
+Attendance Regularization:
+  - date <= today
+  - date >= first day of the previous calendar month
+  - expected_checkin (HH:MM) < expected_checkout (HH:MM)
+  - reason.length >= 20 characters
+  - count of status=Pending corrections for employee < 3
+  - cannot regularize a date that already has an approved correction
+
+Comp-Off Request:
+  - worked_date must be a Saturday, Sunday, or a date in the public holidays list
+  - today - worked_date <= 7 days (must submit within 7 days of the work date)
+  - count of status=Pending comp-off requests < 3
+  - hours > 0 and hours <= 24
+
+Leave Encashment:
+  - leave_balances[Earned Leave] >= LEAVE_POLICIES.min_encashable_balance
+  - days_to_encash <= min(available_earned_leave, 10)
+  - days_to_encash >= 1
+  - after encashment: remaining balance >= LEAVE_POLICIES.min_balance_after_encashment
+    (default = 0; configurable)
+
+
+================================================================================
+SECTION 5 — WORKFLOW AUTOMATION INTEGRATION
+================================================================================
+
+All workflow events are POSTed to the Workflow App event bus.
+Workflow App handles routing, escalation timers, and SLA tracking.
+
+--------------------------------------------------------------------------------
+5.1 Leave Approval Workflow
+--------------------------------------------------------------------------------
+Trigger event: leave_applied
+  Payload: { leave_id, employee_id, manager_id, leave_type, days, start_date, end_date }
+
+Routing:
+  Step 1: Route to direct manager (employees.manager_id) for approval.
+  Step 2: If leave_days > 5: additional approval required from HR Manager.
+             (HR Manager resolved via Permissions App: role=HR_MANAGER for department)
+
+On Approval (all steps complete):
+  - Update leaves record: status = Approved
+  - Deduct from leave_balances: balance -= days (for the leave type)
+  - Create attendance records for each leave day: type = leave_type
+  - Push notification to employee: leave_approved
+
+On Rejection (any step):
+  - Update leaves record: status = Rejected, rejection_reason = comment
+  - Push notification to employee: leave_rejected (with reason)
+
+On Withdrawal (by employee before approval):
+  - Update leaves record: status = Withdrawn
+  - No balance change
+
+--------------------------------------------------------------------------------
+5.2 WFH Approval Workflow
+--------------------------------------------------------------------------------
+Trigger event: wfh_requested
+  Payload: { wfh_id, employee_id, manager_id, date, reason }
+
+Routing: single-step, direct manager only.
+
+On Approval:
+  - Update wfh_requests: status = Approved
+  - Create/update attendance record for date: type = WFH
+  - Push notification to employee: wfh_approved
+
+On Rejection:
+  - Update wfh_requests: status = Rejected, reject_reason = comment
+  - Push notification to employee: wfh_rejected
+
+--------------------------------------------------------------------------------
+5.3 Attendance Regularization Workflow
+--------------------------------------------------------------------------------
+Trigger event: regularization_submitted
+  Payload: { correction_id, employee_id, manager_id, date, expected_checkin, expected_checkout }
+
+Routing: single-step, direct manager only.
+
+On Approval:
+  - Update attendance_corrections: status = Approved, reviewed_by, reviewed_at
+  - Update attendance record for date: checkin = expected_checkin, checkout = expected_checkout,
+    recalculate hours and status (Present / Late based on shift)
+  - Push notification to employee: regularization_approved
+
+On Rejection:
+  - Update attendance_corrections: status = Rejected, review_comment
+  - Push notification to employee: regularization_rejected (with comment)
+
+--------------------------------------------------------------------------------
+5.4 Comp-Off Approval Workflow
+--------------------------------------------------------------------------------
+Trigger event: compoff_submitted
+  Payload: { compoff_id, employee_id, manager_id, worked_date, hours }
+
+Routing: single-step, direct manager only.
+
+On Approval:
+  - Update comp_off_requests: status = Approved, approved_by, approved_at,
+    expires_at = worked_date + 90 days
+  - Update leave_balances: comp_off_balance += ROUND(hours / 8, 1) days
+  - Push notification to employee: compoff_approved
+
+On Rejection:
+  - Update comp_off_requests: status = Rejected
+  - Push notification to employee: compoff_rejected
+
+
+================================================================================
+SECTION 6 — PUSH NOTIFICATION EVENTS
+================================================================================
+
+All push notifications use the Web Push API (VAPID).
+Notification payloads follow the schema:
+  { event, title, body, icon, badge, data: { url, entity_id, entity_type } }
+
+Notification icon: app favicon / manifest icon (192x192).
+Badge: small monochrome app icon (72x72) for Android notification bar.
+Click action (data.url): deep link into the relevant tab/entity.
+
+Event definitions:
+
+  leave_applied
+    To: direct manager (+ HR Manager if days > 5)
+    Tag: action_required
+    Title: "Leave Request — {employee full name}"
+    Body:  "{leave_type} leave for {N} day(s) from {start_date}. Please review."
+    URL:   /approvals?tab=leave
+
+  leave_approved
+    To: employee
+    Tag: success
+    Title: "Leave Approved"
+    Body:  "Your {leave_type} leave from {start_date} to {end_date} has been approved."
+    URL:   /my-leaves
+
+  leave_rejected
+    To: employee
+    Tag: warning
+    Title: "Leave Rejected"
+    Body:  "Your leave request was not approved. Reason: {rejection_reason}"
+    URL:   /my-leaves
+
+  wfh_requested
+    To: direct manager
+    Tag: action_required
+    Title: "WFH Request — {employee full name}"
+    Body:  "WFH requested for {date}. Please review."
+    URL:   /approvals?tab=wfh
+
+  wfh_approved
+    To: employee
+    Tag: success
+    Title: "WFH Approved"
+    Body:  "Your WFH request for {date} has been approved."
+    URL:   /overview
+
+  wfh_rejected
+    To: employee
+    Tag: warning
+    Title: "WFH Not Approved"
+    Body:  "WFH request for {date} was not approved. Reason: {reason}"
+    URL:   /overview
+
+  regularization_submitted
+    To: direct manager
+    Tag: action_required
+    Title: "Regularization Request — {employee full name}"
+    Body:  "Attendance correction requested for {date}. Please review."
+    URL:   /approvals?tab=regularization
+
+  regularization_approved
+    To: employee
+    Tag: success
+    Title: "Regularization Approved"
+    Body:  "Your attendance for {date} has been corrected and approved."
+    URL:   /attendance
+
+  regularization_rejected
+    To: employee
+    Tag: warning
+    Title: "Regularization Not Approved"
+    Body:  "Attendance regularization for {date} was not approved. Comment: {comment}"
+    URL:   /attendance
+
+  compoff_approved
+    To: employee
+    Tag: success
+    Title: "Comp-Off Credited"
+    Body:  "{N} comp-off day(s) have been added to your leave balance. Valid until {expires_at}."
+    URL:   /my-leaves
+
+  compoff_rejected
+    To: employee
+    Tag: warning
+    Title: "Comp-Off Request Rejected"
+    Body:  "Your comp-off request for {worked_date} was not approved."
+    URL:   /my-leaves
+
+  task_overdue
+    To: task owner
+    Tag: warning
+    Schedule: daily at 09:00 AM (employee's local timezone) if task.due_date < today and task.status != Done
+    Title: "Overdue Task"
+    Body:  "Task "{task_title}" was due on {due_date}. Please update."
+    URL:   /tasks?id={task_id}
+
+  task_assigned
+    To: newly assigned employee
+    Tag: info
+    Title: "New Task Assigned"
+    Body:  "{assigner name} assigned you: "{task_title}" — due {due_date}."
+    URL:   /tasks?id={task_id}
+
+  attendance_anomaly
+    To: employee
+    Tag: info
+    Schedule: triggered at 21:00 if no check-in recorded for today and employee is not on leave / WFH
+    Title: "No Attendance Recorded"
+    Body:  "No check-in was recorded for today ({date}). If you were in office, please regularize."
+    URL:   /attendance
+
+  upcoming_holiday
+    To: all employees
+    Tag: info
+    Schedule: 1 day before the holiday date (09:00 AM)
+    Title: "Tomorrow is a Public Holiday"
+    Body:  "Tomorrow ({holiday_name} — {date}) is a public holiday. Enjoy the day off!"
+    URL:   /holidays
+
+  shift_changed
+    To: affected employee
+    Tag: info
+    Title: "Shift Updated"
+    Body:  "Your shift has been updated to {shift_name} ({start_time}–{end_time}) effective {effective_from}."
+    URL:   /shift-schedule
+
+  shift_swap_requested
+    To: swap_with employee (colleague)
+    Tag: action_required
+    Title: "Shift Swap Request — {requester name}"
+    Body:  "{requester name} wants to swap shifts with you: {requester_date} ↔ {swap_date}."
+    URL:   /approvals?tab=shift-swap
+
+  birthday_today
+    To: employee (own birthday)
+    Tag: info
+    Schedule: 08:00 AM on employee's birthday (date_of_birth day+month match)
+    Title: "Happy Birthday!"
+    Body:  "Wishing you a wonderful birthday from the entire team!"
+    URL:   /overview
+
+
+================================================================================
+SECTION 7 — CROSS-APP INTEGRATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+7.1 Communications Hub → Employee Dashboard (read)
+--------------------------------------------------------------------------------
+Endpoint: GET /communications/announcements
+  Query: limit=3, audience={employee's department code or "ALL"}
+  Returns: [ { id, title, published_at, author, audience } ]
+  Used in: Overview tab — Announcements card (right column)
+  Fallback: if Communications app unavailable, hide Announcements card silently.
+
+--------------------------------------------------------------------------------
+7.2 Training App → Employee Dashboard (read)
+--------------------------------------------------------------------------------
+Endpoint: GET /training/enrollments
+  Query: userId={id}, status=enrolled, upcoming=true, limit=3
+  Returns: [ { course_id, course_name, due_date, status } ]
+  Used in: Overview tab — Upcoming card (left column), training items
+  Fallback: hide training items silently.
+
+--------------------------------------------------------------------------------
+7.3 Employee Dashboard → Workflow App (write / trigger)
+--------------------------------------------------------------------------------
+All approval workflows (leave, WFH, regularization, comp-off) publish events to:
+  POST /workflow/events
+  Body: { event_type, entity_id, entity_type, actor_id, payload }
+
+Workflow App handles:
+  - Routing to correct approver(s)
+  - Escalation if no action within SLA (configurable, default 48h)
+  - Multi-step sequences (e.g. leave > 5 days → manager → HR Manager)
+  - Sending push notifications at each step
+
+--------------------------------------------------------------------------------
+7.4 Team Calendar Refresh on Leave Approval
+--------------------------------------------------------------------------------
+When a leave is approved:
+  Workflow App publishes: leave_approved event.
+  Team Calendar data cache is invalidated for:
+    - The employee's calendar
+    - The manager's team calendar
+    - (For HR) all-employee calendar
+
+  Frontend: Employee Dashboard subscribes to a Supabase Realtime channel
+  (channel: team-calendar-updates) and refreshes Team Calendar data on event.
+
+Implementation:
+  Supabase Realtime broadcast channel: "team-calendar"
+  Payload on leave approval: { type: "leave_approved", employee_id, leave_id }
+  Frontend listener:
+    supabase.channel("team-calendar")
+      .on("broadcast", { event: "leave_approved" }, () => refetchTeamCalendar())
+      .subscribe()
+
+--------------------------------------------------------------------------------
+7.5 Payslip — Finance App / Payroll Integration (read-only)
+--------------------------------------------------------------------------------
+Payslips data is owned by Finance App or an external payroll service.
+Employee Dashboard has read-only access.
+
+Options (choose based on architecture):
+  Option A — Direct Supabase table access:
+    Finance app writes to payslips table in same Supabase project.
+    Employee Dashboard reads via Supabase client with RLS (employee sees own only).
+
+  Option B — REST proxy:
+    Finance App exposes: GET /payslips/{userId}/{year}/{month}
+    Employee Dashboard backend acts as proxy, adds auth token.
+
+  PDF Download:
+    Regardless of option, PDF is stored in Supabase Storage (bucket: payslips).
+    Employee Dashboard backend generates a signed URL on demand (15-minute expiry).
+    Employee can download; URL is not stored in DB to prevent stale links.
+
+Note:
+  Employee Dashboard must never expose the raw Supabase Storage path.
+  Always go through the backend signed URL endpoint.
+
+
+================================================================================
+SECTION 8 — FIGMA PROMPT (Self-Contained — Paste into Figma AI)
+================================================================================
+
+Design the Employee Dashboard at 1440×900px desktop resolution.
+App accent color: #6366F1 (Indigo 500). Font: Inter.
+
+LAYOUT:
+- TopNav (full width, 64px, white, shadow-sm):
+    Left: "Employee Portal" logo text bold indigo
+    Right: notifications bell icon (red badge "3") | user avatar circle (40px, initials "RS") | dropdown arrow
+- SideNav (240px, dark bg-gray-900, fixed left):
+    App logo top (40px, indigo)
+    Nav items (48px each, text-sm):
+      Overview — active state: bg-indigo-600 text-white rounded-lg mx-2
+      Attendance
+      My Leaves
+      Approvals — badge "3" (red pill, right-aligned)
+      Tasks
+      Holidays
+      Team Calendar
+      Payslip (new)
+      Shift Schedule (new)
+    All inactive: text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg mx-2
+- Content area: ml-240 mt-64, bg-gray-50, p-6, overflow-y-auto
+
+OVERVIEW TAB (active, show full layout):
+
+Birthday Banner (if applicable):
+  Full-width card, gradient bg from #EEF2FF to #E0E7FF, rounded-xl, p-4
+  Text: "Today is your birthday! Wishing you a wonderful day! 🎂" indigo-700
+  X button top-right to dismiss
+
+Clock-in Widget (white card, border border-gray-200, rounded-xl, p-5, mb-4):
+  Three-column flex, vertically centered:
+  LEFT: "Good Morning, Raj!" text-xl font-semibold gray-800
+        "Wednesday, April 8, 2026" text-sm gray-500
+        Chip: "General Shift · 9:00 AM – 6:00 PM" bg-indigo-50 text-indigo-700 text-xs rounded-full px-3 py-1
+  CENTER: Large green button [▶ Clock In] bg-green-500 text-white rounded-lg px-8 py-3 text-base font-medium
+  RIGHT (text-right): "WFH Today" chip bg-blue-100 text-blue-700 text-xs rounded-full px-3 py-1 mb-1
+                      "[Request WFH]" link text-indigo-600 text-sm underline
+
+Stats Row (5 white cards, flex gap-3, mb-4):
+  Each card: rounded-lg border border-gray-100 bg-white p-3 text-center flex-1
+  Present: "18" text-2xl font-bold gray-800 | "Present" text-xs gray-500 | "This Month" text-[10px] gray-400
+  Absent: "1" | Late: "2" | WFH: "4" | Leave: "1" — same structure
+
+Leave Balance Row (horizontal scroll, flex gap-3 overflow-x-auto pb-2 mb-4):
+  5 cards, each min-w-[160px] rounded-xl p-4:
+    Earned Leave — left border 4px green-500, bg-green-50:
+      "Earned Leave" text-sm font-medium gray-700
+      "12" text-3xl font-bold green-700
+      "of 18 days" text-xs gray-500
+    Sick Leave — orange-500 / orange-50: "6" orange-700
+    Casual Leave — blue-500 / blue-50: "4" blue-700
+    Comp-Off — purple-500 / purple-50: "1" purple-700 | amber chip "Expires in 45d" text-[10px]
+    Floater — teal-500 / teal-50: "2" teal-700
+
+Quick Actions Row (flex gap-3 mb-4):
+  4 equal cards, white bg, border border-gray-200 rounded-xl p-4 text-center cursor-pointer
+  hover state: border-indigo-400 bg-indigo-50
+  Card 1: calendar icon (24px indigo) above | "Apply Leave" text-sm font-medium gray-700
+  Card 2: home icon | "Request WFH"
+  Card 3: pencil icon | "Regularize Punch"
+  Card 4: clock icon | "Comp-Off Request"
+
+Two-column grid (grid-cols-2 gap-4):
+  LEFT "Upcoming" white card rounded-xl p-4:
+    "Upcoming" text-base font-semibold gray-800 mb-3
+    Item 1: beach umbrella icon indigo | "Ram Navami" font-medium | "Apr 13" gray chip right
+    Item 2: book icon amber | "AWS Cloud Course" font-medium | "Due Apr 15" amber chip right
+    Item 3: beach umbrella icon | "Good Friday" | "Apr 18" chip
+  RIGHT "Announcements" white card rounded-xl p-4:
+    Row: "Announcements" font-semibold | "View All →" text-indigo-600 text-sm right
+    Divider
+    3 announcement rows:
+      Row: title text-sm font-medium gray-800 (1 line) | "HR · 2 days ago" text-xs gray-400 right
+      Thin divider between rows
+
+MY LEAVES TAB (show in secondary panel for reference):
+Balance cards row: same 5 cards as overview but standalone row
+Apply Leave form (white card, collapsed by default with expand toggle):
+  "Apply for Leave [∧]" header row
+  Form: Leave Type select | Start Date | End Date | [Half Day] toggle | Reason textarea
+  Preview text: "You have 8 days remaining after this request." text-sm green-600
+  [Submit Leave Application] button full-width indigo
+
+Leave History table (white card):
+  Header: "Leave History" font-semibold | search input right
+  Table:
+    Type chip (color per type) | From | To | Days | Reason (truncated) | Status badge | Applied On | Action
+    Row 1: "Earned Leave" chip green | Apr 1 | Apr 2 | 2 | Family visit | "Approved" green badge | Mar 25 | -
+    Row 2: "Casual Leave" chip blue | Mar 15 | Mar 15 | 1 | Personal | "Rejected" red badge | Mar 13 | -
+    Row 3: "Sick Leave" chip orange | Mar 10 | Mar 11 | 2 | Fever | "Approved" green badge | Mar 9 | -
+
+APPROVALS TAB (manager view):
+Sub-tabs pill row: "Leave (3)" | "WFH (1)" | "Regularization (2)" | "Comp-Off (0)" | "Encashment (1)"
+Active sub-tab: bg-indigo-100 text-indigo-700
+[Bulk Approve All] button top-right: indigo outlined px-4 py-2 rounded-lg
+
+Approval Card (white, rounded-xl, p-4, border-l-4 border-indigo-400, mb-3):
+  Left: avatar circle 40px bg-indigo-100 text-indigo-700 font-bold "AM" initials
+        "Arun Mehta" text-sm font-semibold gray-800
+        "Engineering · Backend" text-xs gray-500
+  Middle: "Earned Leave" chip green | "Apr 14 – Apr 18 · 5 days" gray-700 | reason text-xs gray-500
+  Right: [Approve] bg-green-500 text-white px-4 py-2 rounded-lg text-sm
+         [Reject] bg-red-50 text-red-600 border border-red-300 px-4 py-2 rounded-lg text-sm ml-2
+         Comment input below: "Add comment (required for reject)" placeholder text-xs border rounded p-1 w-full mt-2
+
+Show 2 more approval cards below with different employees.
+
+PAYSLIP TAB (new, show partial layout):
+Header: "Payslips" font-semibold | Month dropdown "August 2026 ▾" | [Download PDF] outlined indigo right
+Summary cards row (3 cards, equal width):
+  "Gross Salary" label | "₹85,000" text-2xl green-700 | bg-green-50 border border-green-200 rounded-xl p-4
+  "Total Deductions" | "₹18,500" red-700 | bg-red-50 border border-red-200
+  "Net Pay" | "₹66,500" indigo-700 | bg-indigo-50 border border-indigo-200
+Note text below: "Salary credited on 28th August. For corrections, contact Finance." text-xs gray-400
+
+Tables (two column, white cards):
+  LEFT "Earnings" table: Component | Amount — Basic ₹45K | HRA ₹18K | Special ₹15K | Bonus ₹5K | Arrears ₹2K | Total ₹85K (bold green)
+  RIGHT "Deductions" table: PF ₹5.4K | Prof Tax ₹200 | TDS ₹12K | LOP ₹900 | Total ₹18.5K (bold red)
+
+SHIFT SCHEDULE TAB (new, show partial layout):
+Header: "Shift Schedule" | [Weekly ○ Monthly] pill toggle | [Request Shift Swap] indigo outlined button
+Weekly grid (Mon–Fri, 5 columns):
+  Column headers: "Mon Apr 7" | "Tue Apr 8" | "Wed Apr 9" | "Thu Apr 10" | "Fri Apr 11"
+  Each cell (white card rounded-lg border p-3 text-center):
+    Colored chip top: "GENERAL" bg-indigo-100 text-indigo-700 text-xs rounded px-2 py-0.5
+    "9:00 AM – 6:00 PM" text-sm gray-600 mt-1
+  One cell (Fri Apr 11) shows: leave chip "Approved Leave — 1 day" bg-blue-100 text-blue-700 overlaid
+
+Shift Swap Requests table below:
+  "Shift Swap Requests" header
+  Row: Apr 14 | swap with "Priya S." | Apr 16 | "Pending" yellow badge | Apr 5 | [Cancel] soft red
+
+DESIGN NOTES:
+- All cards: bg-white rounded-xl shadow-sm border border-gray-100 unless noted
+- Buttons: primary = bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg
+           secondary = bg-white border border-gray-300 text-gray-700 rounded-lg
+           danger = bg-red-500 text-white | danger-soft = bg-red-50 text-red-600 border border-red-300
+- Text: headings gray-800, body gray-600, captions gray-400/gray-500
+- Spacing: section gap = 16px, card internal padding = 20px
+- Font sizes: page heading 20px, section heading 16px, body 14px, caption 12px, micro 10px
+- Tailwind v4 conventions; no arbitrary values unless truly needed
+
+
+================================================================================
+END OF SPECIFICATION
+Part: 2a — Employee Dashboard
+Suite: HR Suite
+================================================================================

@@ -1,0 +1,1172 @@
+================================================================================
+ENTERPRISE PORTAL — FIGMA DESIGN SPECIFICATION
+IT Services | Asset Management | Project Management
+Version 1.0 | September 2026
+================================================================================
+NOTE: Batch 1 (Design System) is SKIPPED — core components and portal already exist.
+NOTE: Master Data App stores all config, lookups, and value helps referenced below.
+================================================================================
+
+
+================================================================================
+SECTION A — MASTER DATA CONFIG REQUIRED
+(Values to be maintained in Master Data App)
+================================================================================
+
+--- IT SERVICES CONFIG ---
+
+1. TICKET_CATEGORIES
+   Fields: category_id | name | description | default_sla_policy_id | icon | sort_order | is_active
+   Seed values: Hardware | Software/App | Network/VPN | Access & Permissions | Email & Calendar | Security | General/Other
+
+2. TICKET_SUB_CATEGORIES
+   Fields: sub_category_id | category_id (FK) | name | is_active
+   Examples: Hardware → Laptop, Desktop, Printer, Phone, Monitor
+             Network → VPN, WiFi, LAN, Firewall
+
+3. SLA_POLICIES
+   Fields: policy_id | name | priority | category_id | first_response_mins | resolution_mins
+           | business_hours_only | escalate_at_percent | is_active
+   Seed: P1-Critical: 4h response / 8h resolution
+         P2-High:     8h response / 24h resolution
+         P3-Medium:  16h response / 48h resolution
+         P4-Low:     24h response / 72h resolution
+
+4. SLA_ESCALATION_RULES
+   Fields: rule_id | sla_policy_id | threshold_percent | escalate_to_role | notification_channels
+
+5. TICKET_RESOLUTION_CODES
+   Fixed | Workaround | Duplicate | Cannot Reproduce | User Error | No Action Required | Known Issue
+
+6. TICKET_SOURCES
+   Portal | Email | Phone | Chat | API | Auto-Detected
+
+7. TICKET_IMPACT_LEVELS
+   Individual | Team | Department | Organization
+
+8. KB_CATEGORIES
+   Fields: category_id | name | slug | parent_id | icon | sort_order
+
+9. TICKET_TAGS (managed list, users can also add free-form)
+
+--- ASSET MANAGEMENT CONFIG ---
+
+10. ASSET_CATEGORIES
+    Fields: category_id | name | slug | parent_id | icon | depreciation_years | warranty_standard_months
+    Seed: Laptop(3yr dep) | Desktop(4yr) | Server(5yr) | Network(5yr) | Phone(2yr) | Monitor(4yr) | Printer(4yr)
+
+11. ASSET_STATUS_VALUES
+    Active | Inactive | Under Maintenance | Decommissioned | Lost | Stolen | Disposed | Reserved
+
+12. ASSET_CONDITION_VALUES
+    New | Excellent | Good | Fair | Poor | Damaged
+
+13. VENDORS
+    Fields: vendor_id | name | code | email | phone | website | country | is_active | notes
+    (Fully managed in Master Data App)
+
+14. LOCATIONS
+    Fields: location_id | name | code | parent_id | type(Building/Floor/Room/Rack/Zone) | address
+    Hierarchy: Building > Floor > Room > Rack
+
+15. MAINTENANCE_TYPES
+    Preventive | Corrective | Inspection | Upgrade | Cleaning | Calibration
+
+16. DEPRECIATION_METHODS
+    Straight Line | Declining Balance | Units of Production
+
+17. WARRANTY_ALERT_THRESHOLDS
+    Config: Alert at 90 days | 60 days | 30 days | On expiry (checkboxes, default: 30d + on expiry)
+
+--- PROJECT MANAGEMENT CONFIG ---
+
+18. PROJECT_METHODOLOGIES
+    Scrum | Kanban | Waterfall | Hybrid
+
+19. PROJECT_ROLES
+    Owner | Admin | Lead | Developer | QA | Designer | Stakeholder | Viewer
+
+20. BACKLOG_ITEM_TYPES
+    Story | Epic | Spike | Research | Feature | Bug
+
+21. DEFECT_SEVERITIES
+    S1 - Blocker | S2 - Critical | S3 - Major | S4 - Minor
+    (Each with description: S1=System unusable, S2=Major function broken, S3=Minor impact, S4=Cosmetic)
+
+22. DEFECT_ENVIRONMENTS
+    Production | Staging | QA | Development | UAT (configurable per project)
+
+23. SPRINT_DURATIONS
+    1 week | 2 weeks (default) | 3 weeks | 4 weeks | Custom
+
+24. STORY_POINT_SCALE
+    Fibonacci: 1, 2, 3, 5, 8, 13, 21, 34 | T-Shirt: XS, S, M, L, XL | Custom
+
+25. TASK_TYPES
+    Task | Sub-task | Chore | Documentation | Research
+
+26. DEPENDENCY_TYPES
+    Finish-to-Start | Start-to-Start | Finish-to-Finish | Blocks | Is-Blocked-By
+
+--- CROSS-APP CONFIG ---
+
+27. NOTIFICATION_TEMPLATES
+    Fields: template_id | app_context | trigger_event | subject_template | body_template
+            | channels(email/in_app/sms) | is_active
+    (All notification messages configurable from Master Data)
+
+28. LINK_TYPES
+    Relates To | Caused By | Blocks | Is Blocked By | Duplicates | References
+
+29. ENTITY_TYPES_ALLOWED_FOR_LINKING
+    backlog_item | defect | task | asset | ticket | kb_article
+
+30. PORTAL_APPS (App Switcher config)
+    Fields: app_id | name | route | icon | accent_color | is_active | sort_order | description
+
+31. USER_ROLES_PERMISSIONS (RBAC matrix per app)
+    Fields: role | app | resource | action(create/read/update/delete) | allowed
+    (Full permission matrix maintained in Master Data)
+
+32. WORKING_HOURS_CALENDAR
+    Business days | Holidays | Timezone config (for SLA calculation)
+
+33. EMAIL_NOTIFICATION_CONFIG
+    SMTP settings | From address | Reply-to | Footer template
+
+================================================================================
+SECTION B — VALIDATION RULES & BUSINESS LOGIC
+================================================================================
+
+--- IT SERVICES RULES ---
+
+TICKET CREATION:
+  - Title: required, min 10 chars, max 200 chars
+  - Category: required (drives SLA policy auto-selection)
+  - Priority: required, default = P3-Medium
+  - Reporter: auto-set to logged-in user, not editable by L1 agents
+  - Assignee: optional on creation; if blank → auto-assign based on team on-call schedule
+  - Description: optional but recommended; warn if blank (soft validation)
+  - Attachments: max 10 files per ticket, max 10MB per file
+    Allowed types: jpg, png, gif, pdf, docx, xlsx, txt, zip, log
+  - On creation: SLA due_at auto-calculated = NOW + first_response_mins (from SLA policy)
+  - Ticket number: auto-generated, format TKT-NNNN, not editable
+
+TICKET STATUS TRANSITIONS (enforce in UI — only valid transitions allowed):
+  Open        → In Progress | Pending | Cancelled
+  In Progress → Pending | Resolved | Cancelled
+  Pending     → In Progress | Closed | Cancelled
+  Resolved    → Closed | Open (if reporter rejects resolution)
+  Closed      → (no transitions — terminal)
+  Cancelled   → (no transitions — terminal)
+  RULE: Only assignee or manager can move to Resolved; only reporter or manager can Reopen
+
+TICKET RESOLUTION:
+  - Resolution summary: required (min 20 chars)
+  - Resolution code: required (from lookup)
+  - Cannot resolve if sub-tasks are open (warn, allow override with confirmation)
+  - On resolve: trigger CSAT survey email to reporter after 2 hours
+  - SLA: record resolution timestamp, calculate SLA met/missed
+
+SLA RULES:
+  - SLA clock starts on ticket creation (not assignment)
+  - Pause SLA when status = Pending (awaiting user response)
+  - Resume SLA when status changes from Pending back to In Progress
+  - Business hours calculation: exclude weekends + holidays from SLA config
+  - Breach detection: background job every 5 minutes checks due_at vs NOW
+  - Once breached: cannot "un-breach" even if resolved immediately (historical record)
+
+PRIORITY CHANGE RULES:
+  - P1 (Critical): requires manager approval OR a linked S1 defect
+  - Priority escalation: auto-escalate to next level if unassigned >50% of first_response_mins
+  - Downgrade: only allowed by team lead or above
+
+LINKING RULES:
+  - A ticket can link to max 20 items total (across all entity types)
+  - Cannot link a ticket to itself
+  - Circular linking check: if A links to B, B cannot link to A as "duplicates"
+  - When linking to a Defect: copy defect severity to ticket priority recommendation (warn, don't auto-set)
+
+KB ARTICLE RULES:
+  - Must have category
+  - Title: required, min 10 chars, unique within category
+  - Draft articles: only visible to agents and above
+  - Published articles: visible to all users
+  - Cannot delete a published article (archive instead)
+  - Helpful/Not Helpful: each user can vote once, can change vote
+
+--- ASSET MANAGEMENT RULES ---
+
+ASSET CREATION:
+  - Asset Tag: auto-generated format AST-NNNN, unique, not editable after save
+  - Name: required, min 3 chars, max 255 chars
+  - Category: required (drives depreciation rate, warranty defaults)
+  - Serial Number: optional but if entered must be unique across all assets
+  - Purchase Cost: must be > 0 if entered; numeric only
+  - Warranty End: must be >= Purchase Date
+  - Status on creation: defaults to "In Stock"
+
+ASSET ASSIGNMENT RULES:
+  - Can only assign assets with status: In Stock | Active (not Under Maintenance, Retired, etc.)
+  - One asset can only be assigned to ONE user or ONE team at a time (not both)
+  - Cannot assign to deactivated user
+  - Assignment date: cannot be in the future (assignment is current)
+  - Expected return date: must be > assignment date if provided
+  - On assignment: asset status auto-changes to "Assigned"
+  - On return: must specify condition; if condition = Damaged → auto-create maintenance request (warn)
+  - Return date: cannot be before assignment date
+
+DEPRECIATION RULES:
+  - Current Value = Purchase Cost × (1 - depreciation_rate) ^ age_in_years
+  - Depreciation rate pulled from Asset Category config
+  - If current value < 0 → set to 0
+  - Recalculate nightly via background job
+
+WARRANTY ALERTS:
+  - Alert triggers configured in Master Data (default: 30 days + on expiry)
+  - Alert sent to: IT Admin + asset assignee
+  - If warranty already expired at time of asset creation → immediate alert
+
+MAINTENANCE RULES:
+  - Cannot log maintenance for Retired/Disposed assets
+  - If maintenance type = Corrective: create linked IT ticket (optional, prompt user)
+  - Maintenance cost: numeric only, no negatives
+  - Next due date: must be >= performed date
+  - Recurring schedule: min frequency = 7 days (no daily maintenance scheduling)
+  - On overdue maintenance (next_due_at < TODAY): auto-flag, appear in dashboard alerts
+
+ASSET RETIREMENT:
+  - Must specify reason: End of Life | Damaged Beyond Repair | Surplus | Donated | Sold
+  - If asset is currently assigned: must be returned first (block with error)
+  - Retired assets: read-only, cannot be reassigned or modified (except adding documents)
+
+--- PROJECT MANAGEMENT RULES ---
+
+PROJECT RULES:
+  - Project Key: auto-generated from name (first letters, uppercase, max 6 chars), editable once before first sprint
+  - Name: required, min 3 chars, unique per organization
+  - Owner: required, cannot remove owner without assigning a new one
+  - End date: must be > start date
+  - Cannot archive a project with an active sprint (complete sprint first)
+  - Only Owner/Admin can delete; deletion requires confirming project name by typing it
+
+BACKLOG ITEM RULES:
+  - Title: required, min 5 chars, max 500 chars
+  - Type: required (Story/Epic/Spike/Research)
+  - Story Points: whole numbers only, from configured scale (e.g., Fibonacci)
+  - Epic items: cannot be assigned to a sprint directly (must break into stories first)
+  - Epic hierarchy: max 2 levels (Epic > Story); stories cannot have child stories
+  - Status transitions:
+    Open → In Progress | Cancelled
+    In Progress → In Review | Blocked | Open (revert)
+    In Review → Testing | In Progress (revert)
+    Testing → Done | In Progress (failed)
+    Done → (terminal unless sprint rollback)
+    Blocked → In Progress (unblock)
+  - Sprint assignment: item can only be in ONE sprint at a time
+  - When sprint completed: unfinished items auto-moved to backlog (not next sprint), user confirms
+
+DEFECT RULES:
+  - Title: required, min 5 chars
+  - Severity: required
+  - S1 Defects: must be assigned within 2 hours of creation; alert if unassigned > 1 hour
+  - S1/S2 Defects: auto-notify project owner + team lead on creation
+  - Status transitions:
+    Open → In Progress | Deferred | Won't Fix
+    In Progress → Fixed | Open (revert) | Blocked
+    Fixed → Verified | In Progress (regression found)
+    Verified → Closed
+    Deferred/Won't Fix → Open (reopen)
+    Closed → Open (regression — must provide reason)
+  - Cannot close defect without entering "Fixed in version"
+  - Regression flag: if defect reopened → automatically mark regression = true
+
+TASK RULES:
+  - Title: required
+  - Estimated hours: must be > 0 if entered; max 40h per task (split if larger)
+  - Sub-tasks: max 10 sub-tasks per parent task
+  - Cannot mark parent task Done if sub-tasks are incomplete (warn, allow override)
+  - Dependencies: no circular dependencies (A blocks B, B cannot block A)
+
+SPRINT RULES:
+  - Only ONE active sprint per project at a time
+  - Sprint start date: cannot be in the past (same day is OK)
+  - Sprint end date: must be > start date; min 5 days, max 30 days
+  - Cannot start sprint with 0 items
+  - Sprint goal: recommended, warn if blank (soft validation, not blocking)
+  - Completing a sprint: must handle all unfinished items (move to backlog or next sprint)
+  - Velocity: auto-calculated = sum of story points of Done items at sprint completion
+
+TIME LOGGING RULES:
+  - Hours: min 0.5, max 12 per single log entry (cannot log > 12h in one entry)
+  - Logged date: cannot be in the future; cannot be > 90 days in the past
+  - Can log time against: tasks, backlog items, defects only (not epics)
+  - Multiple entries per day allowed (different tasks)
+  - Total logged > estimated: show warning, allow override
+  - Weekend logging: allowed but flagged with visual indicator
+
+--- CROSS-APP RULES ---
+
+CROSS-APP LINKING:
+  - IT Ticket ↔ Backlog Item: bidirectional; creating link in one app reflects in the other
+  - IT Ticket ↔ Defect: bidirectional
+  - IT Ticket ↔ Asset: one-directional from ticket (asset shows linked tickets read-only)
+  - Cannot link entities from different organizations (multi-tenant guard)
+  - Link removal: removing from either side removes both sides of the link
+
+NOTIFICATIONS:
+  - User can configure per-notification-type preferences (email on/off, in-app on/off)
+  - Notification preferences stored per user per app context
+  - Digest mode: user can choose Real-time | Hourly Digest | Daily Digest
+  - @mentions: always real-time, cannot be turned off
+  - SLA breach alerts: always real-time for assignee + team lead, cannot be turned off
+
+PERMISSIONS (cross-app):
+  - Admin: full access all apps
+  - Manager: create/edit/delete own team's items; view all
+  - Agent/Member: create/edit own items; view team items
+  - Viewer: read-only across all apps
+  - Reporter (IT only): create tickets, view own tickets only
+  - Cross-app navigation: user must have at least Viewer on target app
+
+DATA INTEGRITY:
+  - Deleting a user: reassign open tickets/tasks first (block deletion if active items exist)
+  - Deleting a project: must archive all sprints and move tickets linked to project items
+  - Deactivating a user: keeps historical data, removes from assignment pickers
+
+================================================================================
+SECTION C — FIGMA PROMPTS (UPDATED — ASSUMES DESIGN SYSTEM EXISTS)
+Note: All prompts assume shared component library is already published.
+Use existing components: Button, StatusBadge, PriorityBadge, KPICard, DataTable,
+KanbanCard, SideNav, TopNav, Modal, SlideOver, Toast, Avatar, EmptyState, Timeline,
+Form components (InputField, Select, DatePicker, UserPicker, RichTextEditor, FileUpload)
+================================================================================
+
+
+--- BATCH 2: IT SERVICES ---
+
+== PROMPT 2A: IT Dashboard ==
+Design an IT Services dashboard frame at 1440x900px on a gray-50 background.
+
+Use existing TopNav component (AppSwitcher shows "IT Services" with violet #7C3AED accent dot).
+Use existing SideNav (240px, violet active color):
+  Items: Dashboard(active, house icon), Tickets(badge:142), My Queue(badge:18), SLA Management, Knowledge Base, Reports, Settings
+
+Main content area (1200px, padding 32px, vertical stack, gap 24px):
+
+ROW 1 — Four equal KPICards using existing KPICard component:
+  Card 1: label="OPEN TICKETS" value="142" delta="+12 vs last week" icon=ticket color=blue
+  Card 2: label="ASSIGNED TO ME" value="18" delta="-3 vs last week" icon=user-check color=orange
+  Card 3: label="SLA BREACHED" value="7" delta="+2 vs last week" icon=alert-triangle color=red
+  Card 4: label="RESOLVED TODAY" value="34" delta="+8 vs yesterday" icon=check-circle color=green
+  KPICard click behavior: navigates to Tickets list with matching filter applied
+
+ROW 2 — Two chart cards (white bg, border, radius-12, shadow-sm), 50/50 split, height 320px:
+  LEFT: Donut chart titled "Tickets by Status"
+    Segments: New(blue 32), In Progress(yellow 48), Pending(orange 25), Resolved(green 37)
+    Center label: "142" large + "Total" small gray
+    Legend below: colored dot + label + count for each segment
+  RIGHT: Horizontal bar chart "Tickets by Category"
+    Bars (desc order): Hardware:45, Software/App:38, Network/VPN:27, Access:19, Email:13
+    Bar height 24px, gap 8px, gridlines every 10 units
+
+ROW 3 — Two chart cards, height 260px:
+  LEFT (33%): Semicircle gauge "SLA Compliance" — needle at 87%, color zones (red 0-60, yellow 60-80, green 80-100)
+    Below needle: "87%" in green + "vs 90% target" in gray small
+  RIGHT (67%): Dual-line area chart "Volume Trend — Last 30 Days"
+    X-axis: dates (show every 5th). Y-axis: 0-60
+    Created line: blue-600, area fill rgba(blue,8%). Resolved line: green-500, area fill rgba(green,8%)
+    Hover tooltip: date + Created count + Resolved count
+
+ROW 4 — Activity Feed (white card, full width):
+  Header: "Recent Activity" title + "View All" ghost button right-aligned
+  10 feed items: UserAvatar(24px) + action text + TicketID link(blue) + timestamp
+  Sample items:
+    Raj Kumar created INC-1048 — Hardware failure on ThinkPad X1 · 1 min
+    Auto-assigned INC-1047 to Sarah Lee · 5 min
+    INC-1042 SLA warning — 2 hours remaining (red dot prefix) · 12 min
+    Anita Desai resolved INC-1039 · 23 min
+    INC-1031 linked to BLG-2201 (Backlog Item) · 45 min
+
+Floating action button (blue circle 48px, + icon, position fixed bottom-right margin 32px)
+  Clicking opens New Ticket modal (see Prompt 2B)
+
+
+== PROMPT 2B: Ticket List ==
+Design IT Ticket List view at 1440x900px using existing components.
+
+Below TopNav + SideNav (Tickets item active, badge 142):
+
+Page header: "Tickets" (H1) + "142 tickets" subtitle (gray-500) + Import button (secondary) + "+ New Ticket" button (primary, right-aligned)
+
+Filter bar (horizontal, flex-wrap, gap 8px):
+  Status dropdown 140px (All Status / Open / In Progress / Pending / Resolved / Closed)
+  Priority dropdown 130px (All / Critical / High / Medium / Low)
+  Category dropdown 160px (All / Hardware / Software / Network / Access / Email / Other)
+  Assigned To UserPicker 180px
+  Date range picker 220px (Created: Any time)
+  SLA Status dropdown 140px (Any / On Track / At Risk / Breached)
+  "Has Links" toggle chip 100px
+  "Clear All" ghost button appears when filters active (right-aligned)
+
+Toolbar row: "Showing 1-25 of 142" (left) + [Table][Kanban][Calendar] view toggle (center-right) + Sort dropdown
+
+BulkActionBar (hidden by default, slides down when rows selected): "X tickets selected" + Assign | Change Status | Export | Delete buttons
+  Appears with blue-50 bg, blue border, smooth slide animation
+
+DataTable (white, border, radius-12):
+  Columns: ☐(44px) | Ticket ID(120px) | Title(flex) | Status(140px) | Priority(120px) | Category(150px) | Assigned To(160px) | Created(120px) | SLA(120px) | Links(80px)
+  Row height 52px. Hover: gray-50 bg.
+  SLA Breached rows: red left border 3px
+
+  Sample rows:
+  INC-1047 | VPN drops every 30 min | InProgress badge | Critical badge | Network | Sarah Lee avatar | Aug 31 | yellow dot "4h left" | 🔗3 blue badge
+  INC-1046 | SAP Fiori access request | Pending | Medium | Access | Unassigned | Sep 01 | green dot "22h left" | —
+  INC-1042 | Outlook not syncing | InProgress | High | Email | Priya Sharma | Aug 29 | red dot "Overdue 2h" (red left border on row) | 🔗1
+  INC-1039 | Password reset | Resolved | Low | Access | Anita Desai | Aug 28 | green "Met" | —
+
+Pagination: rows-per-page select + "1-25 of 142" + prev/next/page buttons
+
+Row click → navigates to Ticket Detail
+"+ New Ticket" → opens New Ticket modal overlay
+Kanban toggle → board view with columns per status
+
+
+== PROMPT 2C: New Ticket Modal ==
+Design a New Ticket creation modal (800px wide, 90vh max height) overlaying the Ticket List.
+
+Dark scrim backdrop (rgba 0,0,0 0.4, backdrop-blur 4px).
+Modal: white bg, radius-12, shadow-xl, centered.
+
+Header (60px, border-bottom): ticket icon in blue chip + "Create New Ticket" title + X close button
+
+Body (scrollable, padding 24px, gap 32px):
+
+Section 01 "Basic Information" (numbered blue circle + section title on divider):
+  Row: Title input (required, full width minus category) + Category dropdown (200px, required, values from Master Data TICKET_CATEGORIES)
+  Description textarea (min 100px, rich text optional)
+  Row: Priority select (Critical/High/Medium-default/Low) + Impact select (Individual/Team/Department/Org) + Source select (Portal-default/Email/Phone/Chat)
+
+Section 02 "Assignment & Scheduling":
+  Row: Assigned To UserPicker (placeholder "Leave blank for auto-assignment") + Team select (from Master Data) + Due Date picker
+
+Section 03 "Link to Other Items":
+  SearchInput (full width, placeholder "Search backlog items, defects, or tickets...")
+  Type filter chips: [wrench Backlog] [bug Defect] [link Ticket] (all active by default, deselect to filter)
+  Search results dropdown: TypeIcon + ID + Title + StatusBadge
+  LinkedChipsArea: selected items as chips (TypeIcon + ID + truncated title + × remove)
+  Empty state: "No items linked yet" italic gray
+
+Section 04 "Attachments & Watchers":
+  FileUpload drop zone (80px tall, dashed border, cloud-upload icon, "Drop files or browse", file type/size hint)
+  Watchers UserPicker (multi-select, helper: "Watchers receive notifications on all updates")
+
+Footer (64px, gray-50, border-top): Cancel ghost | Create Ticket primary (disabled when required fields empty)
+  Loading state: "Creating..." + spinner in button
+  On success: modal closes + Toast Success + navigate to new ticket detail
+
+
+== PROMPT 2D: Ticket Detail ==
+Design IT Ticket Detail view at 1440x900px.
+
+Header band (white, border-bottom, px32, py20):
+  Breadcrumb: "Tickets / INC-1047"
+  Main row: gray badge "INC-1047" | H2 "VPN connection drops every 30 minutes" | StatusDropdown "In Progress" | PriorityBadge "Critical" red
+  Action buttons (right): Edit (secondary) | Assign (secondary) | Escalate (secondary) | Resolve (primary blue) | More dots menu
+
+Content split (H-layout):
+
+LEFT PANEL (70%, scrollable, padding 32px 24px, gap 20px):
+
+Card 1 — Description (white, border, radius-12, padding 20px):
+  "Description" title + Edit ghost button
+  Body text (body-default, gray-700, line-height 1.6)
+  Example: "Users across Engineering are experiencing VPN disconnections every 30 minutes.
+  First reported Aug 29. Affected: Cisco AnyConnect v4.10 on Windows 11. Error: VPN-0x40000058"
+
+Card 2 — Linked Items (white, border, radius-12, padding 20px):
+  Header: "Linked Items" title + count badge "4"
+  Three expandable sections (chevron toggle):
+    [wrench icon blue] Backlog Items (2): rows with ID | title | status | Unlink button
+      BLG-2201 | "VPN client upgrade planning" | Backlog
+      BLG-2198 | "Network infrastructure refresh Q4" | In Sprint
+      [+ Add Backlog Link] ghost button
+    [bug icon red] Defects (1):
+      DEF-0045 | "Cisco AnyConnect driver bug Win11" | Open
+      [+ Add Defect Link] ghost button
+    [link icon gray] Related Tickets (1):
+      INC-1031 | "Network drops in Build 3" | Resolved
+      [+ Add Ticket Link] ghost button
+
+Card 3 — Activity Timeline (white, border, radius-12, padding 20px):
+  Filter tabs: All | Comments | History (blue bottom border on active)
+  Timeline with connector line (dashed gray vertical):
+    System: "Ticket created by Raj Kumar" · Aug 31 14:05
+    System: "Assigned to Sarah Lee by Raj Kumar" · Aug 31 14:06
+    Sarah Lee avatar: "I can reproduce this. Checking Cisco AnyConnect logs." · Aug 31 15:22
+    System: "Priority changed High → Critical by Sarah Lee" · Aug 31 15:24
+    System: "Linked to BLG-2201" · Aug 31 15:30
+    System: green check "First Response SLA met (14h 22m)" · Sep 01 08:00
+    System: yellow "SLA Warning — Resolution SLA at risk (4h remaining)" · Sep 01 10:00
+
+Card 4 — Comment Box (white, border, radius-12, padding 20px):
+  UserAvatar (32px) + RichTextEditor (min 80px, placeholder "Add a comment... @ to mention")
+  Toolbar: Bold | Italic | Link | Lists | Attach | Emoji
+  Right side: Public/Internal visibility toggle + Submit button
+
+RIGHT PANEL (30%, 360px, gray-50 bg, border-left, padding 20px):
+Five stacked white cards (border, radius-12, padding 16px):
+
+1. Details: Ticket ID | Created | Updated | Source | Category | Impact | Reporter (avatar+name)
+2. Assignment: Assigned To (avatar + name Sarah Lee) + [Reassign] + Team: IT Support L2
+3. SLA Card:
+   "At Risk" badge in header
+   First Response: progress bar 100% green + "Met · 14h 22m" + "Target: 16h"
+   Resolution: progress bar 78% yellow + countdown "3h 42m remaining" (yellow, pulse when <2h) + "Target: 24h"
+   "View SLA Policy →" link
+4. Watchers: AvatarGroup (3 avatars) + [+Add] + Watch toggle (current user)
+5. Tags: chips "vpn" "network" "cisco-anyconnect" + inline add input
+
+RESOLUTION MODAL (triggered by Resolve button, 640px wide):
+Header: "Resolve Ticket INC-1047" + X close
+Body:
+  Resolution Summary (required textarea, min 100px)
+  Resolution Code dropdown (from Master Data TICKET_RESOLUTION_CODES)
+  Root Cause category select
+  KB prompt panel (blue-50 bg, blue border): "Create Knowledge Article from this resolution?" + [Yes — Create Article] ghost button
+  Notify reporter checkbox (checked by default)
+Footer: Cancel | Mark as Resolved primary
+
+
+== PROMPT 2E: SLA Management + Knowledge Base ==
+Design two screens:
+
+SCREEN A: SLA Management (1440x900px)
+TopNav + SideNav (SLA Management active, violet)
+
+Main: "SLA Management" title + "Configure response and resolution targets per category" subtitle
+"+ Add Policy" primary button right-aligned
+
+KPI row (4 cards): Active Policies:6 | Avg Compliance:87% | Breached Today:7 | At Risk Now:12
+
+Filter row: Priority select | Status select | Category select | Search input 240px
+
+DataTable (white, full width):
+Columns: Policy Name(flex) | Priority(100px) | Category(160px) | 1st Response(140px) | Resolution(120px) | Escalation(180px) | Compliance(120px mini-bar) | Status(100px) | Actions(60px)
+
+Sample rows:
+Critical Hardware | Critical | Hardware | 4h | 8h | L2@2h, L3@6h | 91% green bar | Active
+High Software     | High | Software | 8h | 24h | L2@4h | 88% green | Active
+Standard L1       | Medium | All | 16h | 48h | L2@8h | 85% green | Active
+Network VPN       | High | Network | 4h | 16h | L2@2h, L3@8h | 79% yellow bar | Active
+Access Requests   | Low | Access | 24h | 72h | — | 94% | Active
+
+SlideOver (480px, from right, "Add SLA Policy"):
+  Policy Name input
+  Priority select + Status toggle (Active/Inactive)
+  Category multi-select (from Master Data)
+  Response Times: First Response(hours) | Resolution(hours) | Update Interval(hours)
+  Business Hours: schedule dropdown (24x7 / Business Hours / Extended / Custom)
+  Escalation Rules builder: [Escalate to: role/team select] + [if unresolved after: N hours] + [+ Add Rule] + [remove icon]
+  Notifications: checkbox list (Notify assignee 30min before / Notify team lead on breach / etc.)
+  Footer: Cancel | Save as Draft | Save Policy
+
+SCREEN B: Knowledge Base (1440x900px)
+Blue hero banner (blue-600, radius-12, padding 32px):
+  "How can we help you?" white heading
+  Subtitle: "Search 105 articles or browse by category"
+  White search bar (48px tall, full width up to 600px, search icon + button)
+
+Category chips row: All(105) Hardware(28) Software(22) Network(18) Access(12) Email(9) Security(8) Onboarding(5) Other(3)
+  Active: blue-600 bg white text. Default: white bg border.
+
+Two-column layout:
+  LEFT (flex-1): Article grid 3 columns
+    ArticleCard (white, border, radius-12, shadow-sm, hover shadow-md):
+      CategoryBadge + Title (bold, 2-line clamp) + Excerpt (3-line clamp, gray-500)
+      Footer: eye icon + view count | clock icon + "Updated Xd ago" | thumbs-up + "92%"
+    9 cards visible + "Load more articles" button
+
+  RIGHT (280px): Two sidebar cards
+    "Trending This Week" (white, border): numbered list (orange circles 1-5) + article links
+    "Popular Categories" (white, border): category + count + mini bar chart per category
+
+
+--- BATCH 3: ASSET MANAGEMENT ---
+
+== PROMPT 3A: Asset Dashboard ==
+Design Asset Management dashboard at 1440x900px. App accent color: #059669 (green).
+
+TopNav (AppSwitcher shows "Asset Management", green dot)
+SideNav (240px, green active state): Dashboard(active) | Assets | Assignments | Maintenance | Vendors | Reports | Settings
+
+Main content (1200px, padding 32px):
+
+KPI Row (5 cards): Total Assets:847 | Assigned:623 | In Stock:189 | Under Maintenance:28 | Retired:7
+
+Alert Panel (right-aligned, 300px card, white, border):
+  "Alerts" title + bell icon
+  Three grouped alert sections:
+    orange header: "Warranty Expiring (3)" — asset rows: name + "X days" + View link
+    red header: "Maintenance Overdue (2)" — asset rows
+    blue header: "Unassigned Since >7d (5)" — asset rows
+
+Charts row (height 300px):
+  LEFT 50% "Assets by Category" donut: Laptop:312, Desktop:198, Server:87, Network:124, Phone:126
+  RIGHT 50% "Warranty Expiry Forecast" grouped bar chart: X=30d/60d/90d buckets, Y=count
+    Colors: 30d=orange, 60d=yellow, expired=red
+
+
+== PROMPT 3B: Asset List + Add Asset ==
+Design two Asset Management screens:
+
+SCREEN A: Asset List (1440x900px)
+PageHeader: "Assets" + ViewToggle (Table/Cards) + "+ Add Asset" primary button
+
+Filters: Category | Status | AssignedTo | Location | Warranty Status (Valid/Expiring/Expired) | Purchase Date range
+
+DataTable (white, full width):
+Columns: ☐ | Asset Tag(100px) | Name(flex) | Category(120px) | Serial No(140px) | Status(120px) | Assigned To(160px) | Location(140px) | Purchase Date(120px) | Warranty Expiry(140px) | Last Maintenance(130px) | Actions(60px)
+
+Row visual states:
+  Warranty <30d: yellow left border 3px, warranty date text orange
+  Warranty expired: red left border 3px, warranty date text red
+  Maintenance overdue: orange left border 3px
+
+Sample rows:
+AST-0291 | Dell PowerEdge R750 | Server | SN-29182 | Assigned badge | IT Infrastructure | DC-A | Jan 2024 | Jan 2025(red expired) | Aug 2026
+AST-0445 | MacBook Pro M3 | Laptop | C02ZX1234 | Assigned | Sarah Lee | Floor 2 | Mar 2024 | Nov 2026(orange 30d) | Jul 2026
+AST-0512 | Cisco Switch 2960 | Network | FCW2041L001 | In Stock | — | Server Room 1 | Dec 2023 | Dec 2027(green) | Jun 2026
+AST-0789 | HP LaserJet M428 | Printer | VNC123456 | Under Maintenance | — | Floor 3 | Aug 2022 | Aug 2024(red expired) | Sep 2026
+
+SCREEN B: Add/Edit Asset SlideOver (600px wide)
+Header: "Add New Asset" + X close
+Scrollable body:
+
+Section "Asset Information":
+  Asset Name* input | Asset Tag (auto-generated, read-only, gray bg)
+  Category* dropdown (from Master Data ASSET_CATEGORIES — hierarchical)
+  Sub-Category (dynamic based on category)
+  Brand input | Model input | Serial Number input
+  Description textarea
+  Photo upload (drag-drop zone with preview thumbnail after upload)
+
+Section "Purchase & Warranty":
+  Vendor dropdown (from Master Data VENDORS) + "+ Add Vendor" inline link
+  Purchase Date picker | Purchase Cost input (numeric, currency symbol prefix)
+  Warranty Start picker | Warranty End picker
+  Alert toggle: "Notify X days before warranty expiry" (checkboxes: 90d/60d/30d from Master Data config)
+
+Section "Location & Assignment":
+  Location hierarchical picker (Building > Floor > Room, from Master Data LOCATIONS)
+  Assigned To UserPicker (optional — if blank, status = In Stock)
+  Assignment Date picker (visible only when Assigned To is filled)
+
+Footer: Cancel | Save Asset
+
+
+== PROMPT 3C: Asset Detail ==
+Design Asset Detail view at 1440x900px.
+
+Header (white, border-bottom, px32, py20):
+  Asset tag badge "AST-0291" | "Dell PowerEdge R750" H2 | Category icon | "Assigned" status badge
+  Actions: Edit | Assign | [Retire danger button] | More menu
+
+TabBar: Overview(active) | Assignment History | Maintenance Log | Linked IT Tickets | Documents
+
+TAB OVERVIEW:
+Left 30%: Asset photo card (white, border, placeholder image, 16:9 ratio)
+Right 70%: Specs grid (2-column key-value, white card, border):
+  Asset Tag | Name | Category | Brand/Model | Serial Number | Condition
+  Status | Location | IP Address | MAC Address | OS/Version
+  Purchase Date | Purchase Cost | Current Value | Depreciation Rate
+  Warranty Start | Warranty End (red if expired, green if valid) | End of Life
+
+TAB ASSIGNMENT HISTORY:
+Vertical timeline using existing Timeline component:
+  Each node: UserAvatar + "Assigned to [Name]" | Date range | "Current" chip OR return date | Condition badge on return | Notes
+  Bottom: [Assign to User] primary + [Mark as Returned] secondary buttons
+
+Assign to User modal (640px, 5-step wizard using existing Modal):
+  Step 1: Asset summary card (read-only) — confirm correct asset
+  Step 2: User search picker + user card when selected (name, dept, current assets count)
+  Step 3: Assignment Date (today default) + Expected Return Date (optional) + Notes
+  Step 4: Review summary
+  Step 5: Success — green checkmark + "View Asset" + "Assign Another"
+
+TAB MAINTENANCE LOG:
+"+ Log Maintenance" button (top right)
+DataTable: Date | Type badge(PM/CM colors) | Technician | Cost | Notes | Next Due | Actions
+3 sample rows
+Log Maintenance SlideOver (480px): Asset(pre-filled) | Type(from Master Data) | Date | Technician picker | Cost | Notes | Next Due date | Link to IT Ticket (optional)
+
+TAB LINKED IT TICKETS:
+List of linked ticket cards (white, border, radius-8):
+  violet dot | TKT-ID | Title | Priority badge | Status badge | [Open in IT Services ↗] link button
+2 sample tickets
+
+TAB DOCUMENTS:
+File grid (3 cols): file type icon | filename | upload date | file size | [Download] [Delete]
+"+ Upload Document" button
+
+
+== PROMPT 3D: Maintenance Scheduler + Reports ==
+Design two Asset Management screens:
+
+SCREEN A: Maintenance Scheduler (1440x900px)
+PageHeader: "Maintenance Scheduler" + "+ Schedule Maintenance" primary button
+
+Main content (H-layout):
+LEFT 65%: Monthly calendar (white card, border, radius-12):
+  Month nav: prev/next arrows + "September 2026"
+  7-column day grid (Su Mo Tu We Th Fr Sa)
+  Day cells (40x40px each): show maintenance event chips inside cells
+    Chip colors: green=completed, orange=scheduled, red=overdue
+  Today cell: blue-50 bg
+  Hover: tooltip card showing asset name + type + technician
+
+RIGHT 35%: "Upcoming (30 days)" panel (white card, scrollable):
+  MaintenanceItem rows (border-bottom):
+    Date badge (colored by urgency) | Asset name + category | Type chip | Technician avatar | [View] ghost button
+  "Overdue" section at top with red-50 bg, 2 items
+
+SlideOver "Schedule Maintenance" (480px):
+  Asset search picker (search by name/tag, show asset card when selected)
+  Type dropdown (from Master Data MAINTENANCE_TYPES)
+  Scheduled Date + Time picker
+  Assigned Technician picker
+  Recurring toggle → when ON: Frequency select (Weekly/Monthly/Quarterly/Semi-annual/Annual)
+  Estimated Cost | Notes
+  Notify technician checkbox
+
+SCREEN B: Asset Reports (1440x900px)
+Report tabs: Inventory | Depreciation | Warranty | Maintenance Cost | Assignment History
+
+ACTIVE: Depreciation Report
+  Filter row: Category | Location | Date range + Export button
+  Summary cards: Total Asset Value $2.4M | Total Depreciated $890K | Avg Age 2.3yr | Assets <5% Value: 47
+
+  Main chart (white card): Line chart "Asset Value Over Time"
+    Two lines: Purchase Value vs Current Value
+    X=months, Y=$ value
+
+  DataTable: Asset | Category | Purchase Price | Purchase Year | Age | Current Value | Depreciation % | Book Value Status
+    Status chip: Active/Near-EOL(orange)/EOL(red)
+
+
+--- BATCH 4: PROJECT MANAGEMENT ---
+
+== PROMPT 4A: PM Dashboard + Project List ==
+Design two Project Management screens at 1440x900px. App accent: #2563EB (blue).
+
+SCREEN A: PM Dashboard
+TopNav (AppSwitcher: "Project Management", blue dot)
+SideNav (blue active): Dashboard(active) | Projects | My Tasks | Backlogs | Defects | Sprints | Reports | Settings
+
+KPI Row: Active Projects:12 | Tasks Due Today:8 | Overdue Tasks:5 | Hours This Week:32h
+
+Widget grid (2x2, equal size, gap 16px, height 520px):
+
+Top-left "My Tasks" card (white, border, radius-12):
+  5 task rows: priority dot | title | [project chip] | status badge | due date
+  Overdue rows: red left border + red date text
+  Sample: P1 red | "Fix OAuth token issue" | [Phoenix API] | In Progress | Sep 5
+
+Top-right "My Projects" card:
+  3 rows: color avatar | project name | status badge | progress bar | team count
+
+Bottom-left "Team Workload" card: stacked horizontal bar chart per member
+  Each row: Avatar + name (left 30%) | bar (right 70%) showing segments by status color
+
+Bottom-right "Sprint Burndown" card:
+  "Sprint 12" subtitle
+  Line chart: Ideal (dashed gray) vs Actual (solid blue)
+  X=days 1-14, Y=points. Today marker (dashed vertical)
+
+Activity Feed (full-width card below grid, 6 items):
+  Avatar | text | project chip | timestamp
+
+SCREEN B: Project List
+PageHeader: "Projects" + ViewToggle(Cards/Table) + Filter + "+ New Project" primary
+
+Card Grid (3 columns, gap 16px):
+ProjectCard (white, border, radius-12, p20, hover shadow-md transition):
+  Row 1: colored circle avatar (48px, project initials) | project name (H3) | status badge
+  Progress bar (full width, height 6px, color by status: active=blue, hold=orange)
+  Owner row: avatar + name + "Owner" label
+  Dates: "Sep 2026 — Mar 2027"
+  Stats: tasks count | defects count (red if >0) | hours
+  Team: AvatarGroup + "X members" text
+  [View Project] primary button
+
+5 project cards: Phoenix API | Nirmaan Portal | ACM Fiori v2 | Data Pipeline | Mobile App
+
+"+ New Project" modal (560px):
+  Project Name* + Key (auto-generated editable, 6 chars max, uppercase, helper "Used for item IDs e.g. PHXAPI-234")
+  Status select (Planning/Active/On Hold)
+  Methodology select (from Master Data: Scrum/Kanban/Waterfall/Hybrid)
+  Owner UserPicker* + Team Members multi-picker
+  Start Date + End Date pickers (end must be > start, validated)
+  Description textarea
+  Sprint Duration select (visible if Scrum, from Master Data config)
+  Story Point Scale select (Fibonacci/T-Shirt/Custom, from Master Data)
+
+
+== PROMPT 4B: Project Detail — Backlog Tab ==
+Design Project Detail — Backlog view at 1440x900px. This is the KEY integration screen.
+
+Project Header (white band, border-bottom, px32, py20):
+  [blue circle avatar "PA"] | "Phoenix API" (H2) | Active status dropdown | Progress bar 67% blue |
+  Owner avatar + "Rakesh Sarawag" | AvatarGroup (4 members) | "Sep 2026 — Mar 2027" |
+  [Edit secondary] [Archive ghost]
+
+Stats row (4 inline stat chips, gray-50 bg, border, radius-8, px16 py8):
+  Total Tasks:48 | Completed:32 | In Progress:12 | Overdue:4 (red text+icon)
+
+TabBar (border-bottom):
+  Overview | Backlog(active, blue underline 2px) | Defects | Tasks | Sprints | Time Logs | Team
+  Tab height 44px
+
+Below tabs, toolbar:
+  ViewToggle: [Table active][Kanban][By Epic] connected buttons left
+  Filters: Sprint select | Priority | Assignee | Status | Type (all dropdowns, gap 8px)
+  Sort select
+  "+ Add Item" primary button right-aligned
+
+DataTable (white, full width, border, radius-12):
+Headers: ☐(44px) | ID(100px) | Type(60px) | Title(flex) | Priority(110px) | Status(130px) | Points(70px) | Sprint(140px) | Assignee(140px) | Linked Tickets(120px) | Actions(60px)
+
+Row border-left 3px by priority: P1=red, P2=orange, P3=blue, P4=none
+
+Sample rows:
+BI-234 | story-icon | "Fix OAuth token refresh for API gateway" | P1 red | InProgress | 8pts | Sprint 12 | Raj avatar | 🔗2 (blue badge clickable) | ...
+BI-235 | bug-icon | "Payment timeout on mobile checkout" | P2 orange | Open | 5pts | Sprint 12 | Asha avatar | 🔗1 | ...
+BI-236 | epic-icon | "User Authentication Overhaul" | P1 | InProgress | 21pts | — | Raj | 🔗0 | ...
+BI-237 | story-icon | "Add refresh token endpoint" | P3 | Open | 3pts | Backlog | unassigned | 🔗0 | ...
+BI-238 | spike-icon | "Research GraphQL migration" | P4 | Open | 2pts | Backlog | Tom avatar | 🔗0 | ...
+BI-239 | story-icon | "Rate limiting middleware" | P2 | In Review | 5pts | Sprint 12 | Maria avatar | 🔗3 | ...
+
+Linked Tickets cell click → popover (white, border, shadow-md, padding 12px):
+  Header: "Linked IT Tickets" + count
+  Row per ticket: violet dot | TKT-ID | title | status badge | [Open in IT Services ↗ link]
+  [+ Add Link] ghost button at bottom
+
+"+ Add Item" SlideOver (560px, from right):
+Header: "Add Backlog Item" + X
+
+Section 1 — Basics:
+  Title* (required, min 5 chars, show char count)
+  Type* select (Story/Epic/Spike/Research — from Master Data)
+  Priority select (P1-P4 with color indicators)
+  Description RichTextEditor (min 100px)
+
+Section 2 — Planning:
+  Story Points select (Fibonacci scale from Master Data: 1,2,3,5,8,13,21)
+  Acceptance Criteria (checklist builder):
+    Existing rows with checkbox + text + delete
+    [+ Add Criterion] ghost button, adds new editable row
+  Sprint picker (shows open sprints for this project)
+  Assignee UserPicker (project members only)
+
+Section 3 — Linked IT Tickets (KEY FEATURE, violet accent border-left 3px):
+  Label "Link to IT Tickets" (Label/Default, Neutral/700) + violet dot icon
+  SearchInput full width: placeholder "Search IT tickets by ID or title..."
+  Results dropdown (opens on type, min 2 chars):
+    Each row: [TKT-ID gray] | [title text flex] | [status badge] | [priority badge]
+    Hover: gray-50 bg. Click: adds to chips area.
+  Linked chips area (flex-wrap, gap 8px, min-height 40px):
+    Chip per selected ticket: [violet dot 8px] [TKT-ID text] [short title 80px max, truncate] [status badge xs] [× remove]
+    Empty: "No tickets linked" italic gray-400
+
+Footer: Cancel | Save Item (disabled until title filled)
+
+
+== PROMPT 4C: Defects Tab + Task Kanban ==
+Design two Project Management screens:
+
+SCREEN A: Defects Tab (1440x900px, same header as Backlog)
+TabBar with Defects active.
+Toolbar: [Table][Kanban] toggle | Severity filter | Status | Assignee | Sprint | "+ Add Defect" primary
+
+DataTable (white, full width):
+S1 rows: bg Status/Error-Light (#FEF2F2). S2 rows: bg Status/Warning-Light (#FFFBEB)
+Headers: ☐ | ID(100px) | Severity(120px) | Title(flex) | Status(130px) | Assignee(140px) | Found In(120px) | Sprint(130px) | Linked Tickets(120px) | Age(80px) | Actions
+
+Sample rows:
+DEF-089 | S1 Blocker (red filled badge) | "Payment API 500 on retry" | In Progress | Raj | v2.1.0 | Sprint 12 | 🔗3 | 4d
+DEF-090 | S2 Critical (orange) | "Token expiry not handled" | Open | — | v2.0.5 | Backlog | 🔗1 | 8d
+DEF-091 | S3 Major (blue) | "Pagination breaks 1000+ results" | Fixed | Asha | v2.1.0 | Sprint 11 | 🔗0 | 12d
+DEF-092 | S1 Blocker | "Memory leak in auth middleware" | In Progress | Tom | v2.1.0 | Sprint 12 | 🔗2 | 2d
+DEF-093 | S4 Minor (gray) | "Button tooltip misaligned" | Open | — | v2.0.5 | Backlog | 🔗0 | 15d
+
+"+ Add Defect" SlideOver (560px):
+  Title* | Severity* select with descriptions:
+    S1 - Blocker: System unusable / core function completely broken
+    S2 - Critical: Major feature broken, no workaround
+    S3 - Major: Feature partially broken, workaround exists
+    S4 - Minor: Cosmetic or minor impact
+  Status | Priority
+  Description RichTextEditor
+  Steps to Reproduce (numbered list builder: + Add step rows, re-orderable)
+  Two-column: "Expected Behavior" textarea | "Actual Behavior" textarea
+  Row: Environment select (from Master Data) | Build Version input | Browser input | OS input
+  Assigned To UserPicker | Sprint picker
+  Linked IT Tickets (same search pattern as Backlog SlideOver, violet accent)
+  Screenshot FileUpload (image files only, drag-drop)
+
+SCREEN B: Tasks Kanban (1440x900px, same header)
+TabBar: Tasks active. ViewToggle shows Kanban active.
+
+KanbanBoard (horizontal scroll, gray-100 bg):
+5 columns (280px each, gap 16px, padding 24px):
+
+Column "To Do" (8): gray-50 bg, header count badge
+  3 KanbanCards:
+    P3 dot | "Set up Redis caching layer" | Task badge | Maria avatar | Sep 8 | 3pts
+    P2 dot | "Write API documentation" | Task | unassigned | Sep 10 | 2pts
+    P4 dot | "Add unit tests auth module" | Task | Tom | Sep 12 | 5pts
+  "+ 5 more" ghost card (dashed border, gray text)
+
+Column "In Progress" (4):
+  P1 dot | "Implement JWT refresh tokens" | Task | Raj | Sep 5 | 8pts | 💬5
+  P2 dot | "Database query optimization" | Task | Asha | Sep 6 | 5pts
+
+Column "In Review" (3):
+  P2 dot | "Rate limiting middleware" | Story | Maria | Sep 4 | 5pts
+  P3 dot | "Error response standardization" | Task | Tom | Sep 4 | 3pts
+
+Column "Done" (12): cards slightly dimmed, checkmark overlay
+  3 visible + "+ 9 more" ghost
+
+Column "Blocked" (2): red header text + red column indicator
+  Both cards: red left border 3px
+  P1 dot | "OAuth integration with SSO" | Blocked chip "Waiting: vendor credentials" | Raj | 13pts
+
+
+== PROMPT 4D: Sprints + My Tasks + Time Logs ==
+Design three Project Management screens:
+
+SCREEN A: Sprints Tab (1440x900px, same project header)
+TabBar: Sprints active.
+
+Active Sprint Banner (blue-50 bg, blue-200 border, radius-12, padding 20px):
+  Left: "Sprint 12" H3 + "Complete OAuth overhaul and performance fixes" italic goal
+       "Sep 1 – Sep 14, 2026" dates
+  Right: "28 / 45 points" progress bar blue | "11 days remaining"
+  Buttons: [View Sprint Board secondary] [Complete Sprint primary]
+
+SprintList (v-stack, gap 12px):
+
+SprintCard — Planning (dashed border, lighter, white):
+  "Sprint 13 — Planning" | Planning badge | "Not started" | [Start Sprint primary blue]
+  Goal input placeholder visible: "Set a sprint goal..."
+
+SprintCard — Active (solid border, white):
+  "Sprint 12 — Active" | Active badge (green) | Sep 1-14
+  Goal text | progress bar 62% | stats: 28 done, 12 in-progress, 5 blocked, velocity hint
+  [View Board] [Complete Sprint]
+
+SprintCard — Completed:
+  "Sprint 11 — Completed" | gray badge | Aug 18–31
+  Velocity: 32pts | "Completed Sep 1" | [View Retrospective] ghost
+
+[+ Create Sprint] ghost button at bottom of list
+
+SCREEN B: My Tasks Global (1440x900px)
+SideNav: My Tasks active
+
+PageHeader: "My Tasks" + GroupBy toggle (Project / Due Date / Priority) + Filter + Export buttons
+
+OVERDUE SECTION (pinned top, red-50 bg, red border-bottom):
+  "3 Overdue Tasks" red heading
+  3 rows: red left border | priority dot | title | project chip | "Xd overdue" red text | status | [Log Time ghost]
+
+GroupBy PROJECT view:
+  ProjectGroup header (gray-50, border-radius-8, padding 12px):
+    project color dot | project name | count badge | chevron expand
+
+  Task rows under each project:
+    [priority dot] [title flex] [type chip xs] [status badge] [due date text] [Xh est] [Log Time ghost btn]
+    Due today: orange left border 2px + "Today" orange text
+    Normal: no border
+
+SCREEN C: Time Logs Tab (1440x900px, inside project detail)
+TabBar: Time Logs active
+
+Summary cards row: Total This Week:156h | My Hours:32h | Team Avg:26h | Billable:89%
+
+Filter row: User picker | Date range (current week default) | Task search | [Apply] button
+
+Two-column layout:
+
+LEFT 40%: Team Summary card (white, border):
+  Title "Team This Week"
+  Member rows (border-bottom):
+    Avatar + Name | proportional blue bar | "32h" right-aligned
+  5 members shown
+
+RIGHT 60%: Time Log table (white, border) + "+ Log Time" primary button
+  Headers: User(120px) | Task(flex) | Date(100px) | Hours(80px) | Notes(flex) | Actions(60px)
+  10 sample rows with edit/delete icons
+  Weekend entries: subtle gray-100 bg tint
+
+"+ Log Time" SlideOver (400px):
+  Task search picker (placeholder "Search tasks...", shows task ID+name+project in dropdown)
+  Date picker (today default, cannot be future, warn if >90 days past)
+  Hours input (0.5 step, min 0.5, max 12, validation: "Maximum 12h per entry")
+  Notes textarea (optional)
+  Submit button
+
+
+--- BATCH 5: CROSS-APP INTEGRATION ---
+
+== PROMPT 5A: Linking Flow ==
+Design the IT Ticket → Backlog linking flow as 3 progressive states of the same IT Ticket Detail screen:
+
+STATE 1: Linked Items panel, "+ Add Link" just clicked
+  IT Ticket Detail for TKT-1042 (full screen 1440x900px)
+  In the RIGHT PANEL Linked Items card: expand "+ Add Link" inline panel
+  Panel (white, blue border, shadow-md, padding 16px, radius-8):
+    Title "Link to Item"
+    SearchInput (autofocused, placeholder "Search by ID or title...")
+    Type filter chips: [wrench Backlog] [bug Defect] [link Ticket] all active
+    Below: "Recent" label + 3 recent item ghost buttons
+
+STATE 2: Search results showing
+  SearchInput has "user auth" typed
+  Dropdown results (white, border, shadow, max-height 220px):
+    Section label "BACKLOG ITEMS"
+    Row 1: [blue PM icon] BI-234 | "Fix OAuth token refresh for API gateway" | InProgress | Phoenix API
+    Row 2: [blue PM icon] BI-236 | "User Authentication Overhaul" | InProgress | Phoenix API
+    Row 3: [blue PM icon] BI-201 | "SSO integration project" | Done | Nirmaan Portal
+    Section label "IT TICKETS"
+    Row: INC-1031 | "Intermittent network drops" | Resolved
+
+STATE 3: After linking BI-234
+  Linked Items panel now shows LinkedChip:
+    [blue dot] BI-234 | "Fix OAuth token refresh..." | InProgress badge | × remove on hover
+  Toast (bottom-right): Success toast "Link added — BI-234 linked to TKT-1042"
+  Panel collapsed back to normal state
+
+Also show the REVERSE view: PM Backlog Item BI-234 detail
+  Right panel "Linked IT Tickets" section shows:
+    [violet dot] TKT-1042 | "VPN connection drops..." | In Progress | P1 | [Open in IT Services ↗]
+    [violet dot] TKT-1048 | "OAuth scope error" | Open | P2 | [Open in IT Services ↗]
+
+
+== PROMPT 5B: Notification Panel + App Switcher ==
+Design two integration screens:
+
+SCREEN A: Notification Panel (380px slide-over overlay on any dashboard, 1440x900px total)
+Base: IT Services dashboard (slightly darkened, overlay scrim left of panel)
+Panel (white, border-left, shadow-xl, full height from below TopNav):
+  Header (60px, border-bottom): "Notifications" H4 + "Mark all read" link + X close
+  Filter chips: All(12) | IT Services(7) | Assets(3) | Projects(5)
+    Active chip: solid color bg (violet/green/blue)
+
+  Notification list (scrollable):
+  [violet dot] "Riya Sharma assigned TKT-1088 to you — P1 production outage on payments" · Just now · UNREAD (white bg, blue dot right)
+  [violet dot] "SLA breach in 30 minutes — TKT-1042 unresolved since 22h" · 15m · UNREAD (warning-light bg tint)
+  [green dot] "Dell PowerEdge R750 warranty expires in 30 days — AST-0291" · 2h · UNREAD
+  [blue dot] "Sprint 12 started in Phoenix API — 14 items assigned to you" · 4h · read (gray-50 bg)
+  [blue dot] "BI-234 marked as Blocked by Arjun Mehta" · 5h · read
+  [violet dot] "@you mentioned in TKT-1042: 'Can you confirm the OAuth scope?'" · 6h · read
+  [green dot] "MacBook Pro M3 assigned to you — AST-0445" · Yesterday · read
+  [blue dot] "You've been added to project Nirmaan Portal" · 2d · read
+
+  Each unread item: hover shows "Mark as read" X button on right
+
+SCREEN B: App Switcher open (TopNav with dropdown visible, 1440x900px)
+Current app: IT Services (shown in TopNav AppSwitcher)
+AppSwitcherDropdown (220px, white, shadow-lg, border, radius-8, padding 8px):
+  "Switch App" label (gray-400, small caps, padding 4px 8px)
+  [violet dot] IT Services — ✓ checkmark right (current)
+  [green dot] Asset Management
+  [blue dot] Project Management
+  Divider
+  "+ More Apps" link (blue, small)
+
+Clicking Asset Management: dropdown closes, TopNav app indicator changes to green, SideNav items change, page transitions to Asset Dashboard
+
+
+== PROMPT 5C: Validation States + Empty States ==
+Design a screen showing all validation and empty state patterns:
+
+Create a reference page at 1440x900px with sections:
+
+SECTION: Form Validation States
+  Show InputField component in all states side by side:
+    Default (gray border) | Focus (blue border + shadow) | Error (red border + error message below) | Disabled (gray bg, not-allowed cursor)
+  Show a completed form with:
+    Valid field: green check icon in trailing
+    Error field: red border + "This field is required" or specific validation message
+    Warning field: orange border + "Value exceeds recommended limit"
+
+SECTION: Business Rule Violations (toast/banner patterns)
+  Error Banner (red-50 bg, red border): "Cannot assign asset — asset is Under Maintenance"
+  Warning Banner (yellow-50): "Resolved with open sub-tasks — 2 items still pending"
+  Info Banner (blue-50): "SLA clock paused — ticket status is Pending"
+  Success Toast: "Asset assigned to Sarah Lee successfully"
+  Error Toast: "Failed to save — ticket number TKT-1047 already exists"
+
+SECTION: Empty States
+  Show EmptyState component in 4 variants:
+    No Data (inbox icon): "No tickets yet — Create your first IT ticket to get started" + [+ New Ticket] button
+    No Results (search icon): "No results for 'vpn cisco'" — "Try adjusting your filters or search terms" (no CTA)
+    Error (warning icon): "Something went wrong — Unable to load tickets. Please try again." + [Try Again] button
+    No Permission (lock icon): "Access restricted — You don't have permission to view Assets. Contact your administrator." + [Request Access] button
+
+SECTION: Loading States
+  KPICard skeleton (gray animated shimmer)
+  DataTable skeleton (5 rows, columns with gray blocks, animated)
+  Chart skeleton (gray rounded rect)
+
+
+================================================================================
+HOW TO USE THESE PROMPTS IN FIGMA
+================================================================================
+
+EXECUTION ORDER (important — later batches use components from earlier):
+  1. Batch 2A: IT Dashboard
+  2. Batch 2B: Ticket List
+  3. Batch 2C: New Ticket Modal
+  4. Batch 2D: Ticket Detail
+  5. Batch 2E: SLA + Knowledge Base
+  6. Batch 3A: Asset Dashboard
+  7. Batch 3B: Asset List + Add Form
+  8. Batch 3C: Asset Detail
+  9. Batch 3D: Maintenance + Reports
+  10. Batch 4A: PM Dashboard + Project List
+  11. Batch 4B: Backlog Tab (KEY — linking feature)
+  12. Batch 4C: Defects + Kanban
+  13. Batch 4D: Sprints + My Tasks + Time Logs
+  14. Batch 5A: Linking Flow
+  15. Batch 5B: Notification + App Switcher
+  16. Batch 5C: Validation + Empty States
+
+FIGMA AGENT DIVISION (if using multi-agent in Figma):
+  Agent 1: Batches 2A + 2B + 2C (IT Dashboard, List, New Ticket)
+  Agent 2: Batches 2D + 2E (IT Detail, SLA, KB)
+  Agent 3: Batches 3A + 3B (Asset Dashboard, List)
+  Agent 4: Batches 3C + 3D (Asset Detail, Maintenance)
+  Agent 5: Batches 4A + 4B (PM Dashboard, Backlog)
+  Agent 6: Batches 4C + 4D (Defects, Kanban, Sprints, My Tasks)
+  Agent 7: Batch 5A + 5B + 5C (Integration, Notifications, Validation)
+
+NAMING CONVENTION FOR FIGMA FRAMES:
+  IT/{ScreenName}/{Variant}    e.g. IT/Dashboard/Desktop, IT/TicketDetail/Desktop
+  ASSET/{ScreenName}/{Variant} e.g. ASSET/Dashboard, ASSET/Detail/AssignmentTab
+  PM/{ScreenName}/{Variant}    e.g. PM/Dashboard, PM/ProjectDetail/BacklogTab
+
+FIGMA PAGE STRUCTURE:
+  Page 1: Cover
+  Page 2: IT Services (all IT frames)
+  Page 3: Asset Management (all Asset frames)
+  Page 4: Project Management (all PM frames)
+  Page 5: Integration Flows (cross-app screens)
+  Page 6: Validation & Empty States
+  Page 7: Dev Handoff
+
+================================================================================
+END OF SPECIFICATION
+================================================================================

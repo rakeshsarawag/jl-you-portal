@@ -1,0 +1,2211 @@
+================================================================================
+  HR PORTAL SPECIFICATION
+  Part 1a: Master Data Configuration & Permissions
+================================================================================
+
+  Project      : Enterprise HR Portal
+  Tech Stack   : React + Supabase + Tailwind CSS v4
+  Applications : Employee Dashboard, Employee Directory, Recruitment,
+                 Onboarding, User Management, Performance, Training,
+                 Communications, Collaboration, Workflow Automation
+  Document     : Part 1a — Master Data Config + Role-Based Permissions
+  Date         : 2026-09-04
+
+================================================================================
+  SECTION A1 — MASTER DATA CONFIGURATION
+  (Managed in Master Data App; consumed as value helps and config across all HR apps)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+  ENTITY: LEAVE_TYPES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Defines all leave categories available in the organization. These records
+    drive leave application forms, balance calculations, approval routing,
+    encashment processing, and eligibility filtering across Employee Dashboard
+    and HR reporting.
+
+  Fields:
+    type_id                 UUID, primary key
+    name                    VARCHAR(100), not null, unique
+    accrual_method          ENUM('monthly', 'annually', 'none')
+    accrual_rate            NUMERIC(5,2)  -- days per accrual period; 0 if none
+    max_balance             NUMERIC(5,2)  -- max accumulation allowed; NULL = unlimited
+    carry_forward_max       NUMERIC(5,2)  -- days carryable to next year; 0 = no carry
+    encashable              BOOLEAN, default false
+    requires_approval       BOOLEAN, default true
+    min_notice_days         INTEGER, default 0
+    max_continuous_days     INTEGER       -- NULL = no limit
+    applicable_gender       ENUM('All', 'Female', 'Male'), default 'All'
+    is_active               BOOLEAN, default true
+
+  Seed Data:
+
+    1. Earned Leave (EL)
+       accrual_method      : annually
+       accrual_rate        : 12  (1 day per month, 12 per year)
+       max_balance         : 30
+       carry_forward_max   : 15
+       encashable          : true
+       requires_approval   : true
+       min_notice_days     : 7
+       max_continuous_days : 15
+       applicable_gender   : All
+       is_active           : true
+
+    2. Sick Leave (SL)
+       accrual_method      : annually
+       accrual_rate        : 12
+       max_balance         : 12
+       carry_forward_max   : 0
+       encashable          : false
+       requires_approval   : true
+       min_notice_days     : 0
+       max_continuous_days : NULL
+       applicable_gender   : All
+       is_active           : true
+
+    3. Casual Leave (CL)
+       accrual_method      : annually
+       accrual_rate        : 8
+       max_balance         : 8
+       carry_forward_max   : 0
+       encashable          : false
+       requires_approval   : true
+       min_notice_days     : 1
+       max_continuous_days : 3
+       applicable_gender   : All
+       is_active           : true
+
+    4. Maternity Leave (ML)
+       accrual_method      : none
+       accrual_rate        : 0
+       max_balance         : 182
+       carry_forward_max   : 0
+       encashable          : false
+       requires_approval   : true
+       min_notice_days     : 0
+       max_continuous_days : 182
+       applicable_gender   : Female
+       is_active           : true
+       notes               : One-time grant of 182 days per qualifying event.
+                             Medical certificate required for claim.
+
+    5. Paternity Leave (PL)
+       accrual_method      : none
+       accrual_rate        : 0
+       max_balance         : 15
+       carry_forward_max   : 0
+       encashable          : false
+       requires_approval   : true
+       min_notice_days     : 0
+       max_continuous_days : 15
+       applicable_gender   : Male
+       is_active           : true
+
+    6. Bereavement Leave (BL)
+       accrual_method      : none
+       accrual_rate        : 0
+       max_balance         : 5
+       carry_forward_max   : 0
+       encashable          : false
+       requires_approval   : false
+       min_notice_days     : 0
+       max_continuous_days : 5
+       applicable_gender   : All
+       is_active           : true
+       notes               : Applicable on death of immediate family member.
+                             Supporting documentation required post-return.
+
+    7. Unpaid Leave (UL)
+       accrual_method      : none
+       accrual_rate        : 0
+       max_balance         : NULL
+       carry_forward_max   : 0
+       encashable          : false
+       requires_approval   : true
+       min_notice_days     : 0
+       max_continuous_days : NULL
+       applicable_gender   : All
+       is_active           : true
+       notes               : No balance check enforced; balance displayed as
+                             informational. Approved solely at manager/HR discretion.
+
+    8. Compensatory Off (Comp Off)
+       accrual_method      : none
+       accrual_rate        : 0        -- earned dynamically on holiday/weekend work
+       max_balance         : NULL
+       carry_forward_max   : 0
+       encashable          : false
+       requires_approval   : true
+       min_notice_days     : 0
+       max_continuous_days : NULL
+       applicable_gender   : All
+       is_active           : true
+       notes               : Comp Off credits must be consumed within 90 days of
+                             earning. System auto-expires unclaimed credits at
+                             day 90. Earning requires manager attestation of
+                             the holiday/weekend work done.
+
+    9. Floater Holiday (FH)
+       accrual_method      : annually
+       accrual_rate        : 2
+       max_balance         : 2
+       carry_forward_max   : 0
+       encashable          : false
+       requires_approval   : true
+       min_notice_days     : 1
+       max_continuous_days : 2
+       applicable_gender   : All
+       is_active           : true
+       notes               : Employee chooses the date (from approved festival list
+                             or open calendar). Must be used within the calendar year.
+
+
+--------------------------------------------------------------------------------
+  ENTITY: LEAVE_POLICIES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Provides department-level or employment-type-level overrides on top of
+    the base LEAVE_TYPES configuration. When a policy row exists for a given
+    (leave_type_id, department, employment_type) combination, the override
+    values supersede the base type values for balance and accrual calculations.
+
+  Fields:
+    policy_id              UUID, primary key
+    leave_type_id          UUID, foreign key -> leave_types.type_id
+    department             VARCHAR(100), nullable  -- NULL means applies to all depts
+    employment_type        VARCHAR(50), nullable   -- NULL means all employment types
+    accrual_override       NUMERIC(5,2), nullable  -- overrides base accrual_rate
+    max_balance_override   NUMERIC(5,2), nullable
+    carry_forward_override NUMERIC(5,2), nullable
+    effective_from         DATE, not null
+
+  Usage Notes:
+    - The system resolves the most specific matching policy at runtime:
+      (leave_type_id + department + employment_type) > (type + department) >
+      (type + employment_type) > base leave_type record.
+    - Seed rows are created by HR Admin during initial configuration.
+      Representative examples:
+        - Interns: Earned Leave max_balance_override = 6, carry_forward_override = 0
+        - Contract staff: Sick Leave accrual_override = 6 (half-year entitlement)
+        - Engineering dept: Casual Leave carry_forward_override = 2
+
+
+--------------------------------------------------------------------------------
+  ENTITY: ATTENDANCE_SHIFT_TYPES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Defines the shift schedules used for attendance tracking, late-mark
+    calculation, and OT/Comp-Off eligibility. Linked to employee records via
+    the Employee Directory app.
+
+  Fields:
+    shift_id             UUID, primary key
+    name                 VARCHAR(100), not null, unique
+    start_time           TIME
+    end_time             TIME
+    grace_period_mins    INTEGER, default 0
+    break_duration_mins  INTEGER, default 60
+    weekly_off_days      INTEGER[], -- array of day numbers: 0=Sun, 6=Sat
+    is_flexi             BOOLEAN, default false
+    core_hours_start     TIME, nullable  -- only relevant for flexi shifts
+    core_hours_end       TIME, nullable  -- only relevant for flexi shifts
+
+  Seed Data:
+
+    1. General Shift
+       start_time          : 09:00
+       end_time            : 18:00
+       grace_period_mins   : 15
+       break_duration_mins : 60
+       weekly_off_days     : [0, 6]  (Sunday, Saturday)
+       is_flexi            : false
+       core_hours_start    : NULL
+       core_hours_end      : NULL
+
+    2. Flexi Shift
+       start_time          : NULL  (employee logs any start within 07:00–11:00)
+       end_time            : NULL  (9-hour window from chosen start)
+       grace_period_mins   : 0
+       break_duration_mins : 60
+       weekly_off_days     : [0, 6]
+       is_flexi            : true
+       core_hours_start    : 11:00
+       core_hours_end      : 15:00
+       notes               : Employee must be present during core window.
+                             Total logged hours must be >= 9h per day.
+
+    3. Night Shift
+       start_time          : 21:00
+       end_time            : 06:00  (next calendar day)
+       grace_period_mins   : 15
+       break_duration_mins : 60
+       weekly_off_days     : []  (rotating; configured per employee record)
+       is_flexi            : false
+       core_hours_start    : NULL
+       core_hours_end      : NULL
+       notes               : Night shift differential rules managed separately
+                             in payroll config.
+
+    4. Early Shift
+       start_time          : 07:00
+       end_time            : 16:00
+       grace_period_mins   : 15
+       break_duration_mins : 60
+       weekly_off_days     : [0, 6]
+       is_flexi            : false
+       core_hours_start    : NULL
+       core_hours_end      : NULL
+
+    5. Half Day Shift
+       start_time          : 09:00 (first half) / 14:00 (second half)
+       end_time            : 13:00 (first half) / 18:00 (second half)
+       grace_period_mins   : 10
+       break_duration_mins : 0
+       weekly_off_days     : [0, 6]
+       is_flexi            : false
+       notes               : Two logical sub-slots; the half-day selection is
+                             captured at leave application time, not as separate
+                             shift records.
+
+
+--------------------------------------------------------------------------------
+  ENTITY: WFH_POLICIES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Controls Work-From-Home eligibility, weekly/monthly limits, and approval
+    requirements by department and employment type. Evaluated by the Employee
+    Dashboard WFH application widget.
+
+  Fields:
+    policy_id                   UUID, primary key
+    department                  VARCHAR(100), nullable  -- NULL = global default
+    max_wfh_days_per_week       INTEGER
+    max_wfh_days_per_month      INTEGER
+    approval_required           BOOLEAN, default true
+    advance_notice_hours        INTEGER, default 24
+    eligible_employment_types   VARCHAR(50)[]  -- array; empty = all types
+    effective_from              DATE, not null
+
+  Seed Data:
+
+    1. Default Policy
+       department                  : NULL  (applies to all unmatched departments)
+       max_wfh_days_per_week       : 2
+       max_wfh_days_per_month      : 8
+       approval_required           : true
+       advance_notice_hours        : 24
+       eligible_employment_types   : ['Full-time', 'On Probation', 'Part-time']
+       effective_from              : 2024-01-01
+
+    2. Engineering Department
+       department                  : Engineering
+       max_wfh_days_per_week       : 3
+       max_wfh_days_per_month      : 12
+       approval_required           : false
+       advance_notice_hours        : 0
+       eligible_employment_types   : ['Full-time', 'Contract', 'Consultant']
+       effective_from              : 2024-01-01
+
+    3. Operations Department
+       department                  : Operations
+       max_wfh_days_per_week       : 1
+       max_wfh_days_per_month      : 4
+       approval_required           : true
+       advance_notice_hours        : 48
+       eligible_employment_types   : ['Full-time']
+       effective_from              : 2024-01-01
+
+
+--------------------------------------------------------------------------------
+  ENTITY: EMPLOYMENT_TYPES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Lookup list for employment classification. Referenced in employee records,
+    leave policies, WFH policies, onboarding templates, and salary structures.
+
+  Fields:
+    type_id            UUID, primary key
+    name               VARCHAR(50), not null, unique
+    has_end_date       BOOLEAN, default false
+    duration_months    INTEGER, nullable  -- for fixed-duration types
+    is_active          BOOLEAN, default true
+
+  Seed Data:
+    1. Full-time       (has_end_date: false)
+    2. Part-time       (has_end_date: false)
+    3. Contract        (has_end_date: true)
+    4. Intern          (has_end_date: true, duration_months: typically 3–6)
+    5. Consultant      (has_end_date: true)
+    6. On Probation    (has_end_date: false; distinct from Full-time — employee
+                        transitions to Full-time upon probation confirmation)
+
+
+--------------------------------------------------------------------------------
+  ENTITY: DEPARTMENTS
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Organizational unit master. Drives org chart, approval hierarchies,
+    reporting filters, cost center allocation, and directory grouping.
+
+  Fields:
+    dept_id           UUID, primary key
+    name              VARCHAR(100), not null
+    code              VARCHAR(20), not null, unique
+    head_employee_id  UUID, nullable, foreign key -> employees.employee_id
+    parent_dept_id    UUID, nullable, foreign key -> departments.dept_id
+    cost_center       VARCHAR(50)
+    is_active         BOOLEAN, default true
+
+  Seed Data:
+    - IT              (code: IT)
+    - HR              (code: HR)
+    - Finance         (code: FIN)
+    - Operations      (code: OPS)
+    - Sales           (code: SLS)
+    - Marketing       (code: MKT)
+    - Engineering     (code: ENG)
+    - Product         (code: PRD)
+    - Legal           (code: LGL)
+    - Admin           (code: ADM)
+    - Customer Success (code: CS)
+
+  Notes:
+    - parent_dept_id supports unlimited nesting for sub-departments.
+    - head_employee_id is set after employee records are created; left NULL
+      during initial seed.
+
+
+--------------------------------------------------------------------------------
+  ENTITY: DESIGNATIONS
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Job title and seniority level taxonomy. Used in approval routing
+    (manager-level flag), competency framework assignment, and directory
+    filtering.
+
+  Fields:
+    designation_id       UUID, primary key
+    title                VARCHAR(100), not null
+    level                INTEGER (1–11), not null
+    department           VARCHAR(100), nullable  -- NULL = cross-functional
+    is_manager_level     BOOLEAN, default false
+    min_experience_years INTEGER, default 0
+
+  Seed Data (level order):
+    Level  1  Intern                  (is_manager_level: false, exp: 0)
+    Level  2  Trainee                 (is_manager_level: false, exp: 0)
+    Level  3  Junior Analyst          (is_manager_level: false, exp: 1)
+    Level  4  Analyst                 (is_manager_level: false, exp: 2)
+    Level  5  Senior Analyst          (is_manager_level: false, exp: 4)
+    Level  6  Lead                    (is_manager_level: false, exp: 6)
+    Level  7  Manager                 (is_manager_level: true,  exp: 7)
+    Level  8  Senior Manager          (is_manager_level: true,  exp: 10)
+    Level  9  Director                (is_manager_level: true,  exp: 14)
+    Level 10  Vice President (VP)     (is_manager_level: true,  exp: 18)
+    Level 11  C-Suite                 (is_manager_level: true,  exp: 20)
+
+
+--------------------------------------------------------------------------------
+  ENTITY: LOCATIONS
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Office and remote work location master. Used in employee records,
+    onboarding, attendance geo-fencing configuration, and payroll tax
+    jurisdiction.
+
+  Fields:
+    location_id      UUID, primary key
+    name             VARCHAR(100), not null
+    address          TEXT
+    city             VARCHAR(100)
+    state            VARCHAR(100)
+    country          VARCHAR(100)
+    timezone         VARCHAR(50)   -- IANA timezone string, e.g. Asia/Kolkata
+    is_headquarter   BOOLEAN, default false
+    is_active        BOOLEAN, default true
+
+  Seed Data:
+    1. HQ Mumbai
+       city: Mumbai | state: Maharashtra | country: India
+       timezone: Asia/Kolkata | is_headquarter: true
+
+    2. Pune Office
+       city: Pune | state: Maharashtra | country: India
+       timezone: Asia/Kolkata | is_headquarter: false
+
+    3. Bangalore Office
+       city: Bangalore | state: Karnataka | country: India
+       timezone: Asia/Kolkata | is_headquarter: false
+
+    4. Delhi Office
+       city: New Delhi | state: Delhi | country: India
+       timezone: Asia/Kolkata | is_headquarter: false
+
+    5. Remote
+       city: NULL | state: NULL | country: NULL
+       timezone: NULL (inherits employee's registered location)
+       is_headquarter: false
+       notes: Used for employees without a fixed office seat.
+
+
+--------------------------------------------------------------------------------
+  ENTITY: SKILL_CATEGORIES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Top-level groupings for the skill taxonomy. Used in employee profiles,
+    job requirement configuration, and training course tagging.
+
+  Seed Data:
+    1. Technical
+    2. Soft Skills
+    3. Domain Knowledge
+    4. Leadership
+    5. Tool / Platform
+    6. Language
+    7. Certification
+
+
+--------------------------------------------------------------------------------
+  ENTITY: SKILLS
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Individual skill records linked to a skill category. Used in employee
+    profiles, job postings, training course mapping, and skill-gap analysis.
+
+  Fields:
+    skill_id      UUID, primary key
+    name          VARCHAR(100), not null
+    category_id   UUID, foreign key -> skill_categories
+    is_active     BOOLEAN, default true
+
+  Seed Data by Category:
+
+    Technical:
+      JavaScript | TypeScript | React | Node.js | Python | Java | SQL | NoSQL
+      AWS | Azure | GCP | Docker | Kubernetes | CI/CD | REST APIs | GraphQL
+      SAP ABAP | SAP Fiori | SAPUI5
+
+    Soft Skills:
+      Communication | Leadership | Problem Solving | Time Management | Teamwork
+      Presentation | Negotiation | Critical Thinking | Adaptability
+      Conflict Resolution
+
+    Domain Knowledge:
+      Finance | HR | Supply Chain | Oil & Gas | Retail | Healthcare
+      Banking | Insurance
+
+
+--------------------------------------------------------------------------------
+  ENTITY: COMPETENCY_FRAMEWORKS
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Defines the competency model applied to employees during performance reviews.
+    Frameworks are matched to employees by designation title pattern. Each
+    competency has five proficiency levels with descriptor text, used during
+    rating calibration.
+
+  Fields:
+    framework_id    UUID, primary key
+    name            VARCHAR(100), not null
+    role_pattern    VARCHAR(200)  -- regex matched against designation title
+    competencies    JSONB         -- array of competency objects (see structure below)
+
+  Competency Object Structure:
+    {
+      competency_id    : UUID,
+      name             : VARCHAR,
+      description      : TEXT,
+      proficiency_levels: [
+        { level: 1, label: "Foundational",  descriptor: "..." },
+        { level: 2, label: "Developing",    descriptor: "..." },
+        { level: 3, label: "Proficient",    descriptor: "..." },
+        { level: 4, label: "Advanced",      descriptor: "..." },
+        { level: 5, label: "Expert",        descriptor: "..." }
+      ]
+    }
+
+  Seed Framework 1: Individual Contributor
+    role_pattern  : ^(Intern|Trainee|Junior Analyst|Analyst|Senior Analyst|Lead)$
+    Competencies  :
+      - Technical Expertise
+          Measures depth and currency of domain and technical knowledge relevant
+          to the role.
+          L1: Basic awareness of concepts. L2: Applies knowledge with supervision.
+          L3: Works independently; delivers quality output.
+          L4: Considered a go-to resource by peers. L5: Sets technical direction.
+
+      - Problem Solving
+          Measures analytical thinking and solution design under ambiguity.
+          L1: Identifies straightforward problems when pointed out.
+          L2: Breaks down structured problems with guidance.
+          L3: Independently diagnoses and resolves moderately complex issues.
+          L4: Designs solutions for systemic or cross-functional problems.
+          L5: Resolves novel, high-impact problems with lasting solutions.
+
+      - Communication
+          Clarity, conciseness, and appropriateness of written and verbal
+          communication.
+          L1: Communicates basic information clearly in familiar contexts.
+          L2: Structures messages for intended audience with some guidance.
+          L3: Communicates proactively and adapts style to context.
+          L4: Influences through communication; leads critical conversations.
+          L5: Exemplary communicator; represents org externally.
+
+      - Collaboration
+          Effectiveness in teamwork, sharing knowledge, and supporting peers.
+          L1: Participates when asked. L2: Actively contributes to team goals.
+          L3: Builds relationships and helps others. L4: Fosters inclusion and
+          removes blockers for team. L5: Creates a culture of collaboration.
+
+      - Ownership & Initiative
+          Degree of accountability taken and proactiveness shown.
+          L1: Completes assigned tasks on time.
+          L2: Raises issues proactively; takes ownership of deliverables.
+          L3: Drives tasks end-to-end without hand-holding.
+          L4: Anticipates org needs; initiates improvements unprompted.
+          L5: Inspires ownership culture; holds team accountable.
+
+  Seed Framework 2: Manager
+    role_pattern  : ^(Manager|Senior Manager|Director|VP|C-Suite)$
+    Competencies  :
+      - Leadership
+          Ability to inspire, direct, and develop a high-performing team.
+          L1: Manages own work; beginning to guide others.
+          L2: Leads small team; sets clear expectations.
+          L3: Leads a functional team; manages performance actively.
+          L4: Leads multiple teams or large function.
+          L5: Visionary leader; influences org-wide culture and direction.
+
+      - Strategic Thinking
+          Capacity to think beyond the immediate and align work to business goals.
+          L1: Understands team goals within dept context.
+          L2: Connects team work to department strategy.
+          L3: Contributes to department-level strategy.
+          L4: Shapes functional strategy; considers competitive landscape.
+          L5: Drives org-wide strategy with multi-year horizon.
+
+      - People Development
+          Investment in growing direct reports and building talent pipeline.
+          L1: Gives basic feedback when asked.
+          L2: Conducts regular 1:1s; identifies development needs.
+          L3: Creates individual development plans; coaches actively.
+          L4: Builds successors; advocates for team members' growth org-wide.
+          L5: Develops next-generation leaders; builds people programs.
+
+      - Decision Making
+          Speed, quality, and accountability in making and owning decisions.
+          L1: Makes low-risk decisions with guidance.
+          L2: Makes routine decisions independently; escalates appropriately.
+          L3: Makes complex decisions under uncertainty; communicates rationale.
+          L4: Makes high-stakes decisions; manages risk and fallback.
+          L5: Makes org-defining decisions; navigates ambiguity at scale.
+
+      - Communication
+          (same structure as Individual Contributor framework — see above)
+
+      - Business Acumen
+          Understanding of financial drivers, market dynamics, and org economics.
+          L1: Understands team budget basics.
+          L2: Manages team budget; understands P&L concepts.
+          L3: Owns cost center; drives efficiency.
+          L4: Understands competitive and market dynamics.
+          L5: Influences business model; drives revenue or cost strategy.
+
+      - Execution
+          Ability to translate strategy into results reliably.
+          L1: Delivers assigned tasks on schedule.
+          L2: Delivers team commitments; manages blockers.
+          L3: Runs programs end-to-end; mitigates delivery risk.
+          L4: Delivers complex cross-functional programs.
+          L5: Consistently delivers org-level strategic initiatives on time.
+
+
+--------------------------------------------------------------------------------
+  ENTITY: REVIEW_RATING_SCALES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Defines the numeric scales used in performance reviews. Multiple scales
+    can be configured; a cycle record references the scale to use.
+
+  Fields:
+    scale_id    UUID, primary key
+    name        VARCHAR(100), not null
+    levels      JSONB  -- array of level objects
+
+  Level Object Structure:
+    { value: INTEGER, label: VARCHAR, description: TEXT, color: VARCHAR(7) }
+
+  Seed Scale 1: 5-Point Scale
+    Name   : Standard 5-Point Rating Scale
+    Levels :
+      value: 1 | label: Unsatisfactory        | color: #DC2626 (red)
+        description: Performance is significantly below role expectations.
+                     Immediate corrective action required.
+      value: 2 | label: Below Expectations    | color: #EA580C (orange)
+        description: Performance partially meets expectations. Improvement
+                     plan recommended.
+      value: 3 | label: Meets Expectations    | color: #2563EB (blue)
+        description: Performance consistently meets role requirements.
+                     Employee is effective in their position.
+      value: 4 | label: Exceeds Expectations  | color: #16A34A (green)
+        description: Performance frequently surpasses role requirements.
+                     Employee delivers notable impact beyond scope.
+      value: 5 | label: Outstanding           | color: #7C3AED (purple)
+        description: Exceptional and consistent performance. Role model for
+                     the organization; significant business impact delivered.
+
+  Seed Scale 2: 3-Point Scale
+    Name   : Simplified 3-Point Rating Scale
+    Levels :
+      value: 1 | label: Needs Improvement
+        description: Performance does not yet meet core role expectations.
+      value: 2 | label: Meets Expectations
+        description: Performance is aligned with role requirements.
+      value: 3 | label: Exceeds Expectations
+        description: Performance goes above and beyond requirements.
+
+
+--------------------------------------------------------------------------------
+  ENTITY: RECRUITMENT_SOURCES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Tracks the origin channel for each candidate. Used in recruitment analytics
+    to measure source effectiveness, cost-per-hire, and quality-of-hire by channel.
+
+  Seed Data:
+    1.  LinkedIn
+    2.  Naukri.com
+    3.  Indeed
+    4.  Monster
+    5.  Internal Referral
+    6.  Campus Placement
+    7.  Direct Application
+    8.  Recruitment Agency
+    9.  Job Fair
+    10. Walk-in
+    11. Company Website
+
+
+--------------------------------------------------------------------------------
+  ENTITY: INTERVIEW_TYPES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Defines the distinct rounds in an interview pipeline. Configurable per job
+    opening. Each scheduled interview references one type.
+
+  Seed Data:
+    1. HR Screening
+    2. Technical Round
+    3. Managerial Round
+    4. Panel Interview
+    5. Case Study
+    6. Group Discussion
+    7. Culture Fit
+    8. Final Round
+    9. Reference Check
+
+
+--------------------------------------------------------------------------------
+  ENTITY: OFFER_LETTER_TEMPLATES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    HTML-based offer letter templates with named placeholders. The system
+    populates placeholders at offer generation time from the candidate and
+    job requisition records.
+
+  Fields:
+    template_id              UUID, primary key
+    name                     VARCHAR(100), not null
+    html_body                TEXT  -- full HTML content with placeholders
+    applicable_employment_type VARCHAR(50)  -- maps to employment_types.name
+
+  Supported Placeholders:
+    {candidate_name}       Full name of the candidate
+    {position}             Job title / designation
+    {department}           Department name
+    {salary_ctc}           Annual CTC (Cost to Company)
+    {basic_salary}         Monthly basic salary component
+    {joining_date}         Expected date of joining
+    {reporting_manager}    Name of the assigned reporting manager
+    {probation_period}     Probation duration (e.g., "6 months")
+    {work_location}        Office location or "Remote"
+    {offer_validity_date}  Date by which candidate must accept the offer
+
+  Seed Templates:
+    1. Standard Full-time Offer
+       applicable_employment_type: Full-time
+       Key clauses to include:
+         - Position and department confirmation
+         - CTC breakdown (basic, HRA, special allowance, PF, gratuity)
+         - Probation period (typically 6 months)
+         - Code of conduct and NDA reference
+         - Joining formalities checklist
+
+    2. Intern Offer Letter
+       applicable_employment_type: Intern
+       Key clauses to include:
+         - Internship duration and department
+         - Stipend amount
+         - Learning objectives
+         - IP and confidentiality clause
+         - No employment guarantee clause
+
+    3. Contract Offer Letter
+       applicable_employment_type: Contract
+       Key clauses to include:
+         - Contract start and end dates
+         - Scope of work
+         - Rate/fee structure
+         - Termination notice period
+         - Intellectual property assignment
+
+
+--------------------------------------------------------------------------------
+  ENTITY: ONBOARDING_CHECKLIST_TEMPLATES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Pre-defined task sequences for onboarding a new employee. Templates can
+    be scoped by department, designation level, and employment type. When an
+    onboarding record is created, tasks are instantiated from the matching
+    template and assigned due dates based on the employee's joining date plus
+    the day offset.
+
+  Fields:
+    template_id         UUID, primary key
+    name                VARCHAR(100), not null
+    department          VARCHAR(100), nullable  -- NULL = all departments
+    designation_level   INTEGER, nullable       -- NULL = all levels
+    employment_type     VARCHAR(50), nullable   -- NULL = all types
+    tasks               JSONB  -- array of task objects
+
+  Task Object Fields:
+    task_id             UUID
+    title               VARCHAR(200)
+    description         TEXT
+    owner               ENUM('HR', 'IT', 'Manager', 'Employee', 'Finance')
+    due_day_offset      INTEGER  (days after joining date)
+    category            ENUM('Documents', 'IT', 'Training', 'Access',
+                              'Orientation', 'Finance')
+    is_mandatory        BOOLEAN
+    depends_on_task_id  UUID, nullable  -- task that must complete first
+
+  Seed Template: Default Onboarding
+    name               : Default Onboarding
+    department         : NULL (applies to all)
+    designation_level  : NULL
+    employment_type    : NULL
+
+    Task List:
+
+      Day 0  |  Submit Government ID Documents
+               owner: Employee | category: Documents | mandatory: true
+               description: Employee submits copies of Aadhaar, PAN, passport,
+               and any other identity documents required for HR records.
+
+      Day 0  |  Sign Offer Letter and NDA
+               owner: Employee | category: Documents | mandatory: true
+               description: Employee countersigns the offer letter and the
+               Non-Disclosure Agreement via the portal or in person.
+
+      Day 0  |  IT Laptop and Equipment Allocation
+               owner: IT | category: IT | mandatory: true
+               description: IT team provisions and hands over laptop,
+               accessories, and any role-specific hardware.
+
+      Day 1  |  System Access Setup
+               owner: IT | category: Access | mandatory: true
+               depends_on: "IT Laptop and Equipment Allocation"
+               description: Create corporate email, configure VPN access,
+               set up required collaboration tools, and provision application
+               access per role permissions.
+
+      Day 1  |  Office Orientation and Tour
+               owner: HR | category: Orientation | mandatory: true
+               description: HR walks the new employee through the office
+               floor, facilities, safety exits, cafeteria, and meeting rooms.
+
+      Day 1  |  Introduction to Manager and Team
+               owner: Manager | category: Orientation | mandatory: true
+               description: Reporting manager introduces the employee to the
+               immediate team, shares team norms, and explains the 30/60/90-day
+               expectations.
+
+      Day 3  |  Enroll in Mandatory Compliance Training
+               owner: HR | category: Training | mandatory: true
+               description: HR assigns POSH, Information Security, and Code of
+               Conduct training through the Training module. Employee must
+               complete within 30 days.
+
+      Day 7  |  Complete Employee Profile in Directory
+               owner: Employee | category: Documents | mandatory: true
+               description: Employee fills in the full profile in the Employee
+               Directory app: photo, bio, skills, emergency contact, bank
+               details, and address proof.
+
+      Day 7  |  HR Policies Walkthrough
+               owner: HR | category: Orientation | mandatory: true
+               description: HR conducts a session covering leave policy,
+               attendance, WFH norms, expense reimbursement, and grievance
+               redressal procedures.
+
+      Day 14 |  Meet Assigned Buddy for Knowledge Sharing
+               owner: Employee | category: Orientation | mandatory: false
+               description: Employee connects with their assigned buddy
+               (experienced peer) for a knowledge transfer session on team
+               processes and unwritten norms.
+
+      Day 30 |  Complete Onboarding Assessment
+               owner: HR | category: Training | mandatory: true
+               depends_on: "Enroll in Mandatory Compliance Training"
+               description: Employee completes the onboarding assessment quiz
+               covering compliance, policies, and tools introduced during the
+               first month.
+
+      Day 90 |  Probation Review Meeting with Manager
+               owner: Manager | category: Orientation | mandatory: true
+               description: Manager conducts the formal probation review.
+               Outcome is recorded (confirmed / extended / not confirmed)
+               and triggers the relevant Supabase workflow event.
+
+
+--------------------------------------------------------------------------------
+  ENTITY: TRAINING_CATEGORIES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Top-level groupings for courses and learning paths in the Training app.
+    Used for filtering, compliance reporting, and mandatory assignment scoping.
+
+  Seed Data:
+    1.  Technical Skills
+    2.  Compliance & Regulatory
+    3.  Leadership Development
+    4.  Communication
+    5.  Safety & Health
+    6.  Domain Knowledge
+    7.  Tool / Software
+    8.  Soft Skills
+    9.  Sales & Customer
+    10. Finance & Legal
+
+
+--------------------------------------------------------------------------------
+  ENTITY: CERTIFICATION_PROVIDERS
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Approved external and internal certification issuers. Used in training
+    records to tag completed certifications and populate employee profiles.
+
+  Seed Data:
+    1.  Coursera
+    2.  Udemy
+    3.  LinkedIn Learning
+    4.  Pluralsight
+    5.  AWS Training
+    6.  Google Cloud
+    7.  Microsoft Learn
+    8.  PMI (Project Management Institute)
+    9.  ISACA
+    10. Internal Academy
+    11. External Instructor
+
+
+--------------------------------------------------------------------------------
+  ENTITY: PERFORMANCE_REVIEW_TYPES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Defines the distinct review formats that can be used when configuring a
+    Performance Cycle. Each type implies different participants, forms, and
+    scoring logic.
+
+  Seed Data:
+    1. Annual Review         (full competency and goal review; once per year)
+    2. Mid-Year Review       (goal progress check-in; once per half-year)
+    3. Quarterly Check-in    (lightweight OKR check; once per quarter)
+    4. Probation Review      (triggered at probation end; manager-led)
+    5. PIP Review            (structured improvement milestone review)
+    6. 360-Degree Feedback   (multi-rater; peers, reports, manager, self)
+    7. Peer Review           (peer-only; used in team retros or squad reviews)
+    8. Exit Review           (collected during offboarding; optional)
+
+
+--------------------------------------------------------------------------------
+  ENTITY: PIP_CATEGORIES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Classifies the root cause triggering a Performance Improvement Plan.
+    Used in PIP records and HR analytics to identify systemic trends.
+
+  Seed Data:
+    1. Performance Below Expectations
+    2. Behavioral Concerns
+    3. Attendance & Punctuality
+    4. Compliance Violation
+    5. Communication Issues
+
+
+--------------------------------------------------------------------------------
+  ENTITY: RECOGNITION_BADGE_TYPES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Peer-recognition badges that employees and managers can award. Displayed
+    on employee profiles and in the Communications feed.
+
+  Fields:
+    badge_id     UUID, primary key
+    name         VARCHAR(100), not null
+    description  TEXT
+    icon         VARCHAR(50)  -- icon identifier (e.g., lucide or heroicons name)
+    color        VARCHAR(7)   -- hex color for badge background/border
+    is_active    BOOLEAN, default true
+
+  Seed Data:
+    1. Above & Beyond
+       color: #D97706 (gold)
+       description: Awarded for delivering results that significantly exceed
+       normal role expectations.
+
+    2. Innovator
+       color: #7C3AED (purple)
+       description: Recognizes creative problem-solving and introduction of
+       new ideas or improvements.
+
+    3. Team Player
+       color: #2563EB (blue)
+       description: Celebrates outstanding collaboration, helpfulness, and
+       team-first attitude.
+
+    4. Customer First
+       color: #16A34A (green)
+       description: Honors exceptional dedication to customer or stakeholder
+       satisfaction.
+
+    5. Rising Star
+       color: #EA580C (orange)
+       description: Highlights high-potential employees showing exceptional
+       early-career growth.
+
+    6. Mentor
+       color: #0D9488 (teal)
+       description: Recognizes significant investment in developing and
+       guiding colleagues.
+
+    7. Problem Solver
+       color: #4338CA (indigo)
+       description: Awarded for tackling persistent or complex problems with
+       effective, lasting solutions.
+
+    8. Leadership Excellence
+       color: #DC2626 (red)
+       description: Celebrates exemplary leadership behavior that inspires
+       and elevates the team.
+
+
+--------------------------------------------------------------------------------
+  ENTITY: WORKFLOW_TRIGGER_EVENTS
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Canonical list of system events that can trigger automated workflows in
+    the Workflow Automation app. Each event is emitted by a source app when
+    a significant state change occurs. Workflow designers select from this list
+    when configuring triggers.
+
+  Fields:
+    event_key       VARCHAR(100), primary key  -- machine-readable key
+    display_name    VARCHAR(200)               -- human-readable label in UI
+    source_app      VARCHAR(100)               -- app that emits the event
+    entity          VARCHAR(100)               -- database table involved
+    description     TEXT
+    payload_schema  JSONB                      -- example payload for documentation
+
+  Seed Data:
+
+    event_key        : leave_applied
+    display_name     : Leave Applied
+    source_app       : Employee Dashboard
+    entity           : leaves
+    description      : Fired when an employee submits a leave request.
+    payload_schema   : {
+                         "leave_id"    : "uuid",
+                         "employee_id" : "uuid",
+                         "type"        : "string (leave type name)",
+                         "start_date"  : "date",
+                         "end_date"    : "date",
+                         "days"        : "number",
+                         "reason"      : "string"
+                       }
+
+    event_key        : leave_approved
+    display_name     : Leave Approved
+    source_app       : Employee Dashboard
+    entity           : leaves
+    description      : Fired when an approver (manager or HR) approves a
+                       pending leave request.
+    payload_schema   : {
+                         "leave_id"    : "uuid",
+                         "employee_id" : "uuid",
+                         "approved_by" : "uuid"
+                       }
+
+    event_key        : candidate_hired
+    display_name     : Candidate Hired
+    source_app       : Recruitment
+    entity           : candidates
+    description      : Fired when a candidate's status is set to Hired in
+                       the recruitment pipeline.
+    payload_schema   : {
+                         "candidate_id"  : "uuid",
+                         "name"          : "string",
+                         "email"         : "string",
+                         "position"      : "string",
+                         "department"    : "string",
+                         "joining_date"  : "date"
+                       }
+
+    event_key        : onboarding_completed
+    display_name     : Onboarding Completed
+    source_app       : Onboarding
+    entity           : onboarding_records
+    description      : Fired when all mandatory onboarding tasks for an
+                       employee are marked complete.
+    payload_schema   : {
+                         "onboarding_id" : "uuid",
+                         "employee_id"   : "uuid",
+                         "completed_at"  : "timestamp"
+                       }
+
+    event_key        : pip_created
+    display_name     : PIP Created
+    source_app       : Performance
+    entity           : performance_pips
+    description      : Fired when a new Performance Improvement Plan is
+                       created for an employee.
+    payload_schema   : {
+                         "pip_id"      : "uuid",
+                         "employee_id" : "uuid",
+                         "created_by"  : "uuid",
+                         "start_date"  : "date",
+                         "end_date"    : "date"
+                       }
+
+    event_key        : job_requisition_submitted
+    display_name     : Job Requisition Submitted
+    source_app       : Recruitment
+    entity           : job_requisitions
+    description      : Fired when a department head or manager submits a new
+                       hiring request.
+    payload_schema   : {
+                         "req_id"        : "uuid",
+                         "position"      : "string",
+                         "department"    : "string",
+                         "headcount"     : "integer",
+                         "requested_by"  : "uuid"
+                       }
+
+    event_key        : performance_cycle_opened
+    display_name     : Review Cycle Opened
+    source_app       : Performance
+    entity           : performance_cycles
+    description      : Fired when a new performance review cycle is activated
+                       and made visible to participants.
+    payload_schema   : {
+                         "cycle_id"  : "uuid",
+                         "name"      : "string",
+                         "type"      : "string (review type name)",
+                         "deadline"  : "date"
+                       }
+
+    event_key        : employee_exit_initiated
+    display_name     : Employee Exit Initiated
+    source_app       : Employee Directory
+    entity           : employees
+    description      : Fired when an employee's exit/offboarding process is
+                       formally initiated in the directory.
+    payload_schema   : {
+                         "employee_id"      : "uuid",
+                         "last_working_day" : "date",
+                         "exit_reason"      : "string"
+                       }
+
+    event_key        : onboarding_task_overdue
+    display_name     : Onboarding Task Overdue
+    source_app       : Onboarding
+    entity           : onboarding_tasks
+    description      : Fired by a scheduled job when an onboarding task has
+                       not been completed by its due date.
+    payload_schema   : {
+                         "task_id"       : "uuid",
+                         "onboarding_id" : "uuid",
+                         "employee_id"   : "uuid",
+                         "task_title"    : "string",
+                         "due_date"      : "date"
+                       }
+
+    event_key        : probation_review_due
+    display_name     : Probation Review Due
+    source_app       : Onboarding
+    entity           : onboarding_records
+    description      : Fired 7 days before an employee's probation period end
+                       date by a scheduled job.
+    payload_schema   : {
+                         "onboarding_id"       : "uuid",
+                         "employee_id"         : "uuid",
+                         "probation_end_date"  : "date"
+                       }
+
+    event_key        : training_compliance_overdue
+    display_name     : Training Compliance Overdue
+    source_app       : Training
+    entity           : training_enrollments
+    description      : Fired when a mandatory course enrollment has not been
+                       completed by its compliance deadline.
+    payload_schema   : {
+                         "enrollment_id" : "uuid",
+                         "employee_id"   : "uuid",
+                         "course_id"     : "uuid",
+                         "days_overdue"  : "integer"
+                       }
+
+    event_key        : announcement_published
+    display_name     : Announcement Published
+    source_app       : Communications
+    entity           : communications_posts
+    description      : Fired when an announcement is published and made
+                       visible to its target audience.
+    payload_schema   : {
+                         "post_id"       : "uuid",
+                         "title"         : "string",
+                         "priority"      : "string (normal/high/critical)",
+                         "audience"      : "string",
+                         "published_by"  : "uuid"
+                       }
+
+
+--------------------------------------------------------------------------------
+  ENTITY: NOTIFICATION_TEMPLATES
+--------------------------------------------------------------------------------
+
+  Purpose:
+    Pre-configured notification content used by the notification service when
+    system events are emitted. Templates reference event_key values and support
+    variable interpolation using {variable} syntax matching event payload fields.
+
+  Fields:
+    template_id       UUID, primary key
+    app               VARCHAR(100)
+    event_key         VARCHAR(100), foreign key -> workflow_trigger_events.event_key
+    title_template    VARCHAR(200)
+    body_template     TEXT
+    type              ENUM('info', 'warning', 'action_required', 'success')
+    channels          VARCHAR(20)[]  -- ['in_app', 'push', 'email']
+
+  Representative Seed Examples (5):
+
+    1. Leave Application Notification
+       app            : Employee Dashboard
+       event_key      : leave_applied
+       title_template : "Leave Request: {type} from {start_date} to {end_date}"
+       body_template  : "{employee_name} has applied for {days} day(s) of
+                         {type} leave from {start_date} to {end_date}.
+                         Please review and approve or reject the request."
+       type           : action_required
+       channels       : ['in_app', 'push', 'email']
+       recipients     : Reporting manager of the applying employee
+
+    2. Candidate Hired — Onboarding Kickoff
+       app            : Recruitment
+       event_key      : candidate_hired
+       title_template : "New Hire: {name} joining on {joining_date}"
+       body_template  : "Candidate {name} has been marked as hired for the
+                         position of {position} in {department}.
+                         Their joining date is {joining_date}.
+                         Please initiate the onboarding checklist."
+       type           : action_required
+       channels       : ['in_app', 'email']
+       recipients     : HR Admin, Department Head of {department}
+
+    3. Performance Cycle Opened
+       app            : Performance
+       event_key      : performance_cycle_opened
+       title_template : "Performance Review Cycle '{name}' is now open"
+       body_template  : "The {type} review cycle '{name}' has been opened.
+                         Please complete your self-assessment and submit
+                         your goals before {deadline}."
+       type           : info
+       channels       : ['in_app', 'push', 'email']
+       recipients     : All active employees included in the cycle
+
+    4. Training Compliance Overdue
+       app            : Training
+       event_key      : training_compliance_overdue
+       title_template : "Action Required: Overdue Training — {course_name}"
+       body_template  : "You have a mandatory training course that is
+                         {days_overdue} day(s) overdue. Please log in to
+                         the Training module and complete '{course_name}'
+                         immediately to remain compliant."
+       type           : warning
+       channels       : ['in_app', 'push', 'email']
+       recipients     : The employee (employee_id in payload) and their manager
+
+    5. Workflow Step Pending Approval
+       app            : Workflow Automation
+       event_key      : (runtime-generated per workflow instance)
+       title_template : "Approval Required: {workflow_name} — Step '{step_name}'"
+       body_template  : "A workflow step requires your approval.
+                         Workflow: {workflow_name}
+                         Triggered by: {triggered_by}
+                         Step: {step_name}
+                         Context: {step_context}
+                         Please review and approve or reject in the
+                         Workflow Automation app."
+       type           : action_required
+       channels       : ['in_app', 'push', 'email']
+       recipients     : Designated approver for the workflow step
+
+
+================================================================================
+  SECTION A2 — PERMISSIONS CONFIGURATION
+  (Role-Based Access Control matrix and feature-level permission keys)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+  SYSTEM ROLES
+  (Ordered by authority level, highest to lowest)
+--------------------------------------------------------------------------------
+
+  1.  Super Admin
+      Full system access. Can configure all apps, manage all roles, override
+      any setting. Typically 1-2 IT/HR leads.
+
+  2.  HR Admin
+      Full HR operations access. Can manage employee records, run payroll
+      exports, configure master data, manage all leave and attendance.
+
+  3.  HR Manager
+      Manages HR processes and team. Approves escalated leave requests.
+      Can view (but not always edit) financial data. Cannot change system
+      config.
+
+  4.  Department Manager
+      Manages employees within their department. Approves leave and WFH for
+      their direct reports. Can view department-level analytics.
+
+  5.  Team Lead
+      Manages direct reports at the squad/team level. Can approve leave for
+      direct reports (within policy limits). Limited analytics access.
+
+  6.  Recruiter
+      Manages the full recruitment pipeline: job postings, candidates,
+      interviews, offers. Cannot manage employee records post-hire.
+
+  7.  Trainer
+      Manages training courses, learning paths, enrollments, and compliance
+      reports. Cannot manage employee records.
+
+  8.  Finance Manager
+      Can view salary bands, approve encashments, view cost center data.
+      Cannot manage HR processes.
+
+  9.  IT Admin
+      Manages system access provisioning, MFA, user sessions, audit logs.
+      Cannot manage HR content.
+
+  10. Employee (default)
+      Access to own data only: leave, attendance, directory profile,
+      performance self-review, enrolled training, collaboration channels.
+
+
+--------------------------------------------------------------------------------
+  PER-APP ACCESS MATRIX
+--------------------------------------------------------------------------------
+
+  Legend:
+    Y = Full access for this role
+    - = No access
+    O = Own records only (scoped to self or direct reports)
+    D = Department-scoped (own department only)
+    R = Read-only
+
+  KEY COLUMNS: View | Create | Edit | Delete | Approve | Export | Admin Config
+
+  APP: EMPLOYEE DASHBOARD
+  ------------------------------------------------------------------------------------------------
+  Role                | View | Create | Edit | Delete | Approve | Export | Admin Config
+  ------------------------------------------------------------------------------------------------
+  Super Admin         |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Admin            |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Manager          |  Y   |   Y    |  Y   |   -    |    Y    |   Y    |      -
+  Department Manager  |  D   |   O    |  O   |   -    |    D    |   D    |      -
+  Team Lead           |  D   |   O    |  O   |   -    |    O    |   -    |      -
+  Recruiter           |  O   |   O    |  O   |   -    |    -    |   -    |      -
+  Trainer             |  O   |   O    |  O   |   -    |    -    |   -    |      -
+  Finance Manager     |  O   |   O    |  O   |   -    |    -    |   R    |      -
+  IT Admin            |  O   |   O    |  O   |   -    |    -    |   -    |      -
+  Employee            |  O   |   O    |  O   |   -    |    -    |   -    |      -
+  ------------------------------------------------------------------------------------------------
+
+  APP: EMPLOYEE DIRECTORY
+  ------------------------------------------------------------------------------------------------
+  Role                | View | Create | Edit | Delete | Approve | Export | Admin Config
+  ------------------------------------------------------------------------------------------------
+  Super Admin         |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Admin            |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Manager          |  Y   |   Y    |  Y   |   -    |    Y    |   Y    |      -
+  Department Manager  |  Y   |   -    |  D   |   -    |    -    |   D    |      -
+  Team Lead           |  Y   |   -    |  O   |   -    |    -    |   -    |      -
+  Recruiter           |  R   |   -    |  -   |   -    |    -    |   -    |      -
+  Trainer             |  R   |   -    |  -   |   -    |    -    |   -    |      -
+  Finance Manager     |  Y   |   -    |  -   |   -    |    -    |   R    |      -
+  IT Admin            |  R   |   -    |  -   |   -    |    -    |   -    |      -
+  Employee            |  Y   |   -    |  O   |   -    |    -    |   -    |      -
+  ------------------------------------------------------------------------------------------------
+  Note: Employee can view full public directory but Edit is scoped to own profile.
+        Finance Manager View includes salary band fields.
+
+  APP: RECRUITMENT
+  ------------------------------------------------------------------------------------------------
+  Role                | View | Create | Edit | Delete | Approve | Export | Admin Config
+  ------------------------------------------------------------------------------------------------
+  Super Admin         |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Admin            |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Manager          |  Y   |   Y    |  Y   |   -    |    Y    |   Y    |      -
+  Department Manager  |  D   |   D    |  D   |   -    |    D    |   D    |      -
+  Team Lead           |  D   |   -    |  -   |   -    |    -    |   -    |      -
+  Recruiter           |  Y   |   Y    |  Y   |   -    |    -    |   Y    |      -
+  Trainer             |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  Finance Manager     |  R   |   -    |  -   |   -    |    -    |   -    |      -
+  IT Admin            |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  Employee            |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  ------------------------------------------------------------------------------------------------
+  Note: Department Manager can Approve requisitions for their department.
+        Team Lead can view pipeline for their team's open positions only.
+        Recruiter can Create/Edit but cannot Approve requisitions or make offers
+        without additional permission grant.
+
+  APP: ONBOARDING
+  ------------------------------------------------------------------------------------------------
+  Role                | View | Create | Edit | Delete | Approve | Export | Admin Config
+  ------------------------------------------------------------------------------------------------
+  Super Admin         |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Admin            |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Manager          |  Y   |   Y    |  Y   |   -    |    Y    |   Y    |      -
+  Department Manager  |  D   |   -    |  D   |   -    |    D    |   -    |      -
+  Team Lead           |  D   |   -    |  O   |   -    |    -    |   -    |      -
+  Recruiter           |  R   |   -    |  -   |   -    |    -    |   -    |      -
+  Trainer             |  R   |   -    |  -   |   -    |    -    |   -    |      -
+  Finance Manager     |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  IT Admin            |  D   |   -    |  D   |   -    |    -    |   -    |      -
+  Employee            |  O   |   -    |  O   |   -    |    -    |   -    |      -
+  ------------------------------------------------------------------------------------------------
+  Note: IT Admin Edit is scoped to IT-category tasks only.
+        Employee can view and complete their own onboarding tasks.
+
+  APP: USER MANAGEMENT
+  ------------------------------------------------------------------------------------------------
+  Role                | View | Create | Edit | Delete | Approve | Export | Admin Config
+  ------------------------------------------------------------------------------------------------
+  Super Admin         |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Admin            |  Y   |   Y    |  Y   |   -    |    Y    |   Y    |      -
+  HR Manager          |  R   |   -    |  -   |   -    |    -    |   -    |      -
+  Department Manager  |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  Team Lead           |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  Recruiter           |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  Trainer             |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  Finance Manager     |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  IT Admin            |  Y   |   Y    |  Y   |   -    |    Y    |   Y    |      Y
+  Employee            |  O   |   -    |  -   |   -    |    -    |   -    |      -
+  ------------------------------------------------------------------------------------------------
+  Note: Employee View is scoped to own profile/session only.
+
+  APP: PERFORMANCE
+  ------------------------------------------------------------------------------------------------
+  Role                | View | Create | Edit | Delete | Approve | Export | Admin Config
+  ------------------------------------------------------------------------------------------------
+  Super Admin         |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Admin            |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Manager          |  Y   |   Y    |  Y   |   -    |    Y    |   Y    |      -
+  Department Manager  |  D   |   D    |  D   |   -    |    D    |   D    |      -
+  Team Lead           |  D   |   -    |  O   |   -    |    O    |   -    |      -
+  Recruiter           |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  Trainer             |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  Finance Manager     |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  IT Admin            |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  Employee            |  O   |   O    |  O   |   -    |    -    |   -    |      -
+  ------------------------------------------------------------------------------------------------
+  Note: Employee Create/Edit is scoped to self-assessment and OKR records only.
+        Team Lead Approve is scoped to direct reports.
+
+  APP: TRAINING
+  ------------------------------------------------------------------------------------------------
+  Role                | View | Create | Edit | Delete | Approve | Export | Admin Config
+  ------------------------------------------------------------------------------------------------
+  Super Admin         |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Admin            |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Manager          |  Y   |   Y    |  Y   |   -    |    Y    |   Y    |      -
+  Department Manager  |  Y   |   -    |  -   |   -    |    D    |   D    |      -
+  Team Lead           |  Y   |   -    |  -   |   -    |    O    |   -    |      -
+  Recruiter           |  R   |   -    |  -   |   -    |    -    |   -    |      -
+  Trainer             |  Y   |   Y    |  Y   |   -    |    Y    |   Y    |      -
+  Finance Manager     |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  IT Admin            |  -   |   -    |  -   |   -    |    -    |   -    |      -
+  Employee            |  O   |   -    |  O   |   -    |    -    |   -    |      -
+  ------------------------------------------------------------------------------------------------
+  Note: Employee Edit is scoped to own enrollment/progress only.
+
+  APP: COMMUNICATIONS
+  ------------------------------------------------------------------------------------------------
+  Role                | View | Create | Edit | Delete | Approve | Export | Admin Config
+  ------------------------------------------------------------------------------------------------
+  Super Admin         |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Admin            |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Manager          |  Y   |   Y    |  Y   |   D    |    Y    |   Y    |      -
+  Department Manager  |  Y   |   D    |  D   |   D    |    -    |   -    |      -
+  Team Lead           |  Y   |   D    |  O   |   O    |    -    |   -    |      -
+  Recruiter           |  Y   |   O    |  O   |   O    |    -    |   -    |      -
+  Trainer             |  Y   |   O    |  O   |   O    |    -    |   -    |      -
+  Finance Manager     |  Y   |   O    |  O   |   O    |    -    |   -    |      -
+  IT Admin            |  Y   |   O    |  O   |   O    |    -    |   -    |      -
+  Employee            |  Y   |   O    |  O   |   O    |    -    |   -    |      -
+  ------------------------------------------------------------------------------------------------
+  Note: Create 'O' for standard roles = can post in channels they are members of.
+        Critical/org-wide announcements require can_post_critical permission.
+
+  APP: COLLABORATION
+  ------------------------------------------------------------------------------------------------
+  Role                | View | Create | Edit | Delete | Approve | Export | Admin Config
+  ------------------------------------------------------------------------------------------------
+  Super Admin         |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Admin            |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Manager          |  Y   |   Y    |  Y   |   D    |    -    |   -    |      -
+  Department Manager  |  Y   |   D    |  D   |   D    |    -    |   -    |      -
+  Team Lead           |  Y   |   D    |  O   |   O    |    -    |   -    |      -
+  Recruiter           |  Y   |   O    |  O   |   O    |    -    |   -    |      -
+  Trainer             |  Y   |   O    |  O   |   O    |    -    |   -    |      -
+  Finance Manager     |  Y   |   O    |  O   |   O    |    -    |   -    |      -
+  IT Admin            |  Y   |   O    |  O   |   O    |    -    |   -    |      -
+  Employee            |  Y   |   O    |  O   |   O    |    -    |   -    |      -
+  ------------------------------------------------------------------------------------------------
+
+  APP: WORKFLOW AUTOMATION
+  ------------------------------------------------------------------------------------------------
+  Role                | View | Create | Edit | Delete | Approve | Export | Admin Config
+  ------------------------------------------------------------------------------------------------
+  Super Admin         |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Admin            |  Y   |   Y    |  Y   |   Y    |    Y    |   Y    |      Y
+  HR Manager          |  Y   |   Y    |  Y   |   -    |    Y    |   Y    |      -
+  Department Manager  |  D   |   -    |  -   |   -    |    D    |   -    |      -
+  Team Lead           |  D   |   -    |  -   |   -    |    O    |   -    |      -
+  Recruiter           |  D   |   -    |  -   |   -    |    O    |   -    |      -
+  Trainer             |  D   |   -    |  -   |   -    |    O    |   -    |      -
+  Finance Manager     |  D   |   -    |  -   |   -    |    D    |   -    |      -
+  IT Admin            |  Y   |   Y    |  Y   |   -    |    -    |   Y    |      Y
+  Employee            |  O   |   -    |  -   |   -    |    O    |   -    |      -
+  ------------------------------------------------------------------------------------------------
+  Note: Employee Approve is scoped to workflow steps where they are the designated
+        approver. Employee View is scoped to workflow instances they triggered.
+
+
+--------------------------------------------------------------------------------
+  FEATURE-LEVEL PERMISSION KEYS
+  (Stored in permissions config; evaluated by UI components and API middleware)
+--------------------------------------------------------------------------------
+
+  APP: EMPLOYEE DASHBOARD
+  -----------------------
+    can_approve_leaves
+      Allows user to approve or reject leave requests for others.
+
+    can_view_team_calendar
+      Allows user to see the team leave and attendance calendar view.
+
+    can_view_attendance_reports
+      Allows user to access attendance summary and detailed reports beyond
+      own record.
+
+    can_manage_shifts
+      Allows user to assign or change shift types for employees.
+
+    can_view_all_encashments
+      Allows user to see leave encashment requests across the organization,
+      not just own.
+
+    can_approve_wfh
+      Allows user to approve or reject WFH requests for others.
+
+    can_approve_regularization
+      Allows user to approve attendance regularization (correction) requests.
+
+    can_approve_compoff
+      Allows user to approve Comp Off earning requests submitted by employees.
+
+  APP: EMPLOYEE DIRECTORY
+  -----------------------
+    can_edit_employee
+      Allows user to edit another employee's profile fields (not just own).
+
+    can_delete_employee
+      Allows user to deactivate or delete an employee record. Soft-delete only
+      by default; hard delete requires Super Admin.
+
+    can_export_directory
+      Allows user to export the employee list as CSV/Excel.
+
+    can_view_salary_band
+      Allows user to view the salary band / compensation range displayed on
+      employee profiles.
+
+    can_view_all_profiles
+      Allows user to view complete profile details of employees outside their
+      department. (Without this, cross-dept visibility may be limited to
+      name/title/email per policy.)
+
+    can_manage_documents
+      Allows user to upload, view, and archive official employee documents
+      (ID proof, contracts, certificates).
+
+    can_drag_reassign_org
+      Allows user to reassign employees to different managers or departments
+      via the org chart drag-and-drop interface.
+
+    can_view_audit_trail
+      Allows user to view the change history log for employee records.
+
+  APP: RECRUITMENT
+  ----------------
+    can_manage_jobs
+      Allows user to create, edit, and close job postings.
+
+    can_approve_requisition
+      Allows user to approve or reject job requisitions submitted by
+      department heads.
+
+    can_schedule_interviews
+      Allows user to schedule interview sessions and assign interviewers.
+
+    can_submit_feedback
+      Allows user to submit interview feedback forms for candidates they
+      interviewed.
+
+    can_make_offer
+      Allows user to generate and send offer letters to candidates.
+
+    can_view_all_candidates
+      Allows user to view candidates across all open positions (not just
+      positions in their department).
+
+    can_blacklist_candidate
+      Allows user to mark a candidate as blacklisted, preventing future
+      applications from that candidate.
+
+    can_view_analytics
+      Allows user to access the recruitment analytics dashboard (time-to-hire,
+      source effectiveness, pipeline funnel).
+
+  APP: ONBOARDING
+  ---------------
+    can_manage_onboarding
+      Allows user to create onboarding records, assign templates, and manage
+      task completion on behalf of others.
+
+    can_enable_access
+      Allows user (typically IT Admin) to mark the "System Access Setup" task
+      complete and activate account access for the new joiner.
+
+    can_configure_templates
+      Allows user to create, edit, and delete onboarding checklist templates.
+
+    can_manage_offboarding
+      Allows user to initiate the offboarding sequence for an employee exit.
+
+    can_view_preboarding
+      Allows user to view and manage the preboarding stage (before Day 1),
+      including document collection and pre-joining communication.
+
+    can_assign_buddy
+      Allows user to assign a buddy (peer mentor) to a new joiner's
+      onboarding record.
+
+  APP: USER MANAGEMENT
+  --------------------
+    can_create_users
+      Allows user to create new user accounts in the system.
+
+    can_manage_roles
+      Allows user to assign or remove system roles from user accounts.
+
+    can_view_sessions
+      Allows user to view active login sessions for all users.
+
+    can_force_logout
+      Allows user to terminate an active session for another user account.
+
+    can_view_audit_log
+      Allows user to view the system-wide authentication and action audit log.
+
+    can_export_audit
+      Allows user to export the audit log to CSV/Excel.
+
+    can_manage_mfa
+      Allows user to enforce or waive MFA requirements for individual users
+      or role groups.
+
+    can_run_access_review
+      Allows user to initiate a periodic access review workflow, generating
+      a report of all role assignments for certification.
+
+  APP: PERFORMANCE
+  ----------------
+    can_manage_cycles
+      Allows user to create, configure, open, and close performance review
+      cycles.
+
+    can_calibrate
+      Allows user to access the calibration view, where ratings across
+      departments are normalized and adjusted.
+
+    can_create_pip
+      Allows user to create a Performance Improvement Plan for an employee.
+
+    can_view_all_reviews
+      Allows user to view completed and in-progress review submissions across
+      the organization (not just own team).
+
+    can_submit_feedback
+      Allows user to submit 360-degree or peer feedback for others.
+
+    can_finalize_cycle
+      Allows user to lock a review cycle and mark final ratings as official.
+
+    can_view_all_ratings
+      Allows user to view calibrated final ratings for all employees
+      (typically HR Admin and HR Manager only).
+
+    can_manage_okrs
+      Allows user to create and manage OKRs (Objectives and Key Results)
+      on behalf of others, or configure org-level OKRs.
+
+  APP: TRAINING
+  -------------
+    can_manage_courses
+      Allows user to create, edit, publish, and archive training courses.
+
+    can_enroll_others
+      Allows user to enroll employees in courses on their behalf.
+
+    can_view_compliance
+      Allows user to view the compliance training status dashboard showing
+      completion rates and overdue employees.
+
+    can_issue_certificates
+      Allows user to manually issue or revoke completion certificates.
+
+    can_approve_enrollment
+      Allows user to approve enrollment requests for courses that require
+      prior approval.
+
+    can_create_paths
+      Allows user to create and manage Learning Paths (curated course sequences).
+
+    can_assign_mandatory
+      Allows user to designate a course as mandatory for specific roles,
+      departments, or employment types, including setting compliance deadlines.
+
+  APP: COMMUNICATIONS
+  -------------------
+    can_post_announcements
+      Allows user to post announcements to one or more defined audience groups.
+
+    can_post_critical
+      Allows user to post announcements with Critical priority, which trigger
+      push notifications to all recipients.
+
+    can_manage_channels
+      Allows user to create, edit, archive, and delete communication channels.
+
+    can_view_analytics
+      Allows user to view post reach, read-receipt rates, and engagement
+      analytics.
+
+    can_schedule_posts
+      Allows user to schedule announcements and posts for future publication.
+
+    can_delete_any_post
+      Allows user to delete any post in any channel regardless of authorship.
+
+    can_post_recognition
+      Allows user to post recognition badges on behalf of the organization
+      (not just self-recognition).
+
+  APP: COLLABORATION
+  ------------------
+    can_create_channels
+      Allows user to create new collaboration channels.
+
+    can_manage_channel_members
+      Allows user to add or remove members from channels they administer.
+
+    can_delete_any_message
+      Allows user to delete any message in any channel, regardless of author.
+
+    can_archive_channel
+      Allows user to archive or restore channels.
+
+    can_create_dm
+      Allows user to initiate direct messages with any user in the system.
+      (By default enabled for all roles; can be restricted per policy.)
+
+  APP: WORKFLOW AUTOMATION
+  ------------------------
+    can_create_workflows
+      Allows user to design and save new workflow definitions.
+
+    can_activate_workflows
+      Allows user to activate or deactivate a workflow so it runs on triggers.
+
+    can_trigger_manual
+      Allows user to manually fire a workflow instance outside of a trigger
+      event (useful for testing or ad-hoc operations).
+
+    can_view_all_instances
+      Allows user to see all running and historical workflow instances across
+      the organization.
+
+    can_approve_steps
+      Allows user to action approval steps in workflows where they are
+      designated as an approver.
+
+    can_configure_triggers
+      Allows user to configure which system events activate which workflows,
+      including conditional trigger rules.
+
+    can_view_execution_logs
+      Allows user to view detailed step-by-step execution logs for workflow
+      instances (for debugging and audit purposes).
+
+
+--------------------------------------------------------------------------------
+  ROLE-TO-FEATURE PERMISSION MAPPING
+  (Defines which roles hold each critical permission by default)
+--------------------------------------------------------------------------------
+
+  can_approve_leaves
+    - HR Admin
+    - HR Manager
+    - Department Manager  (scoped to own department employees)
+    - Team Lead           (scoped to direct reports only)
+
+  can_approve_wfh
+    - HR Admin
+    - HR Manager
+    - Department Manager  (scoped to own department)
+    - Team Lead           (scoped to direct reports only, where policy requires)
+
+  can_approve_regularization
+    - HR Admin
+    - HR Manager
+    - Department Manager  (own dept)
+    - Team Lead           (direct reports)
+
+  can_approve_compoff
+    - HR Admin
+    - HR Manager
+    - Department Manager  (own dept)
+
+  can_manage_shifts
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_view_all_encashments
+    - Super Admin
+    - HR Admin
+    - Finance Manager
+
+  can_view_salary_band
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Finance Manager
+
+  can_edit_employee
+    - Super Admin
+    - HR Admin
+    - HR Manager  (own department)
+
+  can_delete_employee
+    - Super Admin
+    - HR Admin
+
+  can_export_directory
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_manage_documents
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_drag_reassign_org
+    - Super Admin
+    - HR Admin
+
+  can_view_audit_trail
+    - Super Admin
+    - HR Admin
+    - IT Admin
+
+  can_manage_jobs
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Recruiter
+
+  can_approve_requisition
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Department Manager  (own department requisitions only)
+
+  can_schedule_interviews
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Recruiter
+
+  can_make_offer
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Recruiter  (requires explicit grant; off by default for Recruiter)
+
+  can_view_all_candidates
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Recruiter
+
+  can_blacklist_candidate
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_manage_onboarding
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_enable_access
+    - Super Admin
+    - IT Admin
+
+  can_configure_templates
+    - Super Admin
+    - HR Admin
+
+  can_manage_offboarding
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_create_users
+    - Super Admin
+    - HR Admin   (new employee accounts only)
+    - IT Admin
+
+  can_manage_roles
+    - Super Admin
+    - IT Admin   (role assignment within approved role set; cannot elevate above
+                  own permission level)
+
+  can_view_sessions
+    - Super Admin
+    - IT Admin
+
+  can_force_logout
+    - Super Admin
+    - IT Admin
+
+  can_view_audit_log
+    - Super Admin
+    - IT Admin
+
+  can_export_audit
+    - Super Admin
+    - IT Admin
+
+  can_manage_mfa
+    - Super Admin
+    - IT Admin
+
+  can_run_access_review
+    - Super Admin
+    - IT Admin
+    - HR Admin
+
+  can_manage_cycles
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_calibrate
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_create_pip
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Department Manager  (own dept employees, with HR Manager co-sign)
+
+  can_view_all_reviews
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_finalize_cycle
+    - Super Admin
+    - HR Admin
+
+  can_view_all_ratings
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_manage_okrs
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Department Manager  (own dept)
+
+  can_manage_courses
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Trainer
+
+  can_enroll_others
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Trainer
+    - Department Manager  (own dept employees)
+
+  can_view_compliance
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Trainer
+
+  can_issue_certificates
+    - Super Admin
+    - HR Admin
+    - Trainer
+
+  can_approve_enrollment
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Trainer
+    - Department Manager  (own dept; for dept-specific courses)
+
+  can_create_paths
+    - Super Admin
+    - HR Admin
+    - Trainer
+
+  can_assign_mandatory
+    - Super Admin
+    - HR Admin
+
+  can_post_announcements
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Department Manager  (scoped to their department audience)
+
+  can_post_critical
+    - Super Admin
+    - HR Admin
+
+  can_manage_channels
+    - Super Admin
+    - HR Admin
+
+  can_schedule_posts
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_delete_any_post
+    - Super Admin
+    - HR Admin
+
+  can_post_recognition
+    - All roles (recognition posting is available to everyone by default)
+
+  can_create_channels
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Department Manager
+    - Team Lead
+
+  can_manage_channel_members
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - Channel creator (any role that created the channel)
+
+  can_delete_any_message
+    - Super Admin
+    - HR Admin
+
+  can_archive_channel
+    - Super Admin
+    - HR Admin
+    - Channel creator with manager-level designation
+
+  can_create_dm
+    - All roles (enabled by default for all authenticated users)
+
+  can_create_workflows
+    - Super Admin
+    - HR Admin
+    - HR Manager
+
+  can_activate_workflows
+    - Super Admin
+    - HR Admin
+
+  can_trigger_manual
+    - Super Admin
+    - HR Admin
+    - IT Admin
+
+  can_view_all_instances
+    - Super Admin
+    - HR Admin
+    - HR Manager
+    - IT Admin
+
+  can_approve_steps
+    - Any role designated as approver in a specific workflow step definition.
+      Default pre-configured approver roles:
+        Leave workflows      : Department Manager, HR Manager
+        Requisition workflows: HR Admin, Finance Manager
+        PIP workflows        : HR Admin
+        Offboarding workflows: HR Admin, IT Admin, Finance Manager
+
+  can_configure_triggers
+    - Super Admin
+    - IT Admin
+
+  can_view_execution_logs
+    - Super Admin
+    - HR Admin
+    - IT Admin
+
+
+--------------------------------------------------------------------------------
+  DEFAULT AUTO-ASSIGNMENT RULES
+  (Applied automatically by system hooks at specified lifecycle events)
+--------------------------------------------------------------------------------
+
+  TRIGGER: New Employee Record Created
+
+    Action 1: Assign system role "Employee" to the new user account.
+    Action 2: Enroll employee in the "All Employees" communication channel.
+    Action 3: Enroll employee in their department's default team collaboration
+              channel (e.g., #engineering, #hr, #sales).
+    Action 4: Create an onboarding record using the best-matching
+              ONBOARDING_CHECKLIST_TEMPLATE based on department, designation
+              level, and employment type.
+    Action 5: Send a welcome notification to the employee's email with
+              portal login instructions.
+
+  TRIGGER: User Assigned HR Department in Directory
+
+    Action: Prompt Super Admin to grant HR Manager role. The role elevation
+            requires explicit Super Admin confirmation and cannot be
+            auto-assigned without it. A pending role review task is created
+            in User Management.
+
+  TRIGGER: User Assigned IT Department in Directory
+
+    Action: Prompt Super Admin or existing IT Admin to grant IT Admin role.
+            Same confirmation requirement as HR Manager above.
+
+  TRIGGER: Onboarding Record Marked Complete
+    (All mandatory tasks for an onboarding record are in state "Completed")
+
+    Action 1: Activate the employee's system access to all apps permitted
+              under the Employee role.
+    Action 2: Fire the "onboarding_completed" workflow trigger event.
+    Action 3: If employment type is "On Probation", schedule a
+              "probation_review_due" event notification 7 days before the
+              probation end date.
+    Action 4: Send a congratulatory notification to the employee and a
+              completion summary to the HR Manager.
+
+  TRIGGER: Employee Role Changed to Full-time
+    (After probation confirmation)
+
+    Action 1: Update leave balance entitlements to full-time accrual rates.
+    Action 2: Re-evaluate applicable WFH policy and update accordingly.
+    Action 3: Unlock any full-time-only features or channels.
+
+  TRIGGER: Employee Exit Initiated
+
+    Action 1: Fire the "employee_exit_initiated" workflow trigger event.
+    Action 2: Auto-create an offboarding checklist instance (mirroring the
+              onboarding template but with exit-specific tasks: asset return,
+              access revocation, final settlement, exit interview).
+    Action 3: Assign revocation tasks to IT Admin.
+    Action 4: Assign final settlement tasks to Finance Manager.
+    Action 5: Set a system flag to block new leave applications and WFH
+              requests for this employee beyond the last working day.
+
+  ADDITIONAL CONSTRAINT RULES:
+
+    - A user cannot hold both "HR Manager" and "IT Admin" roles simultaneously.
+      The system must warn and require Super Admin override if attempted.
+    - "Super Admin" role can only be granted by another existing Super Admin.
+      It cannot be self-assigned and cannot be bulk-imported.
+    - Deactivating a "Department Manager" role without assigning a replacement
+      triggers a warning: leave approvals for their department will be
+      escalated to HR Manager until a new manager is designated.
+    - All role changes are recorded in the User Management audit log with
+      timestamp, changed-by user, and reason (free text field, required).
+
+
+================================================================================
+  END OF DOCUMENT
+  HR Portal Spec — Part 1a: Master Data Configuration & Permissions
+================================================================================

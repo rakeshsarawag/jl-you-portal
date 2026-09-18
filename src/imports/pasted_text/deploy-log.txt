@@ -1,0 +1,82 @@
+rakeshsarawag@Rakeshs-MacBook-Pro JL You Portal from SAP % bash deploy.sh
+==========================================
+ Supabase Deploy Script
+ Project: icmexriwtsjwpswexyrb
+ Function: make-server-1fe2c468
+==========================================
+
+→ Writing supabase/config.toml...
+  Done.
+
+→ Building function bundle at supabase/functions/make-server-1fe2c468...
+  Files bundled:
+asset-api.tsx                   index.tsx                       master-data-api.tsx             project-management-api.tsx
+communications-api.tsx          invoice-api.tsx                 okr-api.tsx                     recruitment-api.tsx
+demo-data-api.tsx               it-services-api.tsx             onboarding-api.tsx              training-api.tsx
+directory-api.tsx               knowledge-api.tsx               payroll-api.tsx                 users.ts
+employee-api.tsx                kv_store.tsx                    performance-api.tsx
+employee-dashboard-api.tsx      lifecycle-api.tsx               permissions.ts
+index.ts                        linkedin-api.tsx                project-api.tsx
+  Done.
+
+→ Patching index.ts with all API routes...
+  Done.
+
+→ Deploying edge function 'make-server-1fe2c468'...
+│
+◇  Telemetry ────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                │
+│  Supabase collects anonymous usage data to improve the CLI.                                    │
+│  You can opt out at any time:                                                                  │
+│                                                                                                │
+│    supabase telemetry disable                                                                  │
+│                                                                                                │
+│  Learn more: https://supabase.com/docs/guides/local-development/cli/getting-started#telemetry  │
+│                                                                                                │
+├────────────────────────────────────────────────────────────────────────────────────────────────╯
+273 | `),UDA=(A)=>A.cause?`${A.stack} {
+274 | ${KDA(A.cause,"  ")}
+275 | }`:A.stack,KDA=(A,T)=>{let G=A.stack.split(`
+276 | `),O=`${T}[cause]: ${G[0]}`;for(let N=1,B=G.length;N<B;N++)O+=`
+277 | ${T}${G[N]}`;if(A.cause)O+=` {
+278 | ${T}}`;return O},RS="~effect/Fiber",gI6={_A:B6,_E:B6},mI6={id:0},UX=()=>globalThis[Lq];class he{constructor(A,T=!0){this[RS]=gI6,this.setContext(A),this.id=++mI6.id,this.currentOpCount=0,this.interruptible=T,this._stack=[],this._observers=[],this._exit=void 0,this._children=void 0,this._interruptedCause=void 0,this._yielded=void 0,this._running=!1,this._deferredInterrupt=!1,this.runtimeMetrics?.recordFiberStart(this.context)}[RS];id;interruptible;currentOpCount;_stack;_observers;_exit;_children;_interruptedCause;_yielded;_running;_deferredInterrupt;context;currentScheduler;currentTracerContext;currentSpan;currentLogLevel;minimumLogLevel;currentStackFrame;runtimeMetrics;maxOpsBeforeYield;currentPreventYield;_dispatcher=void 0;get currentDispatcher(){return this._dispatcher??=this.currentScheduler.makeDispatcher()}getRef(A){return MT(this.context,A)}addObserver(A){if(this._exit)return A(this._exit),q7;return this._observers.push(A),()=>{let T=this._observers.indexOf(A);if(T>=0)this._observers.splice(T,1)}}inter | ... truncated 
+
+error: PermissionDenied: FileSystem.writeFile (/Users/rakeshsarawag/.supabase/telemetry.json.tmp.c1524d76-9c58-4676-8804-497db9c805d1)
+       _tag: "PlatformError",
+ ~effect/platform/PlatformError: "~effect/platform/PlatformError",
+
+      at h8 (/$bunfs/root/supabase:278:84677)
+      at <anonymous> (/$bunfs/root/supabase:287:16727)
+
+273 | `),UDA=(A)=>A.cause?`${A.stack} {
+274 | ${KDA(A.cause,"  ")}
+275 | }`:A.stack,KDA=(A,T)=>{let G=A.stack.split(`
+276 | `),O=`${T}[cause]: ${G[0]}`;for(let N=1,B=G.length;N<B;N++)O+=`
+277 | ${T}${G[N]}`;if(A.cause)O+=` {
+278 | ${T}}`;return O},RS="~effect/Fiber",gI6={_A:B6,_E:B6},mI6={id:0},UX=()=>globalThis[Lq];class he{constructor(A,T=!0){this[RS]=gI6,this.setContext(A),this.id=++mI6.id,this.currentOpCount=0,this.interruptible=T,this._stack=[],this._observers=[],this._exit=void 0,this._children=void 0,this._interruptedCause=void 0,this._yielded=void 0,this._running=!1,this._deferredInterrupt=!1,this.runtimeMetrics?.recordFiberStart(this.context)}[RS];id;interruptible;currentOpCount;_stack;_observers;_exit;_children;_interruptedCause;_yielded;_running;_deferredInterrupt;context;currentScheduler;currentTracerContext;currentSpan;currentLogLevel;minimumLogLevel;currentStackFrame;runtimeMetrics;maxOpsBeforeYield;currentPreventYield;_dispatcher=void 0;get currentDispatcher(){return this._dispatcher??=this.currentScheduler.makeDispatcher()}getRef(A){return MT(this.context,A)}addObserver(A){if(this._exit)return A(this._exit),q7;return this._observers.push(A),()=>{let T=this._observers.indexOf(A);if(T>=0)this._observers.splice(T,1)}}inter | ... truncated 
+
+error: PermissionDenied: FileSystem.writeFile (/Users/rakeshsarawag/.supabase/telemetry.json.tmp.c1524d76-9c58-4676-8804-497db9c805d1)
+       _tag: "PermissionDenied",
+     module: "FileSystem",
+     method: "writeFile",
+ pathOrDescriptor: "/Users/rakeshsarawag/.supabase/telemetry.json.tmp.c1524d76-9c58-4676-8804-497db9c805d1",
+    syscall: "open",
+
+      at h8 (/$bunfs/root/supabase:278:84685)
+      at <anonymous> (/$bunfs/root/supabase:287:16727)
+
+EACCES: permission denied, open '/Users/rakeshsarawag/.supabase/telemetry.json.tmp.c1524d76-9c58-4676-8804-497db9c805d1'
+    path: "/Users/rakeshsarawag/.supabase/telemetry.json.tmp.c1524d76-9c58-4676-8804-497db9c805d1",
+ syscall: "open",
+   errno: -13,
+    code: "EACCES"
+
+
+EACCES: permission denied, open '/Users/rakeshsarawag/.supabase/telemetry.json.tmp.c1524d76-9c58-4676-8804-497db9c805d1'
+    path: "/Users/rakeshsarawag/.supabase/telemetry.json.tmp.c1524d76-9c58-4676-8804-497db9c805d1",
+ syscall: "open",
+   errno: -13,
+    code: "EACCES"
+
+
+Bun v1.3.13 (macOS arm64)

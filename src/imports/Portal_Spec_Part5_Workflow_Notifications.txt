@@ -1,0 +1,1183 @@
+================================================================================
+PORTAL SPECIFICATION — PART 5
+WORKFLOW AUTOMATION & NOTIFICATION BELL: EXTENSIONS FOR NEW APPS
+================================================================================
+Document Version : 1.0
+Date             : 2026-09-04
+Author           : Rakesh Sarawag
+Stack            : React + Supabase + Tailwind CSS v4
+Auth             : Supabase Auth
+Accent Color     : #6366F1 (Indigo)
+Related Specs    : HR_Spec_Part6b_WorkflowAutomation.txt
+                   HR_Spec_Part6c_NotificationBell.txt
+--------------------------------------------------------------------------------
+PURPOSE
+This document EXTENDS the existing Workflow Automation and Notification Bell
+specifications to cover the following additional apps:
+  - OKR Management
+  - Executive Dashboard
+  - Advanced Analytics
+  - Security & Compliance
+  - Invoice Generation
+  - Payroll Management
+
+It does NOT redefine the existing engine or bell; all prior spec content remains
+in force. Only additions and extensions are documented here.
+================================================================================
+
+
+================================================================================
+SECTION 1 — WORKFLOW AUTOMATION: NEW TRIGGER EVENTS
+================================================================================
+
+OVERVIEW
+--------
+The existing workflow engine already supports:
+  - Triggers   : manual | schedule | event
+  - Node types : approval | notification | email | condition | delay |
+                 parallel | create_record | update_field | webhook | loop
+
+The following new trigger events are to be added to the
+WORKFLOW_TRIGGER_EVENTS master data table.
+
+--------------------------------------------------------------------------------
+1.1  OKR-RELATED TRIGGER EVENTS
+--------------------------------------------------------------------------------
+
+Event Key           : okr_checkin_missed
+App                 : OKR Management
+Source Table        : okr
+Description         : OKR owner missed their weekly check-in
+Payload Schema      : {
+                        okr_id            : uuid,
+                        employee_id       : uuid,
+                        okr_title         : string,
+                        days_since_last_checkin : integer
+                      }
+
+Event Key           : okr_behind_midcycle
+App                 : OKR Management
+Source Table        : okr
+Description         : OKR score is below 0.4 at cycle midpoint
+Payload Schema      : {
+                        okr_id       : uuid,
+                        employee_id  : uuid,
+                        score        : decimal (0.00–1.00),
+                        cycle_id     : uuid
+                      }
+
+Event Key           : okr_blocker_flagged
+App                 : OKR Management
+Source Table        : okr
+Description         : A check-in was logged with blocker = true
+Payload Schema      : {
+                        okr_id               : uuid,
+                        employee_id          : uuid,
+                        blocker_description  : string,
+                        manager_id           : uuid
+                      }
+
+Event Key           : okr_cycle_closing_7d
+App                 : OKR Management
+Source Table        : okr_cycle
+Description         : OKR cycle closes in 7 days
+Payload Schema      : {
+                        cycle_id             : uuid,
+                        cycle_name           : string,
+                        ungraded_okrs_count  : integer
+                      }
+
+--------------------------------------------------------------------------------
+1.2  INVOICE-RELATED TRIGGER EVENTS
+--------------------------------------------------------------------------------
+
+Event Key           : invoice_overdue
+App                 : Invoice
+Source Table        : invoices
+Description         : Invoice is past its due date and remains unpaid
+Payload Schema      : {
+                        invoice_id      : uuid,
+                        invoice_number  : string,
+                        client_name     : string,
+                        amount          : decimal,
+                        overdue_days    : integer
+                      }
+
+Event Key           : invoice_overdue_14d
+App                 : Invoice
+Source Table        : invoices
+Description         : Invoice has been overdue for 14 or more days
+Payload Schema      : {
+                        invoice_id    : uuid,
+                        client_name   : string,
+                        amount        : decimal,
+                        balance_due   : decimal
+                      }
+
+Event Key           : partial_payment_received
+App                 : Invoice
+Source Table        : invoices
+Description         : A partial payment has been recorded against an invoice
+Payload Schema      : {
+                        invoice_id       : uuid,
+                        payment_amount   : decimal,
+                        balance_due      : decimal,
+                        client_name      : string
+                      }
+
+Event Key           : recurring_invoice_due
+App                 : Invoice
+Source Table        : recurring_invoice_configs
+Description         : The next recurring invoice is due today and should be generated
+Payload Schema      : {
+                        config_id   : uuid,
+                        client_id   : uuid,
+                        frequency   : string  ("weekly" | "monthly" | "quarterly")
+                      }
+
+--------------------------------------------------------------------------------
+1.3  PAYROLL-RELATED TRIGGER EVENTS
+--------------------------------------------------------------------------------
+
+Event Key           : payroll_processing_due
+App                 : Payroll
+Source Table        : payroll
+Description         : Payroll month is approaching its scheduled processing day
+Payload Schema      : {
+                        month           : integer (1–12),
+                        year            : integer,
+                        employee_count  : integer,
+                        processing_day  : integer (day of month)
+                      }
+
+Event Key           : salary_revision_submitted
+App                 : Payroll
+Source Table        : salary_revision_history
+Description         : A new salary revision record has been submitted and requires approval
+Payload Schema      : {
+                        revision_id    : uuid,
+                        employee_id    : uuid,
+                        old_ctc        : decimal,
+                        new_ctc        : decimal,
+                        effective_from : date,
+                        submitted_by   : uuid
+                      }
+
+Event Key           : payroll_lock_created
+App                 : Payroll
+Source Table        : payroll_locks
+Description         : Payroll has been locked for a given month
+Payload Schema      : {
+                        month     : integer,
+                        year      : integer,
+                        locked_by : uuid
+                      }
+
+Event Key           : compliance_challan_due
+App                 : Payroll
+Source Table        : payroll_compliance
+Description         : PF/ESI challan payment is due within 5 days
+Payload Schema      : {
+                        month      : integer,
+                        year       : integer,
+                        pf_amount  : decimal,
+                        esi_amount : decimal
+                      }
+
+--------------------------------------------------------------------------------
+1.4  SECURITY-RELATED TRIGGER EVENTS
+--------------------------------------------------------------------------------
+
+Event Key           : critical_audit_event
+App                 : Security
+Source Table        : audit_logs
+Description         : A severity = critical audit event has been detected
+Payload Schema      : {
+                        event_id    : uuid,
+                        user_email  : string,
+                        action      : string,
+                        resource    : string,
+                        ip_address  : string
+                      }
+
+Event Key           : compliance_deadline_7d
+App                 : Security
+Source Table        : compliance_requirements
+Description         : A compliance assessment is due within 7 days
+Payload Schema      : {
+                        framework              : string,
+                        requirement_count_due  : integer,
+                        assigned_to            : uuid
+                      }
+
+Event Key           : privacy_request_overdue
+App                 : Security
+Source Table        : privacy_requests
+Description         : A privacy request (DSAR/erasure/etc.) is past its due date
+Payload Schema      : {
+                        request_id      : uuid,
+                        requester_name  : string,
+                        type            : string,
+                        overdue_days    : integer
+                      }
+
+--------------------------------------------------------------------------------
+1.5  ANALYTICS-RELATED TRIGGER EVENTS
+--------------------------------------------------------------------------------
+
+Event Key           : anomaly_detected
+App                 : Analytics
+Source Table        : analytics_anomalies
+Description         : A tracked metric has deviated significantly from its baseline
+Payload Schema      : {
+                        metric_key         : string,
+                        current_value      : decimal,
+                        baseline_value     : decimal,
+                        deviation_percent  : decimal,
+                        severity           : string  ("low" | "medium" | "high" | "critical")
+                      }
+
+Event Key           : scheduled_report_failed
+App                 : Analytics
+Source Table        : analytics_report_runs
+Description         : A scheduled analytics report failed to complete its run
+Payload Schema      : {
+                        report_id    : uuid,
+                        report_name  : string,
+                        error        : string,
+                        created_by   : uuid
+                      }
+
+
+================================================================================
+SECTION 2 — NEW PRE-BUILT WORKFLOW TEMPLATES
+================================================================================
+
+These templates supplement Templates 1–7 that are already defined in
+HR_Spec_Part6b_WorkflowAutomation.txt.
+
+--------------------------------------------------------------------------------
+TEMPLATE 8 — Invoice Overdue Reminder Workflow
+--------------------------------------------------------------------------------
+Trigger Event  : invoice_overdue
+Trigger Type   : event (auto-trigger on event fire)
+Purpose        : Automated multi-stage payment reminder to client with internal
+                 finance escalation if the invoice remains unpaid
+
+Node Sequence  :
+  Node 1  | Type: delay
+            Delay: 0 days (executes immediately on trigger)
+            Purpose: Entry point — no initial hold
+
+  Node 2  | Type: email
+            To: {{client_email}}  (resolved from invoice client record)
+            Subject: "Payment Reminder: Invoice {{invoice_number}} Overdue"
+            Body: |
+              Dear {{client_name}},
+
+              This is a reminder that Invoice {{invoice_number}} is currently
+              {{overdue_days}} days past its due date, with ₹{{balance_due}}
+              outstanding.
+
+              Please arrange payment at your earliest convenience to avoid
+              further follow-up.
+
+              Regards,
+              Finance Team
+
+  Node 3  | Type: notification
+            To role: finance
+            Message: "Invoice overdue reminder sent to {{client_name}} for
+                      Invoice {{invoice_number}} (₹{{balance_due}} outstanding,
+                      {{overdue_days}} days overdue)."
+
+  Node 4  | Type: delay
+            Delay: 7 days
+
+  Node 5  | Type: condition
+            Field: invoices.status  (re-fetched at runtime)
+            Operator: not_equals
+            Value: "paid"
+            Branches: YES (still unpaid) → Node 6 | NO (paid) → end
+
+  Node 6  | Type: email
+            To: {{client_email}}
+            Subject: "SECOND REMINDER: Invoice {{invoice_number}} — Immediate Payment Required"
+            Body: |
+              Dear {{client_name}},
+
+              Despite our earlier reminder, Invoice {{invoice_number}} remains
+              unpaid ({{overdue_days + 7}} days overdue). The outstanding amount
+              is ₹{{balance_due}}.
+
+              Continued non-payment may result in service suspension. Please
+              contact us immediately if you have any queries.
+
+              Regards,
+              Finance Team
+
+  Node 7  | Type: notification
+            To roles: finance, admin
+            Message: "ALERT: Invoice {{invoice_number}} for {{client_name}} is
+                      still unpaid after 2 reminders (₹{{balance_due}} overdue).
+                      Manual follow-up required."
+            Priority: high
+
+--------------------------------------------------------------------------------
+TEMPLATE 9 — Salary Revision Approval Workflow
+--------------------------------------------------------------------------------
+Trigger Event  : salary_revision_submitted
+Trigger Type   : event (auto-trigger)
+Purpose        : Route new salary revision records through HR Manager approval,
+                 with notifications to relevant parties on resolution
+
+Node Sequence  :
+  Node 1  | Type: approval
+            Approver role: hr_manager
+            Response deadline: 48 hours
+            On timeout: escalate to next role (admin / hr_head)
+            Approval message: |
+              "Salary revision submitted for {{employee_name}}:
+               Current CTC: ₹{{old_ctc}}
+               Proposed CTC: ₹{{new_ctc}}
+               Effective From: {{effective_from}}
+               Submitted By: {{submitted_by_name}}
+               Please review and approve or reject."
+
+  --- ON APPROVE BRANCH ---
+
+  Node 2A | Type: update_field
+            Table: salary_revision_history
+            Record: {{revision_id}}
+            Field: status
+            Value: "approved"
+
+  Node 2B | Type: notification
+            To: {{employee_id}}
+            Message: "Your salary has been revised to ₹{{new_ctc}} effective
+                      {{effective_from}}. Your updated payslip will reflect this
+                      change from the next payroll cycle."
+            Priority: normal
+
+  Node 2C | Type: notification
+            To role: hr
+            Message: "Salary revision approved for {{employee_name}} —
+                      CTC updated from ₹{{old_ctc}} to ₹{{new_ctc}}."
+
+  --- ON REJECT BRANCH ---
+
+  Node 2D | Type: notification
+            To: {{submitted_by}}
+            Message: "Salary revision for {{employee_name}} has been rejected.
+                      Reason: {{rejection_reason}}. Please review and resubmit
+                      if required."
+            Priority: normal
+
+--------------------------------------------------------------------------------
+TEMPLATE 10 — OKR Check-In Reminder Workflow
+--------------------------------------------------------------------------------
+Trigger Type   : schedule
+Schedule       : Every Monday at 08:00 (system timezone)
+Purpose        : Ensure OKR owners complete weekly check-ins; escalate to
+                 manager if ignored through mid-week
+
+Node Sequence  :
+  Node 1  | Type: (server-side query / loop)
+            Action: Query all employees with active OKRs in current cycle
+                    where last_checkin_date < Monday of this week
+            Output: list of {employee_id, okr_id, manager_id, employee_name}
+            Note: Implemented as a scheduled Supabase Edge Function that
+                  fires each Monday and dispatches per-employee workflow runs
+
+  Node 2  | Type: email
+            To: {{employee_email}}
+            Subject: "Weekly OKR Check-In Due — Q{{quarter}} {{year}}"
+            Body: |
+              Hi {{employee_name}},
+
+              Your weekly OKR progress check-in is due for Q{{quarter}}.
+              Keeping your check-ins up to date helps your team stay aligned
+              and surfaces blockers early.
+
+              Please log your progress in the OKR portal at your earliest
+              convenience.
+
+  Node 3  | Type: notification
+            To: {{employee_id}}
+            Message: "Your weekly OKR check-in is due. Please update your
+                      progress for Q{{quarter}}."
+            Priority: normal
+
+  Node 4  | Type: delay
+            Delay: 2 days (Wednesday)
+
+  Node 5  | Type: condition
+            Check: okr check-in for this week still not recorded?
+            (Re-query okr_checkins for current week)
+            Branches: YES (not done) → Node 6 | NO (done) → end
+
+  Node 6  | Type: notification
+            To: {{manager_id}}
+            Message: "{{employee_name}} has not completed their OKR check-in
+                      for this week. You may want to follow up directly."
+            Priority: normal
+
+--------------------------------------------------------------------------------
+TEMPLATE 11 — Payroll Processing Reminder Workflow
+--------------------------------------------------------------------------------
+Trigger Type   : schedule
+Schedule       : 3 days before each month's configured processing_day
+                 (resolved dynamically from payroll_settings.processing_day)
+Purpose        : Remind Finance Manager to ensure all payroll prerequisites
+                 (salary structures, attendance) are in order before run
+
+Node Sequence  :
+  Node 1  | Type: notification
+            To role: finance_manager
+            Message: "Payroll processing for {{month_name}} {{year}} is
+                      scheduled for the {{processing_day}}th. Please ensure
+                      all salary structures and attendance records are updated
+                      before processing."
+            Priority: high
+
+  Node 2  | Type: email
+            To: {{finance_manager_email}}
+            Subject: "Action Required: {{month_name}} Payroll Processing Due on {{processing_day}}th"
+            Body: |
+              Hi {{finance_manager_name}},
+
+              This is your 3-day advance notice that payroll processing for
+              {{month_name}} {{year}} is due on the {{processing_day}}th.
+
+              Before processing, please verify:
+                - All salary structures are finalised
+                - Attendance and leave records are up to date
+                - Any salary revisions approved this month are reflected
+                - Statutory deductions (PF, ESI, TDS) are configured correctly
+
+              Please process payroll on time to ensure employees receive their
+              payslips without delay.
+
+  Node 3  | Type: delay
+            Delay: until processing_day - 1 day (dynamic, computed at runtime)
+
+  Node 4  | Type: condition
+            Check: payroll for current month still not in "processed" or
+                   "finalized" status?
+            Branches: YES (not processed) → Node 5 | NO (done) → end
+
+  Node 5  | Type: notification
+            To roles: finance_manager, hr_manager
+            Message: "URGENT: Payroll for {{month_name}} {{year}} has not
+                      been processed and is due tomorrow ({{processing_day}}th).
+                      Immediate action required."
+            Priority: urgent
+
+--------------------------------------------------------------------------------
+TEMPLATE 12 — Compliance Assessment Reminder Workflow
+--------------------------------------------------------------------------------
+Trigger Event  : compliance_deadline_7d
+Trigger Type   : event (auto-trigger)
+Purpose        : Remind assigned compliance owner of upcoming deadline;
+                 escalate to admin if incomplete 2 days before deadline
+
+Node Sequence  :
+  Node 1  | Type: notification
+            To: {{assigned_to}}
+            Message: "Compliance assessment for {{framework}} is due in 7 days.
+                      {{requirement_count_due}} requirements still need updating.
+                      Please complete the assessment in the Security & Compliance
+                      module."
+            Priority: normal
+
+  Node 2  | Type: email
+            To: {{assigned_to_email}}
+            Subject: "Compliance Deadline: {{framework}} Assessment Due in 7 Days"
+            Body: |
+              Hi {{assigned_to_name}},
+
+              This is a reminder that your {{framework}} compliance assessment
+              is due in 7 days. {{requirement_count_due}} requirements are
+              currently pending completion.
+
+              Please log in to the Security & Compliance module and update all
+              outstanding requirements before the deadline.
+
+  Node 3  | Type: delay
+            Delay: 5 days (2 days before deadline)
+
+  Node 4  | Type: condition
+            Check: compliance framework still incomplete?
+                   (any requirements with status != "completed" for this cycle)
+            Branches: YES → Node 5 | NO (all done) → end
+
+  Node 5  | Type: notification
+            To roles: admin, compliance_officer
+            Message: "URGENT: {{framework}} compliance assessment is due in
+                      2 days and is still incomplete. Immediate action required
+                      to avoid compliance risk."
+            Priority: urgent
+            Web Push: true (bypass quiet hours)
+
+--------------------------------------------------------------------------------
+TEMPLATE 13 — Analytics Anomaly Escalation Workflow
+--------------------------------------------------------------------------------
+Trigger Event  : anomaly_detected  (severity = high only)
+Trigger Type   : event (auto-trigger, filtered by severity)
+Purpose        : Alert analytics admins of high-severity metric anomalies;
+                 require acknowledgment; escalate to C-suite if unresolved
+
+Filter Condition (pre-trigger) : payload.severity IN ("high", "critical")
+
+Node Sequence  :
+  Node 1  | Type: condition
+            Check: deviation_percent > 20%?
+            Branches: YES (major anomaly) → Node 2A | NO (minor high) → Node 2B
+
+  Node 2A | Type: approval
+            Approver role: analytics_admin
+            Message: "Anomaly detected in metric '{{metric_key}}':
+                      {{deviation_percent}}% deviation from baseline
+                      (Current: {{current_value}} | Baseline: {{baseline_value}}).
+                      Please review and acknowledge this alert."
+            Timeout: 24 hours → auto-escalate
+
+  Node 2B | Type: notification
+            To role: analytics_admin
+            Message: "Info: Metric '{{metric_key}}' shows {{deviation_percent}}%
+                      deviation (current: {{current_value}}, baseline:
+                      {{baseline_value}}). Monitoring."
+            Priority: low
+            (Workflow ends here for this branch)
+
+  Node 3  | Type: delay
+            Delay: until acknowledged OR 24 hours (whichever first)
+
+  Node 4  | Type: condition
+            Check: anomaly still active / unresolved?
+            Branches: YES (still anomalous) → Node 5 | NO (resolved) → end
+
+  Node 5  | Type: notification
+            To roles: admin, c_suite
+            Message: "ESCALATION: Anomaly in '{{metric_key}}' remains unresolved
+                      after 24 hours. {{deviation_percent}}% deviation. Executive
+                      review recommended."
+            Priority: urgent
+            Web Push: true
+
+--------------------------------------------------------------------------------
+TEMPLATE 14 — Security Breach Alert Workflow
+--------------------------------------------------------------------------------
+Trigger Event  : critical_audit_event
+Trigger Type   : event (auto-trigger, severity = critical only)
+Purpose        : Immediate parallel alert to security stakeholders; escalate
+                 to all admins and C-suite if not resolved within 1 hour
+
+Filter Condition (pre-trigger) : payload.severity = "critical"
+
+Node Sequence  :
+  Node 1  | Type: parallel
+            Execute branches simultaneously:
+
+            Branch A:
+              Type: notification
+              To roles: admin, security
+              Message: "CRITICAL SECURITY EVENT: {{action}} by {{user_email}}
+                        on resource '{{resource}}' from IP {{ip_address}}.
+                        Immediate investigation required."
+              Priority: urgent
+              Web Push: true (bypass quiet hours)
+
+            Branch B:
+              Type: email
+              To: {{it_admin_email}}, {{ciso_email}}
+              Subject: "CRITICAL SECURITY ALERT — Immediate Action Required"
+              Body: |
+                A critical security event has been detected:
+
+                  User     : {{user_email}}
+                  Action   : {{action}}
+                  Resource : {{resource}}
+                  IP       : {{ip_address}}
+                  Timestamp: {{event_timestamp}}
+
+                Please investigate immediately and take appropriate action.
+                Log into the Security & Compliance module to review the full
+                audit trail.
+
+  Node 2  | Type: delay
+            Delay: 1 hour
+
+  Node 3  | Type: condition
+            Check: security event resolved/acknowledged?
+                   (audit_log record marked as reviewed = true)
+            Branches: YES (resolved) → end | NO → Node 4
+
+  Node 4  | Type: notification
+            To roles: admin, c_suite
+            Message: "ESCALATION: Critical security event from 1 hour ago
+                      remains unacknowledged. User: {{user_email}} |
+                      Action: {{action}} | IP: {{ip_address}}.
+                      All administrators notified."
+            Priority: urgent
+            Web Push: true (bypass quiet hours, forced delivery)
+
+
+================================================================================
+SECTION 3 — CROSS-APP WORKFLOW TRIGGER MAPPINGS
+================================================================================
+
+This section extends the cross-app mapping table from HR_Spec_Part6b.
+
+--------------------------------------------------------------------------------
+3.1  EVENT-TO-WORKFLOW AUTO-TRIGGER MAPPINGS
+--------------------------------------------------------------------------------
+
+Event Key                    | Template                             | Mode
+-----------------------------|--------------------------------------|------------------
+invoice_overdue              | Invoice Overdue Reminder Workflow    | auto (event)
+invoice_overdue_14d          | Invoice Overdue Reminder (node 6+)  | auto (event)
+salary_revision_submitted    | Salary Revision Approval Workflow    | auto (event)
+compliance_deadline_7d       | Compliance Assessment Reminder       | auto (event)
+anomaly_detected             | Analytics Anomaly Escalation         | auto (event, severity=high+)
+critical_audit_event         | Security Breach Alert                | auto (event, severity=critical)
+payroll_processing_due       | Payroll Processing Reminder          | scheduled (3 days before)
+okr_checkin_missed           | OKR Check-In Reminder                | scheduled (Monday 08:00, not event)
+
+Notes:
+  - okr_checkin_missed is an output of the Monday schedule run, not a standalone
+    event trigger; the workflow is schedule-driven, not event-driven
+  - invoice_overdue_14d fires when a separate DB check confirms 14+ days;
+    it routes into the same template at Node 6 (second reminder) rather than
+    restarting from Node 1
+
+--------------------------------------------------------------------------------
+3.2  WORKFLOW → APP WRITE INTEGRATIONS
+--------------------------------------------------------------------------------
+
+Workflow → Invoice:
+  - create_record_node: can create an invoice record and mark it as "sent"
+  - update_field_node: can update invoices.status to "paid", "cancelled", etc.
+
+Workflow → Payroll:
+  - Approval step resolves salary_revision_history.status
+  - Notification nodes fire for payroll processing and lock events
+
+Workflow → OKR:
+  - Notification nodes send check-in reminders to OKR owners
+  - Notification nodes escalate blocker events to assigned managers
+
+Workflow → Security:
+  - New node type: audit_log_node
+    Writes a record to audit_logs when a workflow node executes.
+    Fields written: action="workflow_node_executed", resource="workflow:{workflow_id}",
+                    user_id="system", severity="info", metadata={node_type, workflow_run_id}
+    Useful for compliance trails of automated actions.
+
+Workflow → Analytics:
+  - webhook_node can call the analytics aggregation endpoint to invalidate
+    or refresh a specific metric cache after a workflow modifies underlying data
+    Endpoint pattern: POST /api/analytics/refresh  body: {metric_key}
+
+--------------------------------------------------------------------------------
+3.3  NEW NODE TYPE SPECIFICATION: audit_log_node
+--------------------------------------------------------------------------------
+
+Node Type     : audit_log_node
+Category      : Action
+Description   : Writes a structured record to the audit_logs table, enabling
+                workflows to leave a compliance-grade paper trail
+
+Configuration Fields:
+  action      : string (required) — e.g. "payroll_approved", "invoice_reminded"
+  resource    : string (optional) — table or entity reference
+  severity    : enum: info | low | medium | high | critical  (default: info)
+  metadata    : object (optional) — arbitrary key/value pairs to persist
+
+Runtime Behavior:
+  - Writes to audit_logs with user_id = "system (workflow)"
+  - Does not block workflow execution (fire-and-forget insert)
+  - On insert failure: logs warning to workflow_run_errors, does not halt run
+
+UI in Workflow Builder:
+  - Displayed in node palette under "Actions" category
+  - Icon: shield with checkmark
+  - Color accent: green (#22c55e)
+
+
+================================================================================
+SECTION 4 — NOTIFICATION BELL: NEW APP FILTER TABS
+================================================================================
+
+The existing Notification Bell has 15 filter tabs (All + 14 app tabs).
+Six new tabs are added. The full updated tab order is:
+
+Position | Tab Label       | Notes
+---------|-----------------|----------------------------------------------
+  1      | All             | Aggregate count of all unread
+  2      | Workflow        | Existing
+  3      | Dashboard       | Existing
+  4      | OKR             | NEW
+  5      | Performance     | Existing
+  6      | Collaboration   | Existing
+  7      | Recruitment     | Existing
+  8      | Onboarding      | Existing
+  9      | Training        | Existing
+  10     | Communications  | Existing
+  11     | Directory       | Existing
+  12     | User Mgmt       | Existing
+  13     | IT Services     | Existing
+  14     | Assets          | Existing
+  15     | Projects        | Existing
+  16     | Executive       | NEW
+  17     | Analytics       | NEW
+  18     | Security        | NEW
+  19     | Invoices        | NEW
+  20     | Payroll         | NEW
+
+Total: 20 named app tabs + "All" = 21 tabs displayed in scrollable row.
+
+Tab Row UI Rules (unchanged from existing spec, confirmed here):
+  - Horizontal scroll with overflow; ◀ ▶ scroll arrows visible when overflow
+  - Active tab: indigo text + 2px solid indigo bottom border
+  - Badge on tab: red badge if action_required > 0 for that app
+               indigo badge if info/success/warning unread > 0
+               no badge if count = 0
+
+
+================================================================================
+SECTION 5 — NOTIFICATION BELL: NEW NOTIFICATION EVENT PREFERENCES
+================================================================================
+
+These event preferences are added to the Notification Preferences page,
+grouped by new app. All events follow the same schema as existing events:
+  { event_key, label, app, in_app_default, push_default, locked_for_roles }
+
+The "locked_for_roles" field means those roles cannot toggle the preference OFF.
+
+--------------------------------------------------------------------------------
+5.1  OKR MANAGEMENT EVENTS
+--------------------------------------------------------------------------------
+
+Key                    | Label                        | In-App | Push | Locked For
+-----------------------|------------------------------|--------|------|-------------------
+okr_checkin_due        | Weekly Check-In Due          | ON     | ON   | —
+okr_behind_midcycle    | OKR Behind at Midpoint       | ON     | ON   | —
+okr_blocker_flagged    | Blocker Flagged              | ON     | ON   | manager
+okr_graded             | OKR Graded                   | ON     | OFF  | —
+okr_cycle_closing      | Cycle Closing in 7 Days      | ON     | ON   | —
+
+--------------------------------------------------------------------------------
+5.2  INVOICE EVENTS
+--------------------------------------------------------------------------------
+
+Key                    | Label                        | In-App | Push | Locked For
+-----------------------|------------------------------|--------|------|-------------------
+invoice_paid           | Invoice Paid                 | ON     | ON   | finance
+invoice_overdue        | Invoice Overdue (Day 1)      | ON     | ON   | finance, admin
+invoice_overdue_14d    | Invoice Overdue (14 Days)    | ON     | ON   | finance (forced)
+partial_payment        | Partial Payment Received     | ON     | OFF  | —
+recurring_created      | Recurring Invoice Created    | ON     | OFF  | —
+
+--------------------------------------------------------------------------------
+5.3  PAYROLL EVENTS
+--------------------------------------------------------------------------------
+
+Key                    | Label                        | In-App | Push | Locked For
+-----------------------|------------------------------|--------|------|-------------------
+payslip_ready          | Payslip Ready                | ON     | ON   | all employees (forced)
+payroll_approval_req   | Payroll Approval Required    | ON     | ON   | finance (forced)
+payroll_locked         | Payroll Locked / Unlocked    | ON     | OFF  | —
+salary_revision_appr   | Salary Revision Approved     | ON     | ON   | —
+
+--------------------------------------------------------------------------------
+5.4  SECURITY & COMPLIANCE EVENTS
+--------------------------------------------------------------------------------
+
+Key                    | Label                        | In-App | Push | Locked For
+-----------------------|------------------------------|--------|------|-------------------
+critical_audit_event   | Critical Security Event      | ON     | ON   | admin, security (forced)
+compliance_deadline    | Compliance Deadline (7 days) | ON     | ON   | —
+privacy_req_overdue    | Privacy Request Overdue      | ON     | ON   | compliance (forced)
+login_failure_spike    | Suspicious Login Activity    | ON     | ON   | admin (forced)
+
+--------------------------------------------------------------------------------
+5.5  ANALYTICS EVENTS
+--------------------------------------------------------------------------------
+
+Key                    | Label                        | In-App | Push | Locked For
+-----------------------|------------------------------|--------|------|-------------------
+anomaly_detected       | Anomaly Detected             | ON     | ON   | admin, domain_manager
+scheduled_rpt_ready    | Scheduled Report Ready       | ON     | OFF  | —
+report_run_failed      | Report Run Failed            | ON     | ON   | report_creator
+
+--------------------------------------------------------------------------------
+5.6  EXECUTIVE DASHBOARD EVENTS
+--------------------------------------------------------------------------------
+
+Key                    | Label                        | In-App | Push | Locked For
+-----------------------|------------------------------|--------|------|-------------------
+exec_critical_alert    | Executive Critical Alert     | ON     | ON   | c_suite, admin (forced)
+kpi_threshold_breached | KPI Threshold Breached       | ON     | ON   | —
+scheduled_exec_report  | Scheduled Exec Report Ready  | ON     | OFF  | —
+
+
+================================================================================
+SECTION 6 — NOTIFICATION BELL DROPDOWN: SAMPLE ROWS (Extended)
+================================================================================
+
+The following illustrate the rendered notification rows visible in the
+dropdown for a Finance / Admin role user. Format follows existing spec:
+  [priority indicator] [title] [app badge] [relative time]
+  [body line]
+  [action buttons if action_required = true]
+
+--------------------------------------------------------------------------------
+Row 1 — Salary Revision Approval (action_required)
+  Priority   : red dot (action)
+  Title      : Salary Revision Approval
+  App Badge  : [Payroll]
+  Time       : 10m ago
+  Body       : Ravi Kumar — CTC revision from ₹8,00,000 to ₹10,00,000
+               effective May 1, 2026
+  Actions    : [Approve] [Reject]
+
+Row 2 — Invoice Overdue (warning)
+  Priority   : yellow dot (warning)
+  Title      : Invoice Overdue
+  App Badge  : [Invoice]
+  Time       : 30m ago
+  Body       : Invoice INV-045 from TechCorp is overdue by 8 days —
+               ₹45,000 outstanding
+
+Row 3 — Critical Security Event (action_required, urgent)
+  Priority   : red dot (action, pulsing indicator for severity=critical)
+  Title      : Critical Security Event
+  App Badge  : [Security]
+  Time       : 5m ago
+  Body       : Multiple failed login attempts for admin@company.com
+               from IP 192.168.1.45
+
+Row 4 — OKR Behind (warning)
+  Priority   : yellow dot (warning)
+  Title      : OKR Behind at Midpoint
+  App Badge  : [OKR]
+  Time       : 2h ago
+  Body       : Your OKR "Increase API Performance" is behind —
+               current score 0.31 (target: 0.70 midpoint)
+
+Row 5 — Payslip Ready (success)
+  Priority   : green dot (success)
+  Title      : Payslip Ready
+  App Badge  : [Payroll]
+  Time       : 1d ago
+  Body       : Your April 2026 payslip is ready — Net Pay ₹48,200
+
+Row 6 — Anomaly Detected (info)
+  Priority   : blue dot (info)
+  Title      : Anomaly Detected
+  App Badge  : [Analytics]
+  Time       : 3h ago
+  Body       : IT tickets opened is 45% above normal —
+               14 open vs 9.6 baseline (7-day rolling average)
+
+
+================================================================================
+SECTION 7 — NOTIFICATION PREFERENCES PAGE: NEW ACCORDION SECTIONS
+================================================================================
+
+The Preferences page already renders app-grouped accordions. The following
+five new accordions are appended below the existing list.
+
+Each accordion header format: [App Icon] [App Name] [▼ expand toggle]
+Expanded state shows a table of events with toggle controls.
+
+Toggle Control States:
+  ●ON  = toggle is on (filled indigo circle)
+  ○OFF = toggle is off (hollow circle, gray)
+  🔒   = toggle is locked (cannot be changed by current user's role)
+
+--------------------------------------------------------------------------------
+ACCORDION: OKR Management
+Header Icon: 🎯
+
+  Event                  | In-App | Push
+  -----------------------|--------|------
+  Weekly Check-In Due    | ●ON    | ●ON
+  OKR Behind at Midpoint | ●ON    | ●ON
+  Blocker Flagged        | ●ON    | ●ON 🔒 (managers)
+  OKR Graded             | ●ON    | ○OFF
+  Cycle Closing in 7 Days| ●ON    | ●ON
+
+--------------------------------------------------------------------------------
+ACCORDION: Invoice
+Header Icon: 💰
+
+  Event                  | In-App | Push
+  -----------------------|--------|------
+  Invoice Paid           | ●ON    | ●ON
+  Invoice Overdue (Day 1)| ●ON    | ●ON 🔒 (finance)
+  Invoice Overdue (14d)  | ●ON    | ●ON 🔒 (finance)
+  Partial Payment        | ●ON    | ○OFF
+  Recurring Inv. Created | ●ON    | ○OFF
+
+--------------------------------------------------------------------------------
+ACCORDION: Payroll
+Header Icon: 💵
+
+  Event                  | In-App | Push
+  -----------------------|--------|------
+  Payslip Ready          | ●ON 🔒 | ●ON 🔒 (all employees)
+  Payroll Approval Req.  | ●ON    | ●ON 🔒 (finance)
+  Payroll Locked/Unlocked| ●ON    | ○OFF
+  Salary Revision Approv.| ●ON    | ●ON
+
+--------------------------------------------------------------------------------
+ACCORDION: Security & Compliance
+Header Icon: 🔒
+
+  Event                  | In-App | Push
+  -----------------------|--------|------
+  Critical Security Event| ●ON 🔒 | ●ON 🔒 (admin/security)
+  Compliance Deadline 7d | ●ON    | ●ON
+  Privacy Request Overdue| ●ON    | ●ON 🔒 (compliance role)
+  Suspicious Login Act.  | ●ON    | ●ON 🔒 (admin)
+
+--------------------------------------------------------------------------------
+ACCORDION: Analytics
+Header Icon: 📊
+
+  Event                  | In-App | Push
+  -----------------------|--------|------
+  Anomaly Detected       | ●ON    | ●ON 🔒 (admin/domain mgr)
+  Scheduled Report Ready | ●ON    | ○OFF
+  Report Run Failed      | ●ON    | ●ON 🔒 (report creator)
+
+
+================================================================================
+SECTION 8 — FIGMA PROMPT: EXTENDED NOTIFICATION BELL
+================================================================================
+
+The following is a Figma design prompt for the updated Notification Bell
+component. Pass this to the design system team / Figma AI plugin.
+
+--------------------------------------------------------------------------------
+FIGMA PROMPT — NOTIFICATION BELL DROPDOWN (Extended App Tabs)
+--------------------------------------------------------------------------------
+
+Design an updated Notification Bell dropdown component for a React SaaS portal
+using Tailwind CSS v4 with accent color #6366F1 (Indigo 500). The dropdown has
+a full-width scrollable filter tab row at the top.
+
+FILTER TAB ROW SPECIFICATIONS:
+  - 21 tabs total (plus "All") rendered in a horizontal scrolling container
+  - Visible area: approximately 6–8 tabs at a time depending on viewport
+  - ◀ ▶ chevron arrows appear at the left and right edges when there is
+    overflow (hidden when scrolled to start/end respectively)
+  - Tab text is sentence-case, 12px, medium weight
+  - Active tab: #6366F1 text + 2px solid #6366F1 bottom border
+  - Inactive tab: gray-500 text, no border
+  - Hover state: gray-700 text
+
+  Tab badges (top-right of tab label):
+    - Red badge (#ef4444): when action_required count > 0 in that app
+    - Indigo badge (#6366F1): when unread info/success/warning count > 0
+    - No badge: when count = 0
+    - Badge is a filled circle, 16px diameter, white text, 10px font
+
+  Scrollable tab order (left to right):
+    All(28) | Workflow(4) | Payroll(3) | Invoice(2) | Security(2) |
+    OKR(1) | Dashboard(2) | Performance(1) | Collaboration(5) |
+    Recruitment(1) | Training(2) | Communications(2) | Directory(0) |
+    User Mgmt(0) | IT Services(1) | Assets(0) | Projects(2) |
+    Executive(0) | Analytics(1) | Onboarding(0)
+
+  Note: Numbers in parentheses are illustrative unread counts for design preview.
+
+NOTIFICATION LIST AREA:
+  - Below tab row; scrollable vertical list of notification rows
+  - Each row: 72px min-height; left color bar (4px) indicating priority
+    Red   = action_required | Yellow = warning | Green = success | Blue = info
+  - Row structure (left to right):
+    [app icon 20px] [title bold 14px] [app badge pill] [timestamp right-aligned]
+    [body text 13px gray-600 line 2]
+    [action buttons if applicable: filled indigo "Approve", outlined "Reject"]
+  - Unread rows: white background
+  - Read rows: gray-50 background
+
+PREFERENCES PAGE — NEW APP ACCORDIONS:
+  - Rendered below existing HR app accordions
+  - 5 new sections: OKR Management | Invoice | Payroll | Security & Compliance | Analytics
+  - Accordion header: app icon (left) + app name (bold 14px) + chevron (right)
+  - Expanded content: table with columns [Event Name] [In-App toggle] [Push toggle]
+  - Toggle: pill switch, indigo when ON, gray when OFF
+  - Locked toggle: same pill switch but with a 🔒 icon overlaid; cursor:not-allowed
+  - Each row: 48px height, alternating very-light-gray / white striping
+
+TOTAL NOTIFICATION EVENTS (design preview counter in preferences header):
+  ~166 configurable notification events across 20+ apps
+
+COLOR TOKENS TO USE:
+  Primary    : #6366F1 (indigo-500)
+  Success    : #22c55e (green-500)
+  Warning    : #f59e0b (amber-500)
+  Danger     : #ef4444 (red-500)
+  Info       : #3b82f6 (blue-500)
+  Surface    : #ffffff
+  Surface-2  : #f9fafb
+  Border     : #e5e7eb
+  Text-primary   : #111827
+  Text-secondary : #6b7280
+
+
+================================================================================
+SECTION 9 — SUMMARY TABLE: ALL NOTIFICATION EVENTS ACROSS PORTAL
+================================================================================
+
+This table provides a full accounting of notification events per app.
+"Web Push Events" = events with push_default = ON.
+"Forced-On Events" = events whose push or in-app toggle is locked for any role.
+
+App                    | Total Events | Web Push Events | Forced-On Events
+-----------------------|--------------|-----------------|------------------
+Workflow               |      8       |        5        |       2
+Dashboard              |      6       |        3        |       1
+Performance            |      7       |        4        |       1
+Collaboration          |      9       |        5        |       2
+Recruitment            |      8       |        5        |       2
+Onboarding             |      7       |        4        |       2
+Training               |      6       |        3        |       1
+Communications         |      7       |        4        |       1
+Directory              |      4       |        2        |       0
+User Management        |      5       |        3        |       2
+IT Services            |      8       |        5        |       2
+Assets                 |      6       |        3        |       1
+Projects               |      7       |        4        |       1
+HR Admin (General)     |     12       |        7        |       3
+Attendance / Leave     |      8       |        5        |       2
+Compensation & Benefits|      6       |        3        |       1
+Recruitment Pipeline   |      7       |        4        |       1
+Employee Lifecycle     |      5       |        3        |       1
+               --------|--------------|-----------------|------------------
+HR / Existing Total    |    119       |       72        |      27
+               --------|--------------|-----------------|------------------
+OKR Management         |      5       |        4        |       1
+Executive Dashboard    |      3       |        2        |       1
+Advanced Analytics     |      3       |        2        |       2
+Security & Compliance  |      4       |        4        |       4
+Invoice Generation     |      5       |        3        |       2
+Payroll Management     |      4       |        3        |       2
+               --------|--------------|-----------------|------------------
+New Apps Total         |     24       |       18        |      12
+               --------|--------------|-----------------|------------------
+PORTAL GRAND TOTAL     |    ~143      |      ~90        |      ~39
+               --------|--------------|-----------------|------------------
+
+Notes on "Forced-On":
+  - payslip_ready is forced ON for all employees (in-app + push) — this is the
+    single most locked event in the system
+  - critical_audit_event is forced ON for admin and security roles (push)
+  - invoice_overdue_14d is forced ON for finance role (push)
+  - exec_critical_alert is forced ON for c_suite and admin roles (push)
+  - privacy_req_overdue is forced ON for compliance role (push)
+  - login_failure_spike is forced ON for admin role (push)
+
+Implementation Note on "Forced-On":
+  The notification_preferences table stores user overrides. Forced-on events
+  are evaluated at delivery time: if the event is in the forced_events set
+  for the user's role, the stored preference is ignored and delivery always
+  proceeds. The UI reflects this by rendering the toggle as locked regardless
+  of stored value.
+
+  Supabase table: forced_notification_events
+    Columns: event_key (text), role (text), channel (text: "in_app" | "push")
+    Primary Key: (event_key, role, channel)
+    Populated at migration time; not user-editable.
+
+
+================================================================================
+SECTION 10 — DATABASE ADDITIONS REQUIRED
+================================================================================
+
+The following tables/columns are required to support the new workflow triggers
+and notification events. These extend the schema from HR_Spec_Part6b and 6c.
+
+10.1 New table: forced_notification_events
+     (described above in Section 9)
+
+10.2 New table: analytics_anomalies
+     Columns:
+       id           uuid  PK
+       metric_key   text  NOT NULL
+       current_value  decimal
+       baseline_value decimal
+       deviation_percent decimal
+       severity     text  CHECK IN ('low','medium','high','critical')
+       resolved     boolean DEFAULT false
+       detected_at  timestamptz DEFAULT now()
+       resolved_at  timestamptz
+       created_by   uuid REFERENCES auth.users(id)
+
+10.3 New table: analytics_report_runs
+     Columns:
+       id           uuid  PK
+       report_id    uuid
+       report_name  text
+       status       text  CHECK IN ('success','failed','running')
+       error        text
+       started_at   timestamptz
+       completed_at timestamptz
+       created_by   uuid REFERENCES auth.users(id)
+
+10.4 workflow_trigger_events table additions
+     (INSERT rows for all 16 new events defined in Section 1)
+
+10.5 workflow_templates table additions
+     (INSERT rows for Templates 8–14 defined in Section 2)
+
+10.6 notification_event_catalog table additions
+     (INSERT rows for all 24 new events defined in Section 5)
+
+
+================================================================================
+SECTION 11 — IMPLEMENTATION PRIORITIES & DEPENDENCIES
+================================================================================
+
+Priority 1 (blocking — required before any new app can fire notifications):
+  - Add new filter tabs to NotificationBell component
+  - Register new event keys in notification_event_catalog table
+  - Insert forced_notification_events records for locked events
+  - Update NotificationPreferences page with 5 new accordions
+
+Priority 2 (required before new workflow templates can be tested):
+  - Insert new trigger events into workflow_trigger_events table
+  - Implement audit_log_node type in workflow engine
+  - Create Supabase Edge Functions for event-firing hooks per new table:
+      invoices (on status change), salary_revision_history (on insert),
+      audit_logs (on severity=critical insert),
+      compliance_requirements (7-day pre-deadline scheduled check),
+      analytics_anomalies (on insert, filter by severity)
+
+Priority 3 (workflow templates — can be created in UI once engine supports them):
+  - Insert Templates 8–14 as pre-built templates
+  - Verify payload interpolation for all new event payloads
+
+Priority 4 (UX polish):
+  - Add ◀ ▶ scroll arrows to notification tab row
+  - Pulsing indicator for severity=critical notification rows
+  - Figma component updates per Section 7 prompt
+
+Dependencies:
+  - Templates 9 (Salary Revision) depends on salary_revision_history table
+    being present (from Payroll app spec)
+  - Template 12 (Compliance) depends on compliance_requirements table
+    (from Security & Compliance app spec)
+  - Template 13 (Analytics Anomaly) depends on analytics_anomalies table
+    (defined in Section 10.2 above)
+  - audit_log_node depends on audit_logs table (from Security app spec)
+
+
+================================================================================
+END OF DOCUMENT
+Portal_Spec_Part5_Workflow_Notifications.txt
+================================================================================

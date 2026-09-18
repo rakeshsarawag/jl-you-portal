@@ -1,0 +1,1385 @@
+================================================================================
+PORTAL SPECIFICATION — PART 2: ANALYTICS & SECURITY
+Tech Stack: React + Supabase + Tailwind CSS v4
+Accent Color: #6366F1 (Indigo)
+Date: 2026-09-04
+================================================================================
+
+Portal Context:
+  HR Apps: Employee Dashboard, Directory, Recruitment, Onboarding, User Management,
+           Performance, Training, Communications, Collaboration, Workflow Automation
+  Business Apps: OKR, Executive Dashboard, Invoices, Payroll, Projects, IT Services,
+                 Assets
+
+================================================================================
+APP 3: ADVANCED ANALYTICS DASHBOARD
+================================================================================
+
+Current File: AdvancedAnalyticsDashboard.tsx
+Current DB: None (hook aggregates from all domains client-side)
+Current Tabs: Overview (12 KPI cards), People, Finance, Operations, Reports
+
+--------------------------------------------------------------------------------
+SECTION 1 — FIX PLAN (Known Gaps)
+--------------------------------------------------------------------------------
+
+G1 [HIGH] — Department Filter is UI Stub
+  Problem: Department dropdown exists in UI but value never passed to data hook or API.
+  Fix:
+    - Add `department` parameter to useAdvancedAnalyticsData hook signature:
+        useAdvancedAnalyticsData({ dateRange, department })
+    - Pass department to every domain API call as query param: ?department={dept}
+    - Backend Edge Functions must accept optional department query param and apply
+      WHERE clause on department column for all aggregation queries.
+    - "All Departments" = omit the filter param (not send empty string).
+    - Department Manager role: force-filter to their own dept (see Validation Rules).
+
+G2 [HIGH] — Date Range Dropdown Not Forwarded to Hook
+  Problem: Date range dropdown selection is local state not passed into hook.
+  Fix:
+    - Wire dateRange state to hook:
+        const { data } = useAdvancedAnalyticsData({ dateRange, department });
+    - Hook translates dateRange label to ISO dates: from / to.
+    - Pass to all API calls: ?from={ISO_date}&to={ISO_date}
+    - Presets: Last 7 days | Last 30 days | Last 90 days | Last 12 months | Custom
+    - Custom: show date-range picker (two date inputs); validate from < to.
+
+G3 [MEDIUM] — DrillDown Modal Shows Flat Metrics for Most KPIs
+  Problem: Modal opens but shows same single number, no breakdown data.
+  Fix: Define a dedicated drilldown endpoint per KPI card:
+    - Headcount:          GET /analytics/headcount/breakdown
+    - Monthly Payroll:    GET /analytics/payroll/breakdown
+    - Active Candidates:  GET /analytics/recruitment/breakdown
+    - Open IT Tickets:    GET /analytics/it-tickets/breakdown
+    - Training Completion:GET /analytics/training/breakdown
+    - Invoice Revenue:    GET /analytics/invoices/breakdown
+    - Project Milestones: GET /analytics/projects/breakdown
+    - OKR Progress:       GET /analytics/okr/breakdown
+  Each endpoint accepts: ?from={}&to={}&department={}
+  Each returns structured breakdown object (see DrillDown Modals section below).
+
+G4 [LOW] — Excel Export is TSV Content in .xls File
+  Fix:
+    - Install SheetJS library: npm install xlsx
+    - Replace current export with real XLSX binary generation:
+        import * as XLSX from 'xlsx';
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(data);
+        XLSX.utils.book_append_sheet(wb, ws, 'Analytics');
+        XLSX.writeFile(wb, 'analytics-report.xlsx');
+    - Multi-sheet workbook: one sheet per domain tab (Overview, People, Finance, Ops).
+
+G5 [LOW] — PDF Export Uses window.print() Without Print Styles
+  Fix:
+    - Add @media print CSS block to AdvancedAnalyticsDashboard.tsx (or global CSS):
+        @media print {
+          nav, sidebar, .control-bar, .export-btn { display: none !important; }
+          .kpi-grid { width: 100%; grid-template-columns: repeat(3, 1fr); }
+          .chart-container { width: 100%; page-break-inside: avoid; }
+          body { font-size: 10pt; color: #000; }
+        }
+    - Before calling window.print(), set document title to report name + date range.
+    - Alternatively: use @react-pdf/renderer for fully controlled PDF output.
+
+G6 [MEDIUM] — Custom Report Builder Has No Save/Schedule Functionality
+  Fix: Implement full save + schedule flow (see Scheduled Reports section below).
+
+--------------------------------------------------------------------------------
+SECTION 2 — FEATURE ENHANCEMENTS
+--------------------------------------------------------------------------------
+
+2.1 Data Pipeline — Proper Backend Aggregation
+  - All KPI calculations move to server; zero client-side aggregation.
+  - New Supabase Edge Functions:
+      GET /analytics/summary?from={}&to={}&department={}
+        Returns: JSON object with all 12 KPI values computed via DB aggregation
+        (SUM, COUNT, AVG queries across relevant tables).
+  - Caching Strategy:
+      Cache key: `analytics_summary_{from}_{to}_{department}`
+      TTL: 15 minutes per unique filter combination.
+      Implementation: Supabase edge function uses in-memory cache or Redis (if
+      available); alternatively cache in analytics_cache table with expires_at.
+  - Stale Indicator:
+      Each KPI card shows: "Data as of {relative_time}" e.g. "Data as of 2 min ago"
+      Timestamp sourced from server response header or response body `computed_at`.
+      Color: gray-400, font-size: 11px, positioned below value.
+  - Manual Refresh: [Refresh] button in control bar invalidates cache and re-fetches.
+
+2.2 DrillDown Modals — Proper Breakdown Data
+
+  Headcount Breakdown (GET /analytics/headcount/breakdown)
+    Response:
+      by_department: [{ dept, count, delta_percent }]
+      by_employment_type: [{ type, count, percent }]  (Full-time/Part-time/Contract)
+      hires_this_period: number
+      exits_this_period: number
+      net_change: number
+    Modal renders:
+      Horizontal bar chart: headcount by department
+      Stacked bar: employment type breakdown
+      Summary row: Hires {N} | Exits {N} | Net Change {+/-N}
+
+  Monthly Payroll Breakdown (GET /analytics/payroll/breakdown)
+    Response:
+      by_department: [{ dept, total, percent_of_payroll }]
+      top_5_earners: [{ anonymized_id, dept, amount }]  (no names — privacy)
+      month_over_month: [{ month, total }]  (last 6 months)
+    Modal renders:
+      Pie/donut chart: payroll by department
+      Line chart: month-over-month payroll trend
+      Table: Top 5 anonymized earners with dept label
+
+  Active Candidates Breakdown (GET /analytics/recruitment/breakdown)
+    Response:
+      by_stage: [{ stage, count }]  (Applied/Screening/Interview/Offer/Hired)
+      by_job: [{ job_title, count }]
+      by_recruiter: [{ recruiter_name, active_count, hired_this_period }]
+    Modal renders:
+      Funnel chart: candidates by pipeline stage
+      Bar chart: open roles with candidate count
+      Recruiter performance table
+
+  Open IT Tickets Breakdown (GET /analytics/it-tickets/breakdown)
+    Response:
+      by_category: [{ category, count }]
+      by_priority: [{ priority, count }]
+      sla_compliance: [{ priority, total, within_sla, breach_count, compliance_pct }]
+      avg_resolution_hours: number
+    Modal renders:
+      Donut chart: tickets by category
+      SLA compliance table with color-coded compliance %
+      Avg resolution time KPI
+
+  Training Completion Breakdown (GET /analytics/training/breakdown)
+    Response:
+      by_department: [{ dept, enrolled, completed, completion_pct }]
+      by_course: [{ course_name, enrolled, completed, completion_pct }]
+      top_performers: [{ dept, completion_pct }]  (top 5)
+      bottom_performers: [{ dept, completion_pct }]  (bottom 5)
+    Modal renders:
+      Horizontal bar chart: completion rate by department
+      Course completion table
+      Top/Bottom performers highlight
+
+  Invoice Revenue Breakdown (GET /analytics/invoices/breakdown)
+    Response:
+      by_client: [{ client_name, total_invoiced, total_paid, outstanding }]
+      by_month: [{ month, invoiced, collected }]
+      paid_vs_outstanding: { paid_total, outstanding_total, overdue_total }
+    Modal renders:
+      Bar chart: revenue by month (invoiced vs collected)
+      Client breakdown table with outstanding amounts
+      Paid/Outstanding/Overdue summary strip
+
+2.3 Scheduled Reports (fix G6)
+
+  Save Custom Report:
+    Fields:
+      name: string (required, unique per user)
+      domain_selections: string[] (which domain tabs are included)
+      metric_selections: JSONB (which metrics per domain)
+      filter_config: JSONB { from, to, department, status }
+      schedule: enum [one_off | daily | weekly | monday_morning | first_of_month]
+      recipients: string[] (email addresses, max 10)
+    Storage: analytics_saved_reports table (see Data Model section)
+
+  Schedule Execution:
+    One-off: run immediately on save or manually via [Run Now]
+    Daily: runs at 07:00 UTC
+    Weekly: runs Monday 07:00 UTC
+    Monday Morning: same as weekly
+    First of Month: runs 1st of each month 07:00 UTC
+    Execution: Supabase pg_cron job calls Edge Function /analytics/reports/run/{id}
+
+  Report Delivery:
+    Generate: query each selected domain endpoint with saved filters
+    Format: HTML email body (summary table) + CSV attachment per domain
+    Email sender: Supabase Auth email or configured SMTP
+    Subject: "[Portal Analytics] {report_name} — {date}"
+    On completion: update analytics_report_runs row with status=completed, output_url
+
+  Reports Tab — Saved Reports List:
+    Card per saved report showing:
+      Name | Last Run date/time | Schedule chip | Status of last run
+    Actions per card: [Run Now] [Edit] [Delete] [View Last Output]
+    View Last Output: opens modal with paginated table of last report data
+
+2.4 Anomaly Detection (New Feature)
+
+  Detection Rules (run on each /analytics/summary refresh):
+    Rule A — Headcount spike/drop:
+      Condition: |current_headcount - prev_period_headcount| / prev > 0.10
+      Severity: amber if 10-20%, red if >20%
+    Rule B — Invoice overdue spike:
+      Condition: overdue_invoice_count > (prev_period_overdue * 1.25)
+      Severity: amber
+    Rule C — IT SLA breach rate:
+      Condition: sla_breach_rate > 0.20  (20%)
+      Severity: red
+    Rule D — Training compliance drop:
+      Condition: training_completion_pct < (prev_period_completion - 0.15)
+      Severity: amber
+
+  Anomaly Indicators on KPI Cards:
+    Amber dot: top-right corner of card when anomaly detected (amber severity)
+    Red dot + amber-50 card background + amber border: red severity
+    Hover tooltip on dot: "{metric} is {deviation}% above/below normal"
+
+  Anomaly History Log:
+    Shown in Overview tab below KPI grid as collapsible panel: "Recent Anomalies"
+    Table: Date | Metric | Deviation % | Severity chip | Resolved Y/N
+    [Mark Resolved] button per row
+    Persisted in analytics_anomalies table (see Data Model)
+
+  Anomaly Notification:
+    On detection: POST to notifications service → push notification to admin
+    (see Push Notifications section)
+
+2.5 Comparison Mode (New Feature)
+
+  Toggle: [Compare Period] toggle in control bar (default: off)
+  When enabled:
+    Fetch two datasets: current period + equivalent previous period (same duration)
+    Example: "Last 30 days" current + "30 days prior" as previous
+    API: same /analytics/summary endpoint called twice with different date ranges
+
+  KPI Cards in Compare Mode:
+    Show: current value + previous value (smaller, gray)
+    Delta chip: shows change from previous to current
+
+  Charts in Compare Mode:
+    Line/bar charts render two series:
+      "Current Period" — indigo (#6366F1), solid line
+      "Previous Period" — gray (#9CA3AF), dashed line
+    Legend below each chart
+
+  Delta Summary Row (below KPI grid):
+    Row of pills: one per KPI
+    Green pill: metric improved (↑ +N%)
+    Red pill: metric declined (↓ -N%)
+    Gray pill: no significant change (<1%)
+
+--------------------------------------------------------------------------------
+SECTION 3 — DATA MODEL
+--------------------------------------------------------------------------------
+
+Table: analytics_saved_reports
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  name            TEXT NOT NULL
+  created_by      UUID NOT NULL REFERENCES auth.users(id)
+  domain          TEXT[] NOT NULL                    -- selected domain tabs
+  metric_config   JSONB NOT NULL DEFAULT '{}'        -- metric selections per domain
+  filter_config   JSONB NOT NULL DEFAULT '{}'        -- { department, status, etc. }
+  date_from       DATE
+  date_to         DATE
+  schedule        TEXT CHECK (schedule IN (
+                    'one_off','daily','weekly',
+                    'monday_morning','first_of_month'))
+  recipients      TEXT[] DEFAULT '{}'               -- email addresses
+  last_run_at     TIMESTAMPTZ
+  next_run_at     TIMESTAMPTZ
+  is_active       BOOLEAN NOT NULL DEFAULT TRUE
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  UNIQUE (name, created_by)
+
+Table: analytics_report_runs
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  report_id       UUID NOT NULL REFERENCES analytics_saved_reports(id) ON DELETE CASCADE
+  run_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  triggered_by    TEXT NOT NULL CHECK (triggered_by IN ('schedule','manual'))
+  status          TEXT NOT NULL CHECK (status IN ('running','completed','failed'))
+  output_url      TEXT                              -- Supabase Storage URL of output file
+  row_count       INTEGER
+  error           TEXT
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+Table: analytics_anomalies
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  metric_key       TEXT NOT NULL               -- e.g. 'headcount', 'sla_breach_rate'
+  detected_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  current_value    NUMERIC NOT NULL
+  baseline_value   NUMERIC NOT NULL
+  deviation_percent NUMERIC NOT NULL           -- signed: positive = above, negative = below
+  severity         TEXT NOT NULL CHECK (severity IN ('amber','red'))
+  resolved_at      TIMESTAMPTZ
+  acknowledged_by  UUID REFERENCES auth.users(id)
+  filter_snapshot  JSONB                       -- { department, from, to } at detection time
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+Table: analytics_cache (optional — if not using in-memory cache)
+  cache_key        TEXT PRIMARY KEY            -- hash of filter params
+  data             JSONB NOT NULL
+  computed_at      TIMESTAMPTZ NOT NULL
+  expires_at       TIMESTAMPTZ NOT NULL
+  INDEX ON expires_at
+
+--------------------------------------------------------------------------------
+SECTION 4 — MASTER DATA CONFIGURATION
+--------------------------------------------------------------------------------
+
+Config Key: ANALYTICS_KPI_CATALOG
+  Stored in: master_data_config table (key='ANALYTICS_KPI_CATALOG', value=JSONB array)
+  Shape per entry:
+    kpi_id            TEXT      -- e.g. 'headcount', 'monthly_payroll'
+    name              TEXT      -- Display label
+    description       TEXT
+    domain            TEXT      -- 'people' | 'finance' | 'operations' | 'overview'
+    api_endpoint      TEXT      -- relative path: '/analytics/headcount/summary'
+    unit              TEXT      -- 'employees' | 'USD' | '%' | 'tickets'
+    format_type       TEXT      -- 'number' | 'currency' | 'percent'
+    drilldown_endpoint TEXT     -- '/analytics/headcount/breakdown'
+    benchmark_value   NUMERIC   -- industry benchmark or internal target
+    alert_threshold_low  NUMERIC
+    alert_threshold_high NUMERIC
+
+  Seed data (12 KPIs):
+    { kpi_id:'headcount',          name:'Total Headcount',       domain:'people',
+      unit:'employees', format_type:'number',
+      api_endpoint:'/analytics/headcount/summary',
+      drilldown_endpoint:'/analytics/headcount/breakdown' }
+    { kpi_id:'monthly_payroll',    name:'Monthly Payroll',       domain:'finance',
+      unit:'USD', format_type:'currency' }
+    { kpi_id:'active_candidates',  name:'Active Candidates',     domain:'people',
+      unit:'candidates', format_type:'number' }
+    { kpi_id:'open_it_tickets',    name:'Open IT Tickets',       domain:'operations',
+      unit:'tickets', format_type:'number', alert_threshold_high:50 }
+    { kpi_id:'training_completion',name:'Training Completion',   domain:'people',
+      unit:'%', format_type:'percent', alert_threshold_low:70 }
+    { kpi_id:'invoice_revenue',    name:'Invoice Revenue (MTD)', domain:'finance',
+      unit:'USD', format_type:'currency' }
+    { kpi_id:'okr_progress',       name:'OKR Progress',          domain:'operations',
+      unit:'%', format_type:'percent' }
+    { kpi_id:'project_milestones', name:'Projects On Track',     domain:'operations',
+      unit:'%', format_type:'percent' }
+    { kpi_id:'time_to_hire',       name:'Avg Time to Hire',      domain:'people',
+      unit:'days', format_type:'number' }
+    { kpi_id:'employee_satisfaction',name:'Employee Satisfaction',domain:'people',
+      unit:'%', format_type:'percent' }
+    { kpi_id:'overdue_invoices',   name:'Overdue Invoices',      domain:'finance',
+      unit:'invoices', format_type:'number', alert_threshold_high:10 }
+    { kpi_id:'asset_utilization',  name:'Asset Utilization',     domain:'operations',
+      unit:'%', format_type:'percent' }
+
+Config Key: ANALYTICS_REPORT_TEMPLATES
+  Stored in: master_data_config table (key='ANALYTICS_REPORT_TEMPLATES', value=JSONB array)
+  Shape per entry:
+    template_id      TEXT
+    name             TEXT
+    category         TEXT   -- 'HR' | 'Finance' | 'Operations' | 'Executive'
+    default_domains  TEXT[]
+    default_metrics  TEXT[]
+    description      TEXT
+
+  Seed data (5 templates):
+    { template_id:'monthly_hr',    name:'Monthly HR Summary',
+      category:'HR', default_domains:['people'],
+      default_metrics:['headcount','time_to_hire','training_completion','employee_satisfaction'],
+      description:'Headcount, hiring metrics, training and satisfaction scores.' }
+    { template_id:'finance_summary', name:'Finance Overview',
+      category:'Finance', default_domains:['finance'],
+      default_metrics:['monthly_payroll','invoice_revenue','overdue_invoices'],
+      description:'Payroll costs, revenue, and outstanding invoices.' }
+    { template_id:'ops_health',    name:'Operations Health Check',
+      category:'Operations', default_domains:['operations'],
+      default_metrics:['open_it_tickets','okr_progress','project_milestones','asset_utilization'],
+      description:'IT ticket load, OKR progress, project status, asset usage.' }
+    { template_id:'executive',     name:'Executive Summary',
+      category:'Executive', default_domains:['people','finance','operations'],
+      default_metrics:['headcount','monthly_payroll','invoice_revenue','okr_progress'],
+      description:'Top-level KPIs across all domains for leadership.' }
+    { template_id:'compliance_data', name:'Compliance Data Export',
+      category:'HR', default_domains:['people'],
+      default_metrics:['headcount','training_completion'],
+      description:'Minimal data set for compliance reporting needs.' }
+
+--------------------------------------------------------------------------------
+SECTION 5 — VALIDATION RULES
+--------------------------------------------------------------------------------
+
+VR-A1: Date range — from must be before to (from < to).
+VR-A2: Date range — max span 365 days for standard users; unlimited for admin role.
+VR-A3: Custom date range — both from and to required when preset = 'custom'.
+VR-A4: Saved report name — required; unique per user (enforced by DB UNIQUE constraint).
+VR-A5: Saved report name — max 100 characters.
+VR-A6: Schedule — if schedule is 'daily', 'weekly', 'monday_morning', or 'first_of_month':
+         at least 1 recipient email required; max 10 recipients.
+VR-A7: Schedule recipient emails — validate email format on input.
+VR-A8: Custom report builder — must select at least 1 domain before proceeding to Step 2.
+VR-A9: Custom report builder — must select at least 1 metric before generating preview.
+VR-A10: Department filter access — if authenticated user's role = 'department_manager':
+          force-apply department = their own department; department dropdown is hidden/
+          read-only showing only their department. Cannot access cross-department data.
+VR-A11: Anomaly acknowledgment — only admin or analytics_admin role may mark resolved.
+VR-A12: Report deletion — only report creator or admin may delete a saved report.
+
+--------------------------------------------------------------------------------
+SECTION 6 — CROSS-APP INTEGRATIONS
+--------------------------------------------------------------------------------
+
+Analytics reads aggregated data from:
+  Employee Directory   → headcount, dept breakdown, employment types
+  Recruitment          → pipeline stages, time-to-hire, active candidates
+  Onboarding           → onboarding completion rates
+  Performance          → review scores, performance distribution
+  Training             → course enrollment, completion rates, satisfaction
+  Payroll              → total payroll, payroll by dept, month-over-month
+  Invoices             → revenue, overdue amounts, client breakdown
+  IT Services          → ticket volume, SLA compliance, categories
+  Assets               → utilization, depreciation totals
+  Projects             → on-track count, milestone completion
+  OKR                  → objective progress, key result attainment
+  Collaboration        → engagement metrics (message volume, active users)
+
+Analytics → Executive Dashboard:
+  Executive Dashboard calls same /analytics/summary endpoint.
+  Shared cache layer — exec dashboard benefits from analytics warm cache.
+  No duplicate aggregation logic.
+
+Analytics → Notifications Bell:
+  When anomaly detected: call notification service to create in-app notification
+  and send web push to admin and analytics_admin roles.
+  Notification payload: { type:'anomaly_detected', metric_key, deviation_percent }
+
+Scheduled Reports → Communications Hub:
+  Optional: when saving a report, checkbox "Post summary to Communications Hub"
+  On completion: call Communications Hub API to create announcement with report summary
+  Announcement body: generated HTML table of top metrics + link to full report.
+
+Analytics → Workflow Automation:
+  Anomaly detection → trigger workflow:
+    Rule: if metric_key='sla_breach_rate' AND severity='red' → trigger
+    escalation_workflow template.
+  Implementation: on anomaly insert, call Workflow Automation trigger endpoint:
+    POST /workflows/trigger { trigger:'anomaly_detected', metadata:{ metric_key, severity } }
+  Configurable in Workflow Automation app: admin maps anomaly events to workflow templates.
+
+--------------------------------------------------------------------------------
+SECTION 7 — PUSH NOTIFICATIONS
+--------------------------------------------------------------------------------
+
+Event: anomaly_detected
+  Trigger: analytics_anomalies row inserted with severity = 'red' or 'amber'
+  Recipients: admin, analytics_admin roles
+  Priority: warning
+  Title: "Analytics Anomaly Detected"
+  Body: "{metric_name} anomaly detected: {deviation}% above/below normal"
+  Action URL: /analytics?tab=overview&highlight={metric_key}
+
+Event: scheduled_report_ready
+  Trigger: analytics_report_runs row updated to status = 'completed'
+  Recipients: report.recipients list (email + push if they have web push enabled)
+  Priority: info
+  Title: "Analytics Report Ready"
+  Body: '"{report_name}" is ready — view in Analytics'
+  Action URL: /analytics?tab=reports&run={run_id}
+
+Event: report_run_failed
+  Trigger: analytics_report_runs row updated to status = 'failed'
+  Recipients: report creator only
+  Priority: warning
+  Title: "Scheduled Report Failed"
+  Body: 'Scheduled report "{report_name}" failed to run. Check configuration.'
+  Action URL: /analytics?tab=reports&report={report_id}
+
+Event: kpi_threshold_breached
+  Trigger: /analytics/summary response value outside alert_threshold_low/high from KPI catalog
+  Recipients: admin role
+  Priority: warning
+  Title: "KPI Threshold Breached"
+  Body: "{metric_name} exceeded threshold: {current_value} vs threshold {threshold_value}"
+  Action URL: /analytics?tab=overview
+
+--------------------------------------------------------------------------------
+SECTION 8 — FIGMA DESIGN PROMPT
+--------------------------------------------------------------------------------
+
+Canvas: 1440×900px desktop
+Component library: Tailwind CSS v4, accent #6366F1 indigo
+Font: Inter
+
+LAYOUT:
+  Left sidebar: 240px, white, border-r gray-100 — nav icons + labels
+  Main content: flex-1, bg-gray-50, overflow-y-auto, p-6
+  Top area: page title "Advanced Analytics" + tab bar
+
+TAB BAR:
+  Tabs: Overview | People | Finance | Operations | Reports
+  Active tab: indigo underline, indigo text
+  Inactive: gray-500 text, no underline
+
+---- OVERVIEW TAB ----
+
+Control Bar (row, gap-3, mb-6):
+  [Department ▾ All Departments]    — outlined dropdown, 200px
+  [Date Range ▾ Last 30 Days]       — outlined dropdown, 180px
+  [Compare Period] toggle           — label left, indigo toggle right, 140px pill
+  [Refresh ↺]                       — ghost button, gray icon
+  [Export ▾]                        — indigo outlined split-button: CSV | Excel | PDF
+  "Data as of 2 min ago"            — gray-400, text-xs, ml-auto self-center
+
+KPI Grid: grid-cols-4, gap-4, mb-8
+
+  Standard KPI Card (white, rounded-xl, p-5, shadow-sm, border border-gray-100):
+    Top row: label (text-xs text-gray-500 uppercase tracking-wide) | anomaly-dot (top-right, 8px circle, hidden unless flagged)
+    Value: text-3xl font-bold text-gray-900 mt-1
+    Unit label: text-xs text-gray-400 inline ml-1
+    Delta chip: mt-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium
+      Positive: bg-emerald-50 text-emerald-700 "↑ +5.2%"
+      Negative: bg-red-50 text-red-600 "↓ -2.1%"
+    Sparkline: 60px × 32px, right side of card, indigo line, no axes
+    "View Breakdown →": text-xs text-indigo-600, hidden; shown on card hover
+    Hover state: shadow-md transition
+
+  Anomaly Card variant:
+    bg-amber-50, border-amber-200, anomaly dot visible (amber-500)
+    ⚠ icon inline next to label (amber-500, 14px)
+    Anomaly dot tooltip on hover: "{metric} is {N}% above normal"
+
+DrillDown Modal (max-w-2xl, white, rounded-2xl, shadow-xl):
+  Header: "Headcount Breakdown" h2 | date range chip gray | × close button
+  Divider
+  Chart area: 400px height (horizontal bar or line chart, indigo series)
+  Table: striped rows, col headers gray-50 bg, text-sm
+    Columns: Category | Count | % | Delta
+  Footer: [Download CSV] ghost button left
+
+Compare Mode — Delta Summary Row (below KPI grid, flex gap-2 flex-wrap):
+  Pills: "↑ Headcount +5%" (emerald) | "↓ Payroll -2%" (red) | "→ IT Tickets ~0%" (gray)
+  Label left: "Period Comparison:" text-sm text-gray-500
+
+Anomaly History Panel (collapsible, white card, rounded-xl, mt-4):
+  Header: "Recent Anomalies" + chevron toggle + count badge
+  Table inside: Date | Metric | Deviation | Severity | Resolved
+  Severity chips same as Audit Log severity badges (see App 4)
+
+---- REPORTS TAB ----
+
+Pre-built Templates (grid-cols-3 gap-4 mb-8):
+  Card: white rounded-xl p-5 border border-gray-100
+    Category chip (indigo/green/amber) top-left
+    Template name: font-semibold
+    Description: text-sm text-gray-500 mt-1
+    Footer: [Run Report →] indigo text button
+
+Saved Reports Section (mb-8):
+  Section header: "Your Saved Reports" + count badge
+  Card list (vertical, gap-3):
+    Card: white rounded-xl p-4 flex items-center gap-4
+      Left: calendar icon indigo-100 bg p-2 rounded-lg
+      Center: name font-medium | "Last run: {date}" text-xs gray | schedule chip text-xs
+        Schedule chip colors: daily=indigo, weekly=blue, monthly=purple, one_off=gray
+      Right: [Run Now] [Edit] [Delete] icon buttons
+
+Custom Report Builder (white card rounded-xl p-6):
+  Stepper: Step 1 (active indigo) → Step 2 → Step 3 → Step 4
+  Step 1 — Select Domains:
+    Chip multi-select: [People ✓] [Finance] [Operations ✓] [HR] ...
+    Selected chips: indigo-100 bg, indigo text, ✓ icon
+  Step 2 — Select Metrics:
+    Grouped by selected domain, checkbox list per group
+    Checked: indigo checkbox
+  Step 3 — Set Filters:
+    Date range inputs | Department dropdown | Status filter
+  Step 4 — Preview & Save:
+    [Generate Preview] indigo button → loading spinner → table below (max 20 rows)
+    Below table: [Save Report] | [Schedule] | [Export Now]
+    [Save Report] → slide-over: name input + schedule selector + recipients
+
+================================================================================
+APP 4: SECURITY & COMPLIANCE DASHBOARD
+================================================================================
+
+Current File: SecurityComplianceDashboard.tsx
+Current Data: ALL stored in localStorage via AuditLogService + ComplianceService
+Current Tabs: Audit Logs, Compliance, Privacy Requests, Security Overview
+
+CRITICAL GAPS:
+  G1 [HIGH]: Data in localStorage — lost on browser clear; not shared across users
+  G2 [HIGH]: Audit events not auto-written when actions occur in other apps
+  G3 [HIGH]: Compliance frameworks not pre-seeded (GDPR, HIPAA, SOC2, ISO27001, PCI-DSS, NIST, CCPA)
+  G4 [MEDIUM]: Cannot create privacy requests from UI
+  G5 [MEDIUM]: Assessment history not surfaced
+  G6 [MEDIUM]: No date-range filter UI for audit logs
+  G7 [LOW]: No Add Evidence UI
+
+--------------------------------------------------------------------------------
+SECTION 1 — MIGRATION PLAN (Do First — Replace localStorage)
+--------------------------------------------------------------------------------
+
+Step 1 — New Database Tables
+
+Table: audit_logs
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  event_id        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE  -- idempotency key
+  timestamp       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  user_id         UUID REFERENCES auth.users(id)
+  user_email      TEXT
+  user_role       TEXT
+  event_type      TEXT NOT NULL    -- e.g. 'user_created', 'login_failure', 'data_export'
+  action          TEXT NOT NULL    -- human-readable: "Created user john@example.com"
+  resource_type   TEXT             -- 'user' | 'employee' | 'invoice' | etc.
+  resource_id     TEXT             -- ID of affected record
+  severity        TEXT NOT NULL CHECK (severity IN ('info','low','medium','high','critical'))
+  status          TEXT NOT NULL CHECK (status IN ('success','failure'))
+  ip_address      INET
+  user_agent      TEXT
+  metadata        JSONB DEFAULT '{}'   -- additional context
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+  Constraints:
+    NO UPDATE policy — audit_logs is append-only (RLS: no UPDATE/DELETE for any role)
+    Retention: archive rows where created_at < NOW() - INTERVAL '90 days' to
+      audit_logs_archive table (configurable retention period in Master Data)
+
+Table: compliance_frameworks
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  name            TEXT NOT NULL UNIQUE    -- 'GDPR', 'HIPAA', 'SOC2', 'ISO27001', 'PCI-DSS', 'NIST', 'CCPA'
+  version         TEXT                    -- e.g. 'GDPR 2018', 'SOC2 2017'
+  description     TEXT
+  is_active       BOOLEAN NOT NULL DEFAULT TRUE
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+Table: compliance_requirements
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  framework_id    UUID NOT NULL REFERENCES compliance_frameworks(id) ON DELETE CASCADE
+  category        TEXT NOT NULL            -- grouping within framework
+  control_id      TEXT NOT NULL            -- e.g. 'GDPR-001', 'SOC2-CC6.1'
+  title           TEXT NOT NULL
+  description     TEXT
+  status          TEXT NOT NULL DEFAULT 'non_compliant'
+                    CHECK (status IN ('compliant','partial','in_progress','non_compliant'))
+  assigned_to     UUID REFERENCES auth.users(id)
+  evidence        JSONB DEFAULT '[]'       -- array of { file_name, url, uploaded_by, uploaded_at, description }
+  last_assessed   DATE
+  assessment_notes TEXT
+  status_change_reason TEXT               -- required when updating status
+  due_date        DATE
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  UNIQUE (framework_id, control_id)
+
+Table: compliance_assessments
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  framework_id    UUID NOT NULL REFERENCES compliance_frameworks(id)
+  assessed_by     UUID NOT NULL REFERENCES auth.users(id)
+  assessment_date DATE NOT NULL DEFAULT CURRENT_DATE
+  overall_status  TEXT CHECK (overall_status IN ('compliant','partial','non_compliant'))
+  findings        TEXT
+  recommendations TEXT
+  score_percent   NUMERIC(5,2) CHECK (score_percent BETWEEN 0 AND 100)
+  evidence_files  JSONB DEFAULT '[]'   -- array of uploaded file metadata
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+Table: privacy_requests
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  requester_name  TEXT NOT NULL
+  requester_email TEXT NOT NULL
+  request_type    TEXT NOT NULL CHECK (request_type IN (
+                    'access','deletion','rectification','portability','objection'))
+  status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending','in_progress','completed','rejected'))
+  assigned_to     UUID REFERENCES auth.users(id)
+  received_at     DATE NOT NULL DEFAULT CURRENT_DATE
+  due_date        DATE NOT NULL            -- auto-calculated on insert
+  completed_at    TIMESTAMPTZ
+  response_notes  TEXT                    -- required before marking completed
+  regulation      TEXT NOT NULL CHECK (regulation IN ('GDPR','CCPA'))
+  description     TEXT
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+  Due date calculation trigger:
+    BEFORE INSERT: due_date = received_at + INTERVAL '30 days'  -- GDPR
+                   due_date = received_at + INTERVAL '45 days'  -- CCPA
+    (use a BEFORE INSERT trigger or compute in API layer)
+
+Table: security_events
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  event_type      TEXT NOT NULL
+  severity        TEXT NOT NULL CHECK (severity IN ('info','low','medium','high','critical'))
+  description     TEXT NOT NULL
+  source_app      TEXT                    -- which app reported this
+  affected_resource TEXT
+  detected_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  resolved_at     TIMESTAMPTZ
+  resolution_notes TEXT
+  created_by      UUID REFERENCES auth.users(id)
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+Table: security_risks (for Risk Register tab)
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  title           TEXT NOT NULL
+  category        TEXT NOT NULL CHECK (category IN (
+                    'Data Breach','Unauthorized Access','System Failure',
+                    'Compliance','Insider Threat'))
+  likelihood      INTEGER NOT NULL CHECK (likelihood BETWEEN 1 AND 3)
+  impact          INTEGER NOT NULL CHECK (impact BETWEEN 1 AND 3)
+  risk_score      INTEGER GENERATED ALWAYS AS (likelihood * impact) STORED
+  mitigation_plan TEXT
+  status          TEXT NOT NULL DEFAULT 'open'
+                    CHECK (status IN ('open','mitigating','resolved','accepted'))
+  owner           UUID REFERENCES auth.users(id)
+  review_date     DATE
+  last_reviewed_at DATE
+  created_by      UUID REFERENCES auth.users(id)
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+Step 2 — Replace AuditLogService
+
+  Current AuditLogService methods → new API-backed implementation:
+
+  AuditLogService.log(event):
+    Old: localStorage.setItem(...)
+    New: POST /api/audit-logs
+         Body: { event_type, action, resource_type, resource_id, severity, status, metadata }
+         Headers include: Authorization Bearer token (user context)
+         IP address: captured server-side from request headers
+         User agent: captured server-side from User-Agent header
+
+  AuditLogService.getLogs(filter):
+    Old: JSON.parse(localStorage.getItem('audit_logs'))
+    New: GET /api/audit-logs?event_type={}&severity={}&from={}&to={}&user_id={}&search={}&page={}&limit={}
+         Returns: { data: AuditLog[], count: number, page: number }
+
+  AuditLogService.exportLogs(filter):
+    Old: JSON.stringify to blob
+    New: GET /api/audit-logs/export?format=csv&{...filter params}
+         Returns: CSV file download (Content-Disposition: attachment)
+
+  All static class methods become async functions calling Supabase client or fetch.
+  Service remains importable for backward compat but implementation is API-backed.
+
+Step 3 — Auto-Audit Integration (fix G2)
+
+  Central Hook: useAuditLogger
+    File: src/hooks/useAuditLogger.ts
+    Signature:
+      const auditLogger = useAuditLogger()
+      auditLogger.log({
+        event_type: string,
+        action: string,
+        resource_type?: string,
+        resource_id?: string,
+        severity?: 'info'|'low'|'medium'|'high'|'critical',  // default: 'info'
+        status?: 'success'|'failure',                          // default: 'success'
+        metadata?: Record<string, unknown>
+      })
+    Implementation: calls POST /api/audit-logs; non-blocking (fire-and-forget with
+    error silently logged to console — audit failure must not break app UX).
+
+  Events to auto-log per app (integrate useAuditLogger into each app):
+
+  User Management:
+    user_created        — severity: low,    action: "Created user {email}"
+    user_deactivated    — severity: medium, action: "Deactivated user {email}"
+    role_changed        — severity: medium, action: "Changed role for {email}: {old} → {new}"
+    password_reset      — severity: low,    action: "Password reset for {email}"
+    login_success       — severity: info,   action: "Login: {email}"
+    login_failure       — severity: medium, action: "Failed login attempt: {email}"
+
+  Employee Directory:
+    employee_created    — severity: low,    action: "Added employee {name}"
+    employee_updated    — severity: info,   action: "Updated employee {name}: {fields_changed}"
+    employee_deleted    — severity: high,   action: "Deleted employee record {name}"
+    document_uploaded   — severity: info,   action: "Document uploaded for {name}: {doc_type}"
+
+  Recruitment:
+    candidate_hired     — severity: low,    action: "Candidate hired: {name} for {role}"
+    offer_sent          — severity: info,   action: "Offer sent to {name} for {role}"
+
+  Onboarding:
+    access_enabled      — severity: low,    action: "System access enabled for {name}"
+    account_created     — severity: low,    action: "Account created for new hire {name}"
+
+  Payroll:
+    payroll_processed   — severity: high,   action: "Payroll processed: {month} — {employee_count} employees — {total_amount}"
+    salary_structure_updated — severity: high, action: "Salary updated for {employee_name}: {old} → {new}"
+
+  Invoices:
+    invoice_created     — severity: info,   action: "Invoice created: {invoice_number} — {client} — {amount}"
+    invoice_paid        — severity: info,   action: "Invoice marked paid: {invoice_number}"
+    invoice_deleted     — severity: medium, action: "Invoice deleted: {invoice_number}"
+
+  Security & Compliance:
+    compliance_updated  — severity: medium, action: "Compliance status updated: {control_id} → {new_status}"
+    privacy_request_created — severity: medium, action: "Privacy request created: {type} from {requester_email}"
+
+  All Apps (universal):
+    data_export         — severity: medium, action: "{user} exported {data_type} data ({format}) — {row_count} rows"
+
+--------------------------------------------------------------------------------
+SECTION 2 — FEATURE ENHANCEMENTS
+--------------------------------------------------------------------------------
+
+2.1 Compliance Frameworks — Full Seeding (fix G3)
+
+  All 7 frameworks seeded via Supabase migration or seed script.
+  Minimum 8 requirements per framework; full list below.
+
+  GDPR (20 requirements):
+    GDPR-001 | Data Protection by Design    | Embed data protection into processing by default
+    GDPR-002 | Lawful Basis for Processing  | Document lawful basis for each processing activity
+    GDPR-003 | Consent Management           | Obtain and record valid consent; allow withdrawal
+    GDPR-004 | Right to Access              | Respond to Subject Access Requests within 30 days
+    GDPR-005 | Right to Erasure             | Process erasure requests; document exceptions
+    GDPR-006 | Data Breach Notification     | Notify supervisory authority within 72 hours
+    GDPR-007 | DPO Appointment              | Appoint Data Protection Officer where required
+    GDPR-008 | Cross-border Transfer Controls| Implement SCCs or adequacy decision for transfers
+    GDPR-009 | Privacy Notices              | Maintain clear, accessible privacy notices
+    GDPR-010 | Retention Policies           | Define and enforce data retention schedules
+    GDPR-011 | Data Minimisation            | Collect only data adequate and relevant to purpose
+    GDPR-012 | Accuracy                     | Maintain accurate and up-to-date personal data
+    GDPR-013 | Data Processing Agreements   | Execute DPAs with all processors
+    GDPR-014 | ROPA Maintenance             | Maintain Records of Processing Activities
+    GDPR-015 | Right to Rectification       | Process rectification requests
+    GDPR-016 | Right to Portability         | Provide data in machine-readable format on request
+    GDPR-017 | Right to Object              | Honor objection to processing for direct marketing
+    GDPR-018 | Automated Decision Making    | Provide meaningful information on automated decisions
+    GDPR-019 | Children's Data              | Verify age and obtain parental consent for minors
+    GDPR-020 | Impact Assessment            | Conduct DPIA for high-risk processing activities
+
+  HIPAA (18 requirements):
+    HIPAA-001 | Administrative Safeguards         | Security management process and policies
+    HIPAA-002 | Physical Safeguards               | Facility access controls and workstation security
+    HIPAA-003 | Technical Safeguards              | Access control, audit controls, encryption
+    HIPAA-004 | Breach Notification Rule          | Notify affected individuals within 60 days
+    HIPAA-005 | PHI Access Controls               | Unique user identification for PHI access
+    HIPAA-006 | Audit Controls                    | Hardware/software activity audit logs
+    HIPAA-007 | Integrity Controls                | Protect PHI from improper alteration
+    HIPAA-008 | Transmission Security             | Encrypt PHI in transit
+    HIPAA-009 | Business Associate Agreements     | Execute BAAs with all business associates
+    HIPAA-010 | Workforce Training                | Regular HIPAA training for all staff
+    HIPAA-011 | Minimum Necessary Standard        | Limit PHI access to minimum necessary
+    HIPAA-012 | Risk Analysis                     | Conduct thorough risk analysis
+    HIPAA-013 | Risk Management                   | Implement risk management measures
+    HIPAA-014 | Sanction Policy                   | Apply sanctions for policy violations
+    HIPAA-015 | Information System Activity Review| Regularly review information system logs
+    HIPAA-016 | Contingency Plan                  | Data backup and disaster recovery plan
+    HIPAA-017 | Evaluation                        | Periodic evaluation of security measures
+    HIPAA-018 | Privacy Notice                    | Distribute notice of privacy practices
+
+  SOC2 (25 requirements — 5 Trust Service Criteria):
+    SOC2-CC1.1  | Security — COSO Principles       | Control environment and governance
+    SOC2-CC2.1  | Communication                    | Internal and external communication
+    SOC2-CC3.1  | Risk Assessment                  | Risk identification and analysis
+    SOC2-CC4.1  | Monitoring Activities            | Ongoing and separate evaluations
+    SOC2-CC5.1  | Control Activities               | Actions to address risks
+    SOC2-CC6.1  | Logical Access Controls          | Restrict access to authorized users
+    SOC2-CC6.2  | Authentication                   | Multi-factor authentication enforcement
+    SOC2-CC6.3  | Authorization                    | Role-based access control
+    SOC2-CC6.6  | Threat and Vulnerability Mgmt    | Identify and address threats
+    SOC2-CC7.1  | System Operations Monitoring     | Detect anomalies and incidents
+    SOC2-CC7.2  | Incident Response                | Identify and respond to incidents
+    SOC2-CC8.1  | Change Management                | Control infrastructure and software changes
+    SOC2-CC9.1  | Risk Mitigation                  | Vendor and business partner management
+    SOC2-A1.1   | Availability — Capacity          | Manage capacity to meet objectives
+    SOC2-A1.2   | Availability — Monitoring        | Monitor performance and availability
+    SOC2-A1.3   | Availability — Recovery          | Backup and recovery procedures
+    SOC2-PI1.1  | Processing Integrity             | Complete and accurate processing
+    SOC2-C1.1   | Confidentiality — Classification | Identify confidential information
+    SOC2-C1.2   | Confidentiality — Disposal       | Destroy confidential data appropriately
+    SOC2-P1.0   | Privacy — Notice                 | Communicate privacy practices
+    SOC2-P2.0   | Privacy — Choice and Consent     | Collect data per consent
+    SOC2-P3.0   | Privacy — Collection             | Limit collection to stated purposes
+    SOC2-P4.0   | Privacy — Use and Retention      | Use data as stated; dispose appropriately
+    SOC2-P7.0   | Privacy — Quality                | Maintain accurate personal information
+    SOC2-P8.0   | Privacy — Monitoring             | Monitor compliance with privacy policies
+
+  ISO27001 (30 requirements):
+    ISO-A5.1  | Information Security Policies      | Policies approved by management
+    ISO-A6.1  | Organization of Security           | Internal organization and roles
+    ISO-A7.1  | HR Security — Pre-employment       | Background verification
+    ISO-A7.2  | HR Security — During Employment    | Security responsibilities and training
+    ISO-A7.3  | HR Security — Termination          | Return of assets; access revocation
+    ISO-A8.1  | Asset Inventory                    | Identify and inventory information assets
+    ISO-A8.2  | Asset Classification               | Classify information by sensitivity
+    ISO-A8.3  | Media Handling                     | Control removable media
+    ISO-A9.1  | Access Control Policy              | Document access control policy
+    ISO-A9.2  | User Access Management             | Provisioning and de-provisioning
+    ISO-A9.3  | User Responsibilities              | Secure authentication practices
+    ISO-A9.4  | System Access Control              | Restrict access to systems
+    ISO-A10.1 | Cryptography Policy                | Encryption and key management
+    ISO-A11.1 | Physical Security                  | Physical perimeter and entry controls
+    ISO-A11.2 | Equipment Security                 | Protect equipment from threats
+    ISO-A12.1 | Operational Procedures             | Documented operating procedures
+    ISO-A12.2 | Malware Controls                   | Anti-malware controls
+    ISO-A12.3 | Backup                             | Regular backup and testing
+    ISO-A12.4 | Logging and Monitoring             | Event logging and review
+    ISO-A12.6 | Vulnerability Management           | Patch and vulnerability management
+    ISO-A13.1 | Network Security                   | Network controls and segregation
+    ISO-A14.1 | Security Requirements in Dev       | Security in development lifecycle
+    ISO-A14.2 | Secure Development                 | Secure development environment
+    ISO-A15.1 | Supplier Relationships             | Supplier security agreements
+    ISO-A16.1 | Incident Management                | Incident response and reporting
+    ISO-A17.1 | Business Continuity               | Information security continuity
+    ISO-A18.1 | Legal Compliance                   | Identify applicable legal requirements
+    ISO-A18.2 | Security Reviews                   | Independent review of security
+    ISO-A6.2  | Mobile Devices                     | Mobile device security policy
+    ISO-A12.5 | Change Control                     | Control changes to systems
+
+  PCI-DSS (12 requirements):
+    PCI-001 | Network Security Controls            | Install and maintain network controls
+    PCI-002 | Secure System Configurations         | Apply secure configurations to all components
+    PCI-003 | Protect Stored Account Data          | Protect stored cardholder data
+    PCI-004 | Protect Data in Transit              | Encrypt transmission of cardholder data
+    PCI-005 | Malware Protection                   | Protect systems from malware
+    PCI-006 | Secure Systems and Software          | Develop and maintain secure systems
+    PCI-007 | Restrict Access by Business Need     | Restrict access to cardholder data
+    PCI-008 | Identify Users and Authenticate      | Identify all users and authenticate access
+    PCI-009 | Restrict Physical Access             | Restrict physical access to cardholder data
+    PCI-010 | Log and Monitor Access               | Log and monitor all access to network resources
+    PCI-011 | Test Security Regularly              | Test security systems and processes
+    PCI-012 | Information Security Policy          | Support security with policies and programs
+
+  NIST CSF (23 requirements):
+    NIST-ID.AM | Asset Management                  | Identify organizational assets
+    NIST-ID.BE | Business Environment              | Understand mission and dependencies
+    NIST-ID.GV | Governance                        | Security policy and strategy
+    NIST-ID.RA | Risk Assessment                   | Assess cybersecurity risk
+    NIST-ID.SC | Supply Chain Risk                 | Manage supply chain risk
+    NIST-PR.AC | Identity Management               | Access is managed per risk
+    NIST-PR.AT | Awareness Training                | Security awareness and training
+    NIST-PR.DS | Data Security                     | Manage data consistent with risk strategy
+    NIST-PR.IP | Protective Technology             | Security solutions implemented
+    NIST-PR.MA | Maintenance                       | Perform maintenance on systems
+    NIST-DE.AE | Anomalies and Events              | Detect anomalies and events
+    NIST-DE.CM | Continuous Monitoring             | Monitor assets for anomalies
+    NIST-DE.DP | Detection Processes               | Maintain detection processes
+    NIST-RS.RP | Response Planning                 | Incident response processes in place
+    NIST-RS.CO | Communications                    | Coordinate incident response
+    NIST-RS.AN | Analysis                          | Conduct analysis to ensure effective response
+    NIST-RS.MI | Mitigation                        | Mitigate incidents
+    NIST-RS.IM | Improvements                      | Improve response based on lessons learned
+    NIST-RC.RP | Recovery Planning                 | Recovery processes in place
+    NIST-RC.IM | Improvements                      | Improve recovery based on lessons learned
+    NIST-RC.CO | Communications                    | Restore reputation after incident
+    NIST-PR.PT | Protective Technology             | Log records and protection solutions
+    NIST-ID.SC2| Supply Chain Risk (extended)      | Suppliers assessed for risk
+
+  CCPA (10 requirements):
+    CCPA-001 | Right to Know                       | Disclose data collected and purposes
+    CCPA-002 | Right to Delete                     | Delete personal information on request
+    CCPA-003 | Right to Opt-Out                    | Honor opt-out of sale of personal info
+    CCPA-004 | Non-Discrimination                  | No discrimination for exercising rights
+    CCPA-005 | Privacy Notice at Collection        | Disclose categories at time of collection
+    CCPA-006 | Data Inventory                      | Maintain inventory of personal data
+    CCPA-007 | Respond to Requests in 45 Days      | Process consumer requests within 45 days
+    CCPA-008 | Service Provider Contracts          | Ensure contracts with service providers
+    CCPA-009 | Sensitive Personal Information      | Limit use of sensitive PI to disclosed purposes
+    CCPA-010 | Annual Privacy Policy Update        | Update privacy policy annually
+
+2.2 Privacy Request Workflow (fix G4)
+
+  [+ New Request] Button:
+    Opens slide-over form (right side, 500px wide):
+      requester_name: text input (required)
+      requester_email: email input (required, validated)
+      request_type: select dropdown (Access | Deletion | Rectification | Portability | Objection)
+      regulation: radio group (GDPR | CCPA)
+      description: textarea (optional, context/details)
+      received_at: date picker (default: today, can backdate)
+      assigned_to: user search dropdown (filtered to HR Admin and DPO roles)
+      [Submit Request] indigo button | [Cancel] ghost button
+
+  Auto-calculate Due Date:
+    On submit (API layer or trigger):
+      GDPR: due_date = received_at + 30 days
+      CCPA: due_date = received_at + 45 days
+    Due date displayed as calculated value; UI does not expose due_date for manual entry.
+
+  Status Workflow:
+    Pending → In Progress (assigned user picks up)
+    In Progress → Completed (requires response_notes, min 20 characters)
+    In Progress → Rejected (requires response_notes, min 20 characters)
+    Status change buttons: [Mark In Progress] [Complete] [Reject]
+    Each transition logged in audit_logs with action="privacy_request_status_changed"
+
+  Overdue Flag:
+    Condition: TODAY() > due_date AND status NOT IN ('completed','rejected')
+    Table row: bg-red-50; due_date cell shows "OVERDUE" chip (red, filled)
+    Stats card: "Overdue" count badge in red
+
+2.3 Evidence Management (fix G7)
+
+  Per compliance_requirements row:
+    [+ Add Evidence] button in Actions column → opens mini modal:
+      File upload input (drag-and-drop or click)
+      Description: text input
+      Date: date picker (default today)
+      [Upload] button
+    On upload:
+      POST file to Supabase Storage: bucket=compliance-evidence/{framework_id}/{requirement_id}/
+      Append to requirement's evidence JSONB array: { file_name, url, uploaded_by, uploaded_at, description }
+      Log audit event: evidence_uploaded
+
+  Evidence List per requirement (expand row or side panel):
+    Show all evidence entries as list:
+      File name (icon based on type) | Date | Uploaded by | [View] [Delete]
+    [View]: opens file in new tab (Supabase Storage signed URL, 1h expiry)
+    [Delete]: remove from storage + remove from JSONB array; confirm dialog
+
+  Bulk Evidence Upload for Assessments:
+    On [New Assessment] form: drag-and-drop multi-file upload
+    Files stored at: compliance-evidence/assessments/{assessment_id}/
+
+2.4 Assessment History (fix G5)
+
+  New sub-section in Compliance tab: "Assessment History"
+  Table columns: Date | Assessed By | Framework | Score % | Status | Findings excerpt | [View Full]
+  [View Full] → opens assessment detail modal with full findings, recommendations, and evidence list
+  [New Assessment] button → form: framework (pre-filled if framework selected), findings, recommendations, score, evidence files
+  Assessment score history chart: line chart showing score_percent over time for selected framework
+
+2.5 Security Risk Register (New Tab)
+
+  Risk Matrix Visualization:
+    3×3 grid: x-axis = Impact (Low/Med/High), y-axis = Likelihood (Low/Med/High)
+    Cell colors:
+      Score 1 (L1×I1): green-100   — Low Risk
+      Score 2 (L1×I2, L2×I1): green-200  — Low-Medium
+      Score 3 (L1×I3, L3×I1): yellow-200 — Medium
+      Score 4 (L2×I2): amber-200   — Medium
+      Score 6 (L2×I3, L3×I2): orange-200 — High
+      Score 9 (L3×I3): red-200     — Critical
+    Each cell shows count of risks in that position; click cell to filter table
+
+  Risk Table columns:
+    Title | Category chip | Score badge (colored) | Status chip | Owner | Review Date | [Edit] [Delete]
+    Risk score badge: 1-2=green, 3-4=amber, 6=orange, 9=red
+    Aging flag: if last_reviewed_at < TODAY() - 90 days → show clock icon amber tooltip
+      "Not reviewed in 90+ days"
+
+  [+ Add Risk] button → slide-over form:
+    title (required), category (select), likelihood (1-3 radio), impact (1-3 radio)
+    risk_score: auto-calculated, displayed read-only
+    mitigation_plan: textarea
+    status: select (open/mitigating/resolved/accepted)
+    owner: user search
+    review_date: date picker
+
+--------------------------------------------------------------------------------
+SECTION 3 — COMPLIANCE FRAMEWORK SEED DATA SUMMARY
+--------------------------------------------------------------------------------
+
+All frameworks seeded with minimum 8 requirements each (full list above in Section 2.1).
+Seed file: supabase/seed/compliance_frameworks.sql
+Seeding approach: INSERT ... ON CONFLICT DO NOTHING (idempotent re-runs safe).
+Default status for all requirements: 'non_compliant'
+Frameworks table seeded first; requirements reference framework_id via FK.
+
+Total seed counts:
+  GDPR:     20 requirements
+  HIPAA:    18 requirements
+  SOC2:     25 requirements
+  ISO27001: 30 requirements
+  PCI-DSS:  12 requirements
+  NIST CSF: 23 requirements
+  CCPA:     10 requirements
+  TOTAL:   138 requirements
+
+--------------------------------------------------------------------------------
+SECTION 4 — VALIDATION RULES
+--------------------------------------------------------------------------------
+
+VR-S1: Audit logs — append-only. RLS policies: ALLOW INSERT for authenticated;
+         DENY UPDATE and DELETE for all roles including service_role
+         (use a separate archive process, not delete).
+VR-S2: Audit log retention — configurable in Master Data: key='AUDIT_LOG_RETENTION_DAYS'
+         default=90. Archive job moves old rows to audit_logs_archive; never deletes.
+VR-S3: Compliance requirement status change — requires:
+         (a) status_change_reason text, minimum 20 characters
+         (b) For status='compliant': at least 1 evidence attachment required
+         Validated in API before UPDATE; returns 422 if not met.
+VR-S4: Privacy request due_date — auto-calculated server-side; cannot be shortened
+         below regulation minimum (30d GDPR, 45d CCPA). API rejects manual
+         due_date values that are earlier than regulation minimum from received_at.
+VR-S5: Security risk score — computed column (likelihood × impact); never set manually.
+         Both likelihood and impact must be 1, 2, or 3 (DB CHECK constraint).
+VR-S6: Evidence file constraints:
+         Max file size: 20 MB (validated client-side and in Supabase Storage policy)
+         Allowed MIME types: application/pdf, image/*, application/msword,
+           application/vnd.openxmlformats-officedocument.wordprocessingml.document,
+           application/vnd.ms-excel,
+           application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,
+           text/csv
+VR-S7: Privacy request completion — response_notes required (min 20 chars) before
+         status can be set to 'completed' or 'rejected'.
+VR-S8: Compliance assessment score — 0–100 range enforced by DB CHECK constraint
+         and API validation.
+VR-S9: Risk review aging — risks with last_reviewed_at < (TODAY - 90 days) are
+         flagged in UI with amber indicator; push notification sent to risk owner.
+VR-S10: Audit log export — only admin and security roles may export audit logs.
+          Exportation is itself logged as a data_export audit event.
+
+--------------------------------------------------------------------------------
+SECTION 5 — CROSS-APP INTEGRATIONS
+--------------------------------------------------------------------------------
+
+All Apps → Security:
+  Every app imports useAuditLogger hook and calls auditLogger.log() on key actions.
+  Hook is non-blocking; failure to log must never break application flow.
+  Implementation file: src/hooks/useAuditLogger.ts (shared hook, used by all apps)
+
+User Management → Security:
+  login_success, login_failure, user_created, user_deactivated, role_changed,
+  password_reset events auto-logged (see Step 3 event list above).
+  Login failure spike detection: Security app queries audit_logs for
+    COUNT(event_type='login_failure') WHERE user_email={email} AND timestamp > NOW()-1h
+    If count >= 5: trigger login_failure_spike notification.
+
+Security → Notifications Bell:
+  critical_audit_event (severity='critical'): immediate in-app + web push to admin
+  compliance_deadline_approaching (assessment due in 7 days): warning notification
+  privacy_request_overdue: daily check job; notify assigned_to + admin
+  data_export_by_admin: notify other admins when any admin performs data export
+
+Security → Workflow Automation:
+  Compliance assessment due: POST /workflows/trigger { trigger:'compliance_due', framework_id }
+  Privacy request overdue: POST /workflows/trigger { trigger:'privacy_request_overdue', request_id }
+  Configuration: admin maps security events to workflow templates in Workflow Automation app.
+
+Security → Executive Dashboard:
+  Compliance rate % (compliant requirements / total requirements) per active framework
+  Critical security events count (last 30 days)
+  Shared via: GET /security/summary → consumed by Executive Dashboard
+
+Security → Analytics:
+  Audit event trends available as data source in Analytics Operations tab:
+    Metric: 'audit_events_by_type' endpoint: /analytics/security/audit-trends
+    Shows event volume over time, filterable by severity and event_type
+
+--------------------------------------------------------------------------------
+SECTION 6 — PUSH NOTIFICATIONS
+--------------------------------------------------------------------------------
+
+Event: critical_audit_event
+  Trigger: audit_logs INSERT with severity = 'critical'
+  Recipients: all users with role IN ('admin', 'security')
+  Priority: immediate (high)
+  Title: "Critical Security Event"
+  Body: "Critical security event: {action} by {user_email}"
+  Action URL: /security?tab=audit-logs&highlight={event_id}
+  Web push: YES (immediate); in-app bell: YES
+
+Event: login_failure_spike
+  Trigger: >5 login_failure events for same email within 1-hour window
+  Recipients: admin role
+  Priority: warning
+  Title: "Multiple Failed Logins Detected"
+  Body: "Multiple failed logins detected for {user_email}: {N} attempts in 1 hour"
+  Action URL: /security?tab=audit-logs&filter=login_failure&user={email}
+
+Event: compliance_deadline_7d
+  Trigger: compliance_assessments with next due date = TODAY + 7 days (daily cron check)
+  Recipients: framework assigned_to user + admin
+  Priority: warning
+  Title: "Compliance Assessment Due Soon"
+  Body: "{framework_name} assessment is due in 7 days"
+  Action URL: /security?tab=compliance&framework={framework_id}
+
+Event: privacy_request_overdue
+  Trigger: daily cron: privacy_requests WHERE due_date < TODAY AND status NOT IN ('completed','rejected')
+  Recipients: assigned_to user + admin
+  Priority: action_required
+  Title: "Privacy Request Overdue"
+  Body: "Privacy request from {requester_name} is {N} days overdue"
+  Action URL: /security?tab=privacy-requests&highlight={request_id}
+
+Event: data_export_by_admin
+  Trigger: audit_logs INSERT with event_type = 'data_export' AND user_role = 'admin'
+  Recipients: other admin users (all admin role, excluding the exporting user)
+  Priority: info
+  Title: "Admin Data Export"
+  Body: "{user_email} exported {resource_type} data at {timestamp}"
+  Action URL: /security?tab=audit-logs&highlight={event_id}
+
+Event: security_risk_review_due
+  Trigger: daily cron: security_risks WHERE last_reviewed_at < TODAY - 90 days AND status NOT IN ('resolved','accepted')
+  Recipients: risk owner (owner field)
+  Priority: warning
+  Title: "Security Risk Review Due"
+  Body: "Security risk '{title}' has not been reviewed in 90+ days"
+  Action URL: /security?tab=risk-register&highlight={risk_id}
+
+Event: compliance_status_degraded
+  Trigger: after compliance_requirements UPDATE: recalculate compliance_pct; if
+    new_pct < previous_pct - 5 (i.e. dropped more than 5 percentage points)
+  Recipients: admin role
+  Priority: warning
+  Title: "Compliance Score Dropped"
+  Body: "{framework_name} compliance dropped to {score_percent}%"
+  Action URL: /security?tab=compliance&framework={framework_id}
+
+--------------------------------------------------------------------------------
+SECTION 7 — FIGMA DESIGN PROMPT
+--------------------------------------------------------------------------------
+
+Canvas: 1440×900px desktop
+Component library: Tailwind CSS v4
+Accent color: #6366F1 (indigo)
+Severity palette: Critical=#EF4444(red) | High=#F97316(orange) | Medium=#F59E0B(amber) | Low=#3B82F6(blue) | Info=#6B7280(gray)
+Font: Inter
+
+LAYOUT:
+  Left sidebar: 240px, white, border-r gray-100
+  Main: flex-1, bg-gray-50, p-6, overflow-y-auto
+  Page title: "Security & Compliance" with shield icon (indigo)
+
+TAB BAR:
+  Tabs: Audit Logs | Compliance | Privacy Requests | Security Overview | Risk Register
+  Active: indigo underline + indigo text; Inactive: gray-500
+
+---- AUDIT LOGS TAB ----
+
+Filter Bar (flex row, gap-3, mb-4, white card p-4 rounded-xl):
+  [Search ⌕ ─────────────────]  — text input 280px, placeholder "Search action, user, resource..."
+  [Event Type ▾ All]             — dropdown 160px
+  [Severity ▾ All]               — dropdown 140px; options: All | Critical | High | Medium | Low | Info
+  [Date Range: ── to ──]         — date range picker (two date inputs inline)
+  [User ▾]                       — user search dropdown
+  [Export CSV ↓]                 — indigo filled button (right-aligned)
+
+Stats Strip (4 mini cards, grid-cols-4 gap-4 mb-4):
+  Total Events:   white card, number bold, label gray, no color
+  Critical Events: white card, number text-red-600, small red badge, label gray
+  Failed Actions:  white card, number text-amber-600, label gray
+  Unique Users:    white card, number text-indigo-600, label gray
+
+Audit Log Table (white card, rounded-xl, shadow-sm):
+  Full width, striped rows (bg-white / bg-gray-50 alternate)
+  Table header: bg-gray-50 sticky, text-xs uppercase tracking-wide text-gray-500
+  Columns:
+    Timestamp   — text-sm text-gray-600, e.g. "Sep 4, 2026 14:32:05"
+    User        — avatar initial circle + email text-sm
+    Event Type  — chip: rounded-full text-xs font-medium, indigo/gray by domain
+    Action      — text-sm text-gray-700, max 60 chars ellipsis
+    Resource    — text-sm text-gray-500
+    Severity    — colored badge:
+                    Critical: bg-red-100 text-red-700 border border-red-200
+                    High:     bg-orange-100 text-orange-700
+                    Medium:   bg-amber-100 text-amber-700
+                    Low:      bg-blue-100 text-blue-700
+                    Info:     bg-gray-100 text-gray-600
+    Status      — chip: Success=bg-emerald-100 text-emerald-700 | Failure=bg-red-100 text-red-700
+    Actions     — [Details] text button indigo
+  Critical row tint: entire row bg-red-50
+  Row click: opens detail drawer (400px right slide-over):
+    All fields displayed
+    Metadata: JSON viewer (collapsible keys)
+    [Copy Event ID] button
+
+---- COMPLIANCE TAB ----
+
+Framework Pills (flex gap-2 mb-6):
+  [GDPR] [SOC2] [ISO27001] [HIPAA] [PCI-DSS] [NIST] [CCPA]
+  Active pill: indigo-600 bg, white text, rounded-full px-4 py-1.5 text-sm font-medium
+  Inactive: bg-gray-100 text-gray-600 hover:bg-gray-200
+
+Stats Row (4 cards + score ring, flex gap-4 mb-6):
+  Compliant card:     number text-emerald-600 | label "Compliant"
+  Partial card:       number text-amber-600   | label "Partial"
+  In Progress card:   number text-indigo-600  | label "In Progress"
+  Non-Compliant card: number text-red-600     | label "Non-Compliant"
+  Compliance Score ring (80px):
+    SVG donut, colored arc: <50%=red, 50-75%=amber, >75%=emerald
+    Center: "{score}%" bold + "Improving" or "Declining" tiny label
+
+Requirements Table (white card rounded-xl):
+  [Export Report] button top-right indigo outlined
+  [New Assessment] button top-right indigo filled
+  Table columns:
+    Control ID  — text-xs font-mono text-indigo-600, e.g. "GDPR-001"
+    Category    — chip gray rounded text-xs
+    Title       — text-sm font-medium text-gray-900
+    Status      — inline dropdown (colored per status):
+                    Compliant=emerald | Partial=amber | In Progress=indigo | Non-Compliant=red
+    Assigned To — avatar + name text-sm
+    Evidence    — badge "3 files" indigo-100 text-indigo-700 + [+ Add Evidence] icon button
+    Last Assessed — date text-sm gray
+    Actions     — [Edit] [View Evidence] icon buttons
+
+Assessment History section (below table, collapsible):
+  Header: "Assessment History" + collapse chevron
+  Table: Date | Assessed By | Score | Status | [View Full]
+
+---- PRIVACY REQUESTS TAB ----
+
+Stats Strip (4 cards):
+  Total Requests | Pending(amber) | Overdue(red) | Completed This Month(green)
+
+Header row: "Privacy Requests" h2 + [+ New Request] indigo button (top right)
+
+Requests Table (white card rounded-xl):
+  Columns:
+    Requester      — name + email text-xs gray below
+    Type           — chip: Access(indigo) | Deletion(red) | Rectification(amber) |
+                           Portability(blue) | Objection(orange)
+    Regulation     — chip: GDPR=indigo | CCPA=purple, small
+    Received       — date text-sm
+    Due Date       — date; overdue: red text + "OVERDUE" red chip inline
+    Status         — chip: Pending(amber) | In Progress(indigo) | Completed(green) | Rejected(gray)
+    Assigned To    — avatar + name
+    Actions        — [View] [Reassign] icon buttons
+  Overdue row: bg-red-50 tint
+
+[+ New Request] → slide-over (500px, from right):
+  Title: "New Privacy Request"
+  Form fields (labeled, vertical stack, gap-4)
+  [Submit Request] indigo filled | [Cancel] ghost
+
+Request Detail Slide-over (opens on [View]):
+  Header: "Privacy Request — {type}" | [× Close]
+  All metadata fields displayed in definition list style
+  Status workflow section: current status chip + available action buttons
+    [Mark In Progress] | [Complete] | [Reject]
+  Response Notes: textarea (shown when completing/rejecting, required indicator)
+  [Save Changes] button
+
+---- SECURITY OVERVIEW TAB ----
+
+(existing tab — not redesigned in this spec; documented for completeness)
+  Security events list | recent audit activity | top event types chart
+
+---- RISK REGISTER TAB ----
+
+Two-column layout:
+  Left (400px): Risk Matrix
+  Right (flex-1): Risk Table
+
+Risk Matrix (white card rounded-xl p-5):
+  3×3 grid (CSS grid, equal cells ~100px each)
+  X-axis labels (top or bottom): Low Impact | Med Impact | High Impact
+  Y-axis labels (left): High Likelihood | Med Likelihood | Low Likelihood
+  Each cell: rounded-lg, colored bg (per risk score), center shows count badge
+    Count badge: indigo if 0, white bg if >0; shows number of risks in that cell
+  Cell hover: subtle ring, cursor pointer; click: filters table below
+
+[+ Add Risk] indigo button — top right of card
+
+Risk Table (white card rounded-xl):
+  Columns:
+    Title       — text-sm font-medium
+    Category    — chip (Data Breach=red | Unauthorized Access=orange | System Failure=amber |
+                        Compliance=indigo | Insider Threat=purple), text-xs
+    Score       — badge circle: 1-2=green | 3-4=amber | 6=orange | 9=red; center number
+    Status      — chip: Open(red) | Mitigating(amber) | Resolved(green) | Accepted(gray)
+    Owner       — avatar + name
+    Review Date — date; aging flag: if >90d since last review → amber clock icon with tooltip
+    Actions     — [Edit] [Delete] icon buttons
+
+[+ Add Risk] slide-over (500px):
+  title, category select, likelihood 1-3 radio with labels (Low/Medium/High),
+  impact 1-3 radio with labels, risk_score read-only computed display,
+  mitigation_plan textarea, status select, owner user search, review_date picker
+  [Save Risk] indigo | [Cancel] ghost
+
+================================================================================
+END OF SPECIFICATION — PART 2
+================================================================================
+Generated: 2026-09-04
+Apps: Advanced Analytics Dashboard + Security & Compliance Dashboard
+Tech Stack: React + Supabase + Tailwind CSS v4
+Accent: #6366F1
+================================================================================

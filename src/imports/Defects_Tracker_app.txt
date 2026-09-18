@@ -1,0 +1,537 @@
+Defect Tracker — Standalone App Specification
+APP OVERVIEW
+Purpose: Cross-project defect visibility and SLA-driven resolution tracking. All defects from the Projects app are available here in a unified view. Defects are still created and owned in Projects but tracked, escalated, and reported from this app.
+
+Sync model: Bidirectional real-time sync — changes in either app reflect immediately in both.
+
+MASTER DATA ADDITIONS REQUIRED
+Add these to your Master Data App:
+
+
+DEFECT_SLA_POLICIES
+  Fields: policy_id | name | severity | first_response_mins | fix_mins
+          | verification_mins | business_hours_only | escalate_at_percent
+  Seed values:
+    S1 Blocker:    First Response: 1h  | Fix: 8h   | Verification: 2h
+    S2 Critical:   First Response: 4h  | Fix: 24h  | Verification: 4h
+    S3 Major:      First Response: 8h  | Fix: 72h  | Verification: 8h
+    S4 Minor:      First Response: 24h | Fix: 168h | Verification: 24h
+
+DEFECT_ESCALATION_RULES
+  Fields: rule_id | sla_policy_id | threshold_percent | escalate_to_role
+          | notify_channels
+
+DEFECT_RESOLUTION_CODES
+  Fixed in Code | Config Change | Data Fix | Third-party Fix
+  | Workaround | By Design | Cannot Reproduce | Duplicate | Deferred
+
+DEFECT_ROOT_CAUSE_CATEGORIES
+  Code Logic | Missing Validation | Environment/Config | DB/Data Issue
+  | Third-party Integration | Performance | Security | UI/UX | Requirements Gap
+
+DEFECT_REJECTION_REASONS
+  Not Reproducible | Works as Designed | Duplicate | Out of Scope
+  | Insufficient Info
+
+DEFECT_LABELS (tag taxonomy)
+  regression | performance | security | data-loss | ux | accessibility
+  | integration | api | mobile | desktop (configurable per org)
+VALIDATION & SLA RULES
+
+SLA RULES:
+- SLA clock starts on defect creation (not assignment)
+- Three SLA milestones per defect:
+    1. First Response SLA  — assignee must acknowledge (add comment or change status)
+    2. Fix SLA             — status must reach "Fixed"
+    3. Verification SLA    — status must reach "Verified" after Fixed
+- Pause SLA when: status = Deferred | Won't Fix | Waiting for Info
+- Resume SLA when: status moves back to Open/In Progress
+- Once breached: cannot un-breach (historical record)
+- S1 unassigned > 30 min: auto-escalate to team lead + manager
+- S1/S2 unassigned > 1h: page on-call via notification
+
+STATUS TRANSITIONS (enforce in UI):
+  Open         → In Progress | Deferred | Won't Fix | Duplicate
+  In Progress  → Fixed | Blocked | Open (revert)
+  Blocked      → In Progress | Won't Fix
+  Fixed        → Verified | In Progress (failed verification = regression)
+  Verified     → Closed
+  Deferred     → Open (re-activate)
+  Won't Fix    → Open (re-evaluate)
+  Duplicate    → (terminal — link to original defect required)
+  Closed       → Open (regression — must enter reason, auto-sets regression=true)
+
+SEVERITY CHANGE RULES:
+  - Upgrade to S1: requires manager approval OR linked production incident ticket
+  - Downgrade from S1: requires team lead approval + reason
+  - All severity changes logged in activity history
+
+FIX RULES:
+  - Cannot move to Fixed without: Fix Description (min 30 chars) + Fix Version
+  - Cannot move to Verified without: Verified By user + Test Evidence (comment/attachment)
+  - Regression rule: if defect Closed → reopened, regression flag auto-set = true, severity auto-suggest +1 level
+
+DUPLICATE RULE:
+  - Marking as Duplicate requires linking to the original defect (mandatory)
+  - Original defect gets a "X duplicates" badge
+
+REJECTION RULE:
+  - Won't Fix requires: reason from DEFECT_REJECTION_REASONS + approver
+  - Reporter is notified with reason
+APP SCREENS
+SCREEN 1 — Dashboard
+
+Layout: TopNav + SideNav + Main Content
+
+SideNav items:
+  Dashboard (active) | All Defects | My Defects | SLA Tracker
+  | By Project | By Severity | Analytics | Settings
+
+KPI Row (5 cards):
+  Total Open:     248  | trend +12 vs last week
+  S1 Blocker:       7  | trend +2  (red, pulse animation if >0)
+  SLA Breached:    14  | trend +5  (red)
+  Fixed Today:     31  | trend +8  (green)
+  Pending Verify:  22  | trend -3
+
+Charts Row 1 (h=300px):
+  LEFT 40% — Defects by Severity donut:
+    S1 Blocker: red 7 | S2 Critical: orange 38 | S3 Major: blue 142 | S4 Minor: gray 61
+    Center: "248 Open"
+
+  RIGHT 60% — Defects by Project grouped bar:
+    X = projects | Y = count
+    Bars stacked by severity (red/orange/blue/gray)
+    Clickable bars → filter All Defects to that project
+
+Charts Row 2 (h=280px):
+  LEFT 50% — SLA Compliance by Severity:
+    Table-style: Severity | First Response % | Fix % | Verify %
+    Color-coded cells: green ≥90%, yellow 70-89%, red <70%
+
+  RIGHT 50% — Open Defect Trend (line chart):
+    Last 30 days: Opened vs Closed vs Net trend
+    Line chart, 3 lines
+
+S1 Blocker Alert Panel (full width, red-50 bg, red border):
+  "7 S1 Blockers require immediate attention"
+  Rows: DefectID | Title | Project | Assigned To | Time Since Created | SLA Status
+  [View All S1 Defects] button
+  Only visible when S1 count > 0
+
+Recent Activity Feed: last 10 actions across all projects
+SCREEN 2 — All Defects (Main List View)
+
+PageHeader: "All Defects" + total count + ViewToggle (Table/Kanban/Timeline) + "+ Log Defect" button
+
+FILTER BAR (comprehensive, all values from Master Data):
+
+Row 1 (primary filters):
+  Project multi-select (from Projects app, searchable)
+    → When selected: Sprint filter updates to show only sprints from selected projects
+  Severity multi-select: S1 / S2 / S3 / S4
+  Status multi-select: Open / In Progress / Blocked / Fixed / Verified / Closed / Deferred / Won't Fix / Duplicate
+  Assignee UserPicker (multi-select)
+  
+Row 2 (secondary filters, collapsible "More Filters"):
+  Reporter UserPicker
+  Priority: P1 / P2 / P3 / P4
+  Sprint multi-select (dynamic based on Project filter)
+  Environment multi-select (from Master Data)
+  Build Version input (contains search)
+  Labels multi-select (from Master Data DEFECT_LABELS)
+  Date Created range picker
+  Date Fixed range picker
+  SLA Status: On Track / At Risk / Fix SLA Breached / Verify SLA Breached / All Breached
+  Regression: All / Yes / No
+  Has Linked IT Ticket: All / Yes / No
+  Duplicate: All / Yes / No / Exclude Duplicates
+
+SavedFilters: dropdown "My Filters" + "Save current filter" icon
+  Pre-built: "My Open Defects" | "S1 + S2 Today" | "SLA Breached" | "Needs Verification" | "Regression Defects"
+
+ActiveFilterChips row (shows applied filters as removable chips, clear-all button)
+
+TOOLBAR: Result count | Sort (Severity/Created/SLA Due/Priority) | Group By (Project/Sprint/Assignee/Severity) | Export (CSV/XLSX)
+
+TABLE VIEW:
+Columns: ☐ | ID | Severity | Title | Project | Sprint | Status | Assignee | Reporter
+         | Found In | SLA Status | Linked IT | Regression | Age | Actions
+
+Row coloring:
+  S1: red-50 bg tint + red left border 3px
+  S2: warning-light bg + orange left border 2px
+  SLA Breached: pulsing red dot in SLA cell
+  Regression: orange "R" badge prefix on ID
+
+SLA Status cell variants:
+  On Track:    green dot + "Xh Ymin left"
+  At Risk:     yellow dot + "Xh left" (bold)
+  Fix Breached: red dot + "Overdue Xh" (red text, animate)
+  Verify SLA:  orange dot + "Verify by Xh"
+  All Met:     green check "Met"
+
+KANBAN VIEW:
+  Columns by Status (same 8 statuses)
+  KanbanCard shows: severity badge | title | project chip | assignee | SLA countdown
+
+GROUP BY view (e.g. By Project):
+  ProjectGroup header with project color + name + count + expand/collapse
+  Under each: defect table rows (same columns, fewer)
+SCREEN 3 — Defect Detail
+
+Breadcrumb: "All Defects / [ProjectName] / DEF-089"
+
+Header (white band, border-bottom):
+  ID badge "DEF-089" | Severity "S1 Blocker" red filled badge | Regression "R" chip (if applicable)
+  Title H2 "Payment API returns 500 on retry" | StatusDropdown "In Progress"
+  PriorityBadge P1 | Project chip "[Phoenix API]"
+  Actions: Edit | Reassign | Change Severity | [Mark Fixed primary] | [Won't Fix danger ghost] | More menu
+
+SLA Banner (full-width below header, color by urgency):
+  Three SLA progress bars inline:
+  [First Response: 100% green "Met · 45 min"] [Fix SLA: 72% yellow "5h 20min remaining"] [Verify SLA: locked gray "Pending Fix"]
+  Pause SLA button (appears when status allows)
+
+Content (70/30 split):
+
+LEFT PANEL (scrollable):
+
+Card: Description & Reproduction
+  Description (rich text)
+  Steps to Reproduce (numbered):
+    1. POST /api/payment with payload {...}
+    2. Server returns 500 on second attempt within 30s
+    3. Retry logic does not handle 500 gracefully
+  Expected vs Actual (side-by-side):
+    Expected: "Retry should succeed or return 4xx with message"
+    Actual:   "500 Internal Server Error — unhandled exception in PaymentService"
+
+Card: Environment Details
+  Key-value grid: Environment: Production | Build: v2.1.0 | Browser: N/A | OS: Linux
+  Found In Version | Regression: Yes (badge) | Introduced in: Sprint 11
+
+Card: Fix Details (visible when status = Fixed or beyond)
+  Fix Description (required text)
+  Fix Version | Fixed By | Fixed Date
+  Code Reference (PR/commit link — optional text input)
+
+Card: Verification Details (visible when Fixed)
+  Verified By UserPicker | Test Evidence (RichText — describe test performed)
+  Test Attachment (screenshot/log upload)
+
+Card: Linked Items (same as Projects app)
+  Linked IT Tickets: [violet dot] TKT-1042 | title | status | [Open ↗]
+  Linked Backlog Items: [blue dot] BI-234 | title | status
+  Related Defects: other DEF IDs related or blocking
+  Duplicate of: (if marked Duplicate) → DEF-XXX link
+
+Card: Activity Timeline + Comments (tabbed)
+  All status changes, assignment changes, SLA events, comments
+
+RIGHT PANEL (360px):
+Cards:
+1. Defect Info: Project | Sprint | Created | Reporter | Labels (colored chips)
+2. Assignment: Assignee (avatar + reassign) | Team | Escalation Level
+3. SLA Detail:
+   Policy name | Severity SLA Policy link
+   Three rows: First Response | Fix SLA | Verification SLA
+   Each: due datetime | time remaining countdown | status badge
+4. Version Info: Found In | Target Fix Version | Fixed In Version
+5. Priority & Classification: Priority badge | Root Cause (when filled) | Resolution Code
+6. Duplicate/Related count badges
+SCREEN 4 — SLA Tracker
+
+PageHeader: "SLA Tracker" + date range filter + Project filter
+
+SLA Summary Table (white card, full width):
+  Rows = Severity levels | Columns = SLA milestones
+
+  | Severity | Open | First Response % | Fix SLA % | Verify % | Avg Fix Time | Breached |
+  | S1       |  7   | 100% green       | 71% yellow| 60% red  | 6.2h         | 2        |
+  | S2       | 38   | 94%              | 83%       | 79%      | 21h          | 5        |
+  | S3       | 142  | 89%              | 91%       | 88%      | 58h          | 7        |
+  | S4       | 61   | 96%              | 94%       | N/A      | 4.2d         | 0        |
+
+At-Risk Panel (yellow-50 bg, full width):
+  "12 defects at risk of SLA breach in next 2 hours"
+  DataTable: DEF-ID | Title | Project | Severity | SLA Type | Breach At | Assignee | [View] button
+  Each row: countdown timer live
+
+Breached Panel (red-50 bg):
+  "14 defects have breached SLA"
+  DataTable same columns + [Escalate] action button per row
+
+SLA Timeline Chart:
+  X = time (last 7 days), Y = count
+  Stacked area: Met (green) vs Breached (red) vs At Risk (yellow)
+
+By Project SLA Table:
+  Rows = projects, Columns = total defects | S1 SLA% | S2 SLA% | Overall Compliance%
+  Click row → filters to that project
+SCREEN 5 — By Project View
+
+PageHeader: "Defects by Project" + Sort + filter
+
+ProjectAccordion list (expandable per project):
+
+ProjectRow (header, white, border, radius-12, padding 20px):
+  Project avatar | Name | Total defects | S1:2 S2:5 S3:14 S4:8 (colored count chips)
+  Progress bar: % Fixed+Closed vs total | SLA Compliance % | Active Sprint chip
+  [View All Defects] [View in Projects App ↗]
+
+EXPANDED project shows inline mini-table:
+  5 most critical open defects (S1 first, then by age)
+  ID | Severity | Title | Status | Assignee | SLA
+SCREEN 6 — Analytics
+
+Filter: Project multi-select | Date range | Severity | Sprint
+
+Charts:
+
+ROW 1:
+  Defect Introduction Rate (line) — defects opened per sprint
+  Defect Resolution Rate (line) — defects closed per sprint
+  Both on same chart with two Y-axes
+
+ROW 2:
+  Root Cause Breakdown (pie) — by DEFECT_ROOT_CAUSE_CATEGORIES
+  Regression Rate (gauge) — % of defects that are regressions (target <10%)
+
+ROW 3:
+  Defect Aging (horizontal bar) — buckets: <1d / 1-3d / 3-7d / 7-14d / >14d
+  Average Fix Time by Severity (bar) — vs SLA target (dotted line)
+
+ROW 4:
+  Top Defect Reporters (table: user | count | projects)
+  Top Defect Assignees (table: user | resolved count | avg fix time | SLA %)
+
+Export: PDF report with all charts + summary table
+INTEGRATION WITH PROJECTS APP
+
+SYNC RULES:
+  1. Every defect created in Projects app auto-appears in Defect Tracker
+  2. Every defect created in Defect Tracker auto-appears in its project's Defects tab
+  3. Status changes sync bidirectionally in real-time (websocket or polling 30s)
+  4. Comments sync — comment in either app appears in both
+  5. SLA is owned and calculated by Defect Tracker (Projects app reads it)
+  6. Assignment in either app → syncs to both
+
+NAVIGATION:
+  - Projects App Defect row → "Open in Defect Tracker ↗" deep link
+  - Defect Tracker row → "Open in [ProjectName] ↗" link → navigates to Projects app
+  - Defect Tracker breadcrumb shows project → click → opens Projects app detail
+
+WHAT DEFECT TRACKER ADDS THAT PROJECTS APP DOESN'T HAVE:
+  - Cross-project view (all defects from all projects in one screen)
+  - Defect SLA management (separate from ticket SLA)
+  - SLA Tracker screen
+  - Root cause analytics across projects
+  - Regression trend analysis
+  - Defect aging reports
+  - Saved cross-project filters
+  - S1 alert panel with escalation workflow
+
+SHARED DATA:
+  - Users and teams (single source)
+  - Notifications (single queue, badge on both apps)
+  - Files/attachments (shared storage)
+  - Activity logs (shared, show in both apps)
+NOTIFICATIONS
+Trigger	Recipients	Message
+S1 defect created	Team lead + Manager + On-call	"S1 BLOCKER: DEF-{id} '{title}' in {project} — Immediate action required"
+S1 unassigned >30 min	Team lead	"S1 DEF-{id} unassigned for 30 minutes in {project}"
+Defect assigned	Assignee	"DEF-{id} [{severity}] assigned to you in {project}"
+First Response SLA at risk (75%)	Assignee	"First Response SLA at risk — DEF-{id} needs acknowledgement"
+Fix SLA at risk (80%)	Assignee + Team lead	"Fix SLA at risk — DEF-{id} fix required by {time}"
+SLA breached	Assignee + Team lead + Manager	"SLA BREACH — DEF-{id} [{severity}] fix SLA exceeded"
+Severity escalated	Assignee + Reporter + PM	"DEF-{id} severity changed to {new} by {actor}"
+Defect fixed	Reporter + Verifier	"DEF-{id} marked Fixed by {actor} — Verification needed"
+Defect verified	Assignee + PM	"DEF-{id} verified and closed by {actor}"
+Regression detected	PM + Team lead	"DEF-{id} reopened as regression in {project}"
+Marked duplicate	Reporter	"DEF-{id} marked as duplicate of DEF-{original}"
+Won't Fix decision	Reporter	"DEF-{id} marked Won't Fix: {reason}"
+Comment/mention	Watchers + @mentioned	"{actor} commented on DEF-{id}: '{preview}'"
+FIGMA PROMPT FOR DEFECT TRACKER
+Paste into Figma AI (run as one or split into 3 sub-prompts):
+
+
+PROMPT DT-1: Defect Dashboard + All Defects List
+
+Design two screens for a cross-project Defect Tracking app at 1440x900px.
+App accent color: #DC2626 (red — defect/quality focus).
+
+SCREEN A: Defect Dashboard
+TopNav (AppSwitcher shows "Defect Tracker", red dot) + SideNav (240px, red active):
+  Dashboard(active) | All Defects | My Defects | SLA Tracker | By Project | Analytics | Settings
+
+KPI Row (5 cards):
+  Total Open: 248 trend +12 blue
+  S1 Blocker: 7 trend +2 RED (pulse animation, red card accent)
+  SLA Breached: 14 trend +5 red
+  Fixed Today: 31 trend +8 green
+  Pending Verify: 22 trend -3 orange
+
+S1 Alert Banner (full width, red-50 bg, red border, radius-8, padding 16px):
+  "⚠ 7 S1 Blockers require immediate attention" red heading
+  Table: DEF-ID | Title | Project chip | Assigned To | Time since created | SLA countdown
+  [View All S1 Defects] red primary button right-aligned
+  (only visible when S1 count > 0)
+
+Charts Row 1 (h=300px):
+  LEFT 40%: Donut "Defects by Severity" — S1:red 7, S2:orange 38, S3:blue 142, S4:gray 61. Center "248 Open".
+  RIGHT 60%: Grouped bar "By Project" — x=projects, bars stacked by severity color. Clickable bars.
+
+Charts Row 2:
+  LEFT 50%: SLA Compliance table-chart — Severity vs First Response% / Fix% / Verify% — cells color-coded green/yellow/red
+  RIGHT 50%: Open Trend line chart (30 days) — 3 lines: Opened(red), Closed(green), Net(dashed gray)
+
+Activity Feed (full width): last 10 defect activities across all projects
+
+SCREEN B: All Defects List
+PageHeader: "All Defects" + count + ViewToggle (Table/Kanban/Timeline) + "+ Log Defect" primary red
+
+Filter bar (two rows):
+  Row 1: Project multi-select (searchable) | Severity multi-check (S1/S2/S3/S4 colored chips) | Status multi-check | Assignee picker
+  Row 2 (collapsible "More Filters ▼"): Reporter | Sprint | Environment | Build Version | Labels | Date Created range | SLA Status (On Track/At Risk/Breached) | Regression toggle | Has IT Ticket toggle
+  Saved Filters dropdown + "Save Filter" icon
+  Active filter chips row (removable, clear-all button)
+
+Toolbar: "248 defects" count | Sort dropdown | Group By dropdown | Export
+
+DataTable (white, full width, border, radius-12):
+  Row coloring: S1=red-50 bg + red left border 3px. S2=warning-light + orange border 2px. Regression rows: orange "R" badge prefix on ID.
+  Columns: ☐ | ID(80px) | Severity(100px) | Title(flex) | Project chip(120px) | Sprint(100px) | Status(120px) | Assignee(140px) | SLA Status(130px) | Regression(90px) | Age(70px) | Actions
+  
+  SLA Status cell: colored dot + text ("5h left" green, "2h left" yellow pulse, "Overdue 3h" red animate)
+
+  Sample rows:
+  DEF-089 | S1 red badge | "Payment API 500 on retry" | [Phoenix API] | Sprint 12 | In Progress | Raj | 🔴 "Overdue 2h" | Yes(R badge) | 4d
+  DEF-092 | S1 | "Memory leak auth middleware" | [Phoenix API] | Sprint 12 | In Progress | Tom | 🟡 "3h left" | No | 2d
+  DEF-090 | S2 orange | "Token expiry not handled" | [Phoenix API] | Backlog | Open | — | 🟢 "18h left" | No | 8d
+  DEF-101 | S2 | "Cart total wrong on discount" | [Nirmaan Portal] | Sprint 5 | Fixed | Asha | 🔵 "Verify by 4h" | No | 6d
+  DEF-103 | S3 blue | "Pagination breaks 1000+ items" | [ACM Fiori v2] | Sprint 8 | Open | Maria | 🟢 "62h left" | No | 12d
+
+BulkActionBar (when rows selected): Reassign | Change Severity | Export | Add to Sprint
+
+PROMPT DT-2: Defect Detail + SLA Tracker
+
+SCREEN A: Defect Detail (1440x900px)
+Breadcrumb: "All Defects / Phoenix API / DEF-089"
+
+Header (white band, border-bottom, px32, py20):
+  [DEF-089 gray badge] [S1 Blocker red filled badge] [R orange "Regression" chip]
+  [Title "Payment API returns 500 on retry" H2] [Status "In Progress" dropdown] [P1 badge]
+  [Phoenix API] project chip
+  Actions: Edit | Reassign | Change Severity | [Mark Fixed primary] | [Won't Fix danger ghost] | More
+
+SLA Banner (full-width below header, yellow-50 bg since at risk):
+  Three inline SLA progress bars:
+  "First Response: 100% ✓ Met · 45 min" (green) | "Fix SLA: 72% | 5h 20min remaining" (yellow pulse) | "Verify SLA: locked — Pending Fix" (gray)
+  [Pause SLA] ghost button right (only when pauseable)
+
+Content 70/30 split:
+
+LEFT (scrollable, padding 32px):
+Card "Description & Reproduction" (white, border, radius-12):
+  Description text area
+  Steps to Reproduce (numbered): 1. POST /api/payment... 2. Server returns 500 on retry... 3. Retry logic fails...
+  Two-column: Expected Behavior | Actual Behavior (side-by-side gray-50 bg boxes)
+
+Card "Environment" (white, border):
+  Key-value: Environment: Production | Build: v2.1.0 | Browser: N/A | OS: Linux
+  Found In Version: v2.1.0 | Regression: Yes (orange badge) | Introduced in: Sprint 11
+
+Card "Linked Items" (white, border):
+  [Linked IT Tickets section]: violet dot TKT-1042 | title | status | [Open in IT Services ↗]
+  [Linked Backlog Items]: blue dot BI-234 | title | status | [Open in Projects ↗]
+  [Related Defects]: DEF-085 "Related payment issue" | Resolved
+  [+ Add Link] ghost button
+
+Card "Fix Details" (white, border, visible when Fixed/Verified/Closed):
+  Fix Description (required input) | Fix Version input | Fixed By picker | Fix Date
+
+Card "Verification" (white, border, visible when Fixed):
+  Verified By UserPicker | Test Evidence RichTextEditor | Attachment upload
+
+Activity Timeline + Comments (tabbed):
+  Timeline: status changes, SLA events, escalations, all with timestamps
+  Comments: threaded with avatar, rich text, @mention
+
+RIGHT (360px, border-left, padding 20px):
+Card "Defect Info": Project | Sprint | Created | Reporter | Labels chips
+Card "Assignment": Assignee avatar + [Reassign] | Team | Escalation Level badge
+Card "SLA Detail": Policy name (linked to SLA settings)
+  Three rows: First Response (due, remaining, status) | Fix SLA | Verify SLA
+Card "Classification": Priority | Root Cause (when filled) | Resolution Code
+Card "Versions": Found In | Target Fix Version | Fixed In
+Card "Watchers": AvatarGroup + Watch toggle
+
+SCREEN B: SLA Tracker (1440x900px)
+PageHeader: "SLA Tracker" + Date range picker + Project filter + Export button
+
+SLA Summary Matrix (white card, full width, bordered table):
+  | Severity | Open | 1st Response % | Fix SLA % | Verify % | Avg Fix Time | SLA Breached |
+  | S1       |  7   | 100% 🟢        | 71% 🟡    | 60% 🔴   | 6.2h         | 2            |
+  | S2       | 38   | 94% 🟢         | 83% 🟢    | 79% 🟡   | 21h          | 5            |
+  | S3       | 142  | 89% 🟡         | 91% 🟢    | 88% 🟢   | 58h          | 7            |
+  | S4       | 61   | 96% 🟢         | 94% 🟢    | N/A      | 4.2d         | 0            |
+  Cells color-coded: green≥90%, yellow 70-89%, red<70%
+
+At-Risk Panel (yellow-50 bg, full width, border):
+  "12 defects at risk of breach in next 2 hours" heading
+  Table: DEF-ID | Title | Project | Severity | SLA Type | Breach At | Assignee | countdown timer | [View] button
+
+Breached Panel (red-50 bg, full width, border):
+  "14 defects have breached SLA"
+  Same table + [Escalate] action per row
+
+SLA Timeline Chart (white card):
+  X=7 days, stacked area: Met(green) / At Risk(yellow) / Breached(red)
+
+By Project SLA Table (white card):
+  Rows = projects | Total Open | S1 SLA% | S2 SLA% | Overall % | click to filter
+
+PROMPT DT-3: By Project View + Analytics
+
+SCREEN A: By Project (1440x900px)
+PageHeader: "Defects by Project" + Sort (Most Defects / Worst SLA / Most S1) + Search
+
+Accordion list (each project expandable):
+ProjectRow (white, border, radius-12, padding 20px):
+  Left: project color avatar | Name | "[12 open]" count
+  Severity counts: S1:2(red chip) S2:5(orange) S3:14(blue) S4:8(gray) inline
+  Progress: "32% resolved" thin progress bar (green)
+  SLA Compliance: "79%" badge (yellow)
+  Active Sprint chip
+  Right: [View All Defects] secondary | [Open in Projects ↗] ghost link
+
+EXPANDED state: mini table (5 critical open defects)
+  ID | S badge | Title | Status | Assignee | SLA countdown
+
+5 projects shown: Phoenix API | Nirmaan Portal | ACM Fiori v2 | Data Pipeline | Mobile App
+
+SCREEN B: Analytics (1440x900px)
+PageHeader: "Analytics" + Project filter + Date range + Sprint filter + Export PDF button
+
+ROW 1 (h=260px):
+  LEFT: Line chart "Defect Velocity" — opened vs closed per sprint, two lines
+  RIGHT: Bar chart "Defect Intro Rate" — defects introduced per sprint (target line shown)
+
+ROW 2 (h=260px):
+  LEFT: Pie chart "Root Cause Breakdown" — by DEFECT_ROOT_CAUSE_CATEGORIES (8 segments)
+  RIGHT: Gauge "Regression Rate" — current 18% vs target <10% (red needle above target)
+
+ROW 3 (h=260px):
+  LEFT: Horizontal bar "Defect Aging" — buckets: <1d, 1-3d, 3-7d, 7-14d, >14d — colored by severity
+  RIGHT: Bar "Avg Fix Time vs SLA Target" — grouped bars per severity with dotted SLA target line
+
+ROW 4 — Two leaderboard tables (white cards, side by side):
+  "Reported By": User | avatar | count | top project
+  "Resolved By": User | avatar | resolved count | avg fix time | SLA %
+UPDATED FIGMA FILE STRUCTURE
+Add this page to your Figma file:
+
+
+Page 4.5: 🐛 Defect Tracker (new standalone app — between PM and Integration pages)
+  Frames: DT/Dashboard | DT/AllDefects | DT/DefectDetail | DT/SLATracker | DT/ByProject | DT/Analytics

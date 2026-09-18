@@ -1,0 +1,2498 @@
+================================================================================
+HR PORTAL — TECHNICAL SPECIFICATION
+Part 1b: Integration Map & Notification Events Catalog
+================================================================================
+Project      : Enterprise HR Portal
+Tech Stack   : React + Supabase + Tailwind CSS v4
+Apps Covered : Employee Dashboard, Employee Directory, Recruitment, Onboarding,
+               User Management, Performance, Training, Communications,
+               Collaboration, Workflow Automation
+Prepared by  : Architecture Team
+Date         : 2026-09-04
+================================================================================
+
+
+================================================================================
+SECTION A3: CROSS-APP INTEGRATION MAP
+================================================================================
+
+Overview
+--------
+This section documents every automated, triggered, and workflow-driven
+integration between the 10 apps in the HR Portal. Each integration entry
+follows a standard format:
+
+  - Source App → Target App
+  - Trigger Event
+  - Action Taken in Target
+  - Data Passed
+  - Sync Type
+  - User Notification
+
+Sync Type definitions:
+  Automatic  — Fires without any user action; handled by database trigger,
+                Supabase Edge Function, or background job.
+  Triggered  — Fires when a user explicitly clicks a button or takes a
+                deliberate UI action.
+  Workflow   — Routed through the Workflow Automation app; requires one or
+                more approval steps before the downstream action executes.
+
+Notification delivery channels (used in entries below):
+  in-app     — Notification Bell (real-time via Supabase Realtime websocket)
+  email      — Transactional email via configured SMTP / Resend provider
+  web push   — Browser push notification (service worker; opt-in)
+
+--------------------------------------------------------------------------------
+INTEGRATION 1
+Source App   : Recruitment
+Target App   : Onboarding
+--------------------------------------------------------------------------------
+Trigger Event:
+  Candidate record is marked as Hired — either by accepting a formal offer
+  (offer_status = accepted) or by an HR user explicitly clicking the
+  "Mark as Hired" action on the candidate profile.
+
+Action Taken in Target:
+  A new onboarding_record row is automatically created in the onboarding
+  schema with status = Pre-boarding. The record is linked to the originating
+  candidate via candidate_id. A pre-boarding portal link is generated and
+  stored; it will be emailed to the new joiner separately via the Onboarding
+  app's preboarding_link_sent event.
+
+Data Passed:
+  - candidate_id         → mapped to onboarding_record.candidate_ref
+  - full_name            → onboarding_record.employee_name
+  - personal_email       → onboarding_record.personal_email
+  - position_title       → onboarding_record.designation
+  - department_id        → onboarding_record.department_id
+  - manager_id           → onboarding_record.reporting_manager_id
+  - joining_date         → onboarding_record.joining_date
+  - employment_type      → onboarding_record.employment_type
+                           (Full-time | Part-time | Contract | Intern)
+
+Sync Type    : Automatic
+  Implemented as a Supabase database trigger (AFTER UPDATE on candidates
+  WHERE NEW.status = 'hired') that calls an Edge Function
+  onboarding_create_record().
+
+User Notification:
+  - HR Admin team (role = hr_admin):
+      Channel  : in-app + email
+      Title    : "New Joiner Record Created"
+      Body     : "{full_name} has been marked as hired. Onboarding record
+                  created — joining on {joining_date}."
+
+  - Reporting Manager (manager_id):
+      Channel  : in-app
+      Title    : "New Team Member Joining"
+      Body     : "{full_name} will be joining your team as {position_title}
+                  on {joining_date}. Onboarding has been initiated."
+
+--------------------------------------------------------------------------------
+INTEGRATION 2
+Source App   : Onboarding
+Target App   : Employee Directory
+--------------------------------------------------------------------------------
+Trigger Event:
+  Onboarding record status transitions to Completed. This occurs when all
+  mandatory checklist tasks (is_mandatory = true) in the onboarding_tasks
+  table are marked done AND the HR owner clicks "Complete Onboarding" or an
+  auto-complete background job detects all tasks are resolved.
+
+Action Taken in Target:
+  A new row is inserted into the employees table (Employee Directory schema),
+  creating a fully populated employee profile. The employee is now searchable
+  in the directory, visible in org charts, and eligible for all apps that
+  depend on an employees record (Performance, Training, etc.).
+
+Data Passed:
+  - full_name            → employees.full_name
+  - work_email           → employees.work_email
+                           (assigned during onboarding, usually firstname.lastname@company.com)
+  - personal_email       → employees.personal_email
+  - department_id        → employees.department_id
+  - designation          → employees.designation
+  - reporting_manager_id → employees.reporting_manager_id
+  - join_date            → employees.join_date
+  - employment_type      → employees.employment_type
+  - location_id          → employees.location_id
+  - shift_id             → employees.shift_id
+  - onboarding_id        → employees.onboarding_ref (audit trail link)
+
+Sync Type    : Automatic
+  Triggered by an AFTER UPDATE trigger on onboarding_records WHERE
+  NEW.status = 'completed'. Calls Edge Function employee_directory_create().
+
+User Notification:
+  - HR Admin (role = hr_admin):
+      Channel  : in-app
+      Title    : "Employee Record Created"
+      Body     : "{full_name}'s employee record has been created in the
+                  directory. Employee ID: {employee_id}."
+
+  - Reporting Manager:
+      Channel  : in-app
+      Title    : "Direct Report Added to Your Team"
+      Body     : "{full_name} has completed onboarding and is now active in
+                  the Employee Directory under your team."
+
+--------------------------------------------------------------------------------
+INTEGRATION 3
+Source App   : Onboarding
+Target App   : User Management
+--------------------------------------------------------------------------------
+Trigger Event:
+  HR user clicks the "Enable Access" button on the onboarding record detail
+  page. This action is available once the joining_date is within 3 days or
+  has passed, and the onboarding record is in Pre-boarding or In-Progress
+  status.
+
+Action Taken in Target:
+  1. supabase.auth.admin.createUser() is called with the new joiner's
+     work_email address, generating a Supabase Auth user entry.
+  2. A corresponding app_users row is created in the user_management schema.
+  3. The Employee role is assigned (role = employee).
+  4. A Supabase Auth invitation email is dispatched (uses Supabase's built-in
+     invite mechanism with a magic link that expires in 72 hours).
+  5. The onboarding_record.access_enabled flag is set to true and
+     access_enabled_at is stamped.
+
+Data Passed:
+  - work_email           → auth.users.email + app_users.email
+  - full_name            → app_users.full_name
+  - role                 → app_users.role = 'employee'
+  - department_id        → app_users.department_id
+  - onboarding_id        → app_users.onboarding_ref
+  - employee_id          → app_users.employee_id (if directory record exists)
+
+Sync Type    : Triggered (HR clicks "Enable Access")
+
+User Notification:
+  - New Employee (personal_email, since work account not yet active):
+      Channel  : email (invitation email from Supabase Auth)
+      Title    : "Welcome to {Company Name} — Activate Your Account"
+      Body     : "Your HR portal access has been set up. Click the link
+                  below to set your password and get started."
+      Also     : in-app notification created for when they first log in:
+                  "Welcome, {name}! Your account is active."
+
+  - HR Admin (action performer):
+      Channel  : in-app
+      Title    : "Access Enabled"
+      Body     : "System access has been enabled for {full_name}. Invitation
+                  email sent to {work_email}."
+
+--------------------------------------------------------------------------------
+INTEGRATION 4
+Source App   : Onboarding
+Target App   : IT Services (External)
+--------------------------------------------------------------------------------
+Trigger Event:
+  Same trigger as Integration 3 — HR user clicks "Enable Access". This
+  integration fires in parallel with the User Management call.
+
+Action Taken in Target:
+  An HTTP POST request is made to the IT Services API endpoint
+  (configured in system settings as it_services_api_url). A hardware
+  provisioning ticket is created for the new joiner with the following
+  equipment items: Laptop, Mouse, Keyboard, Monitor. The ticket is assigned
+  to the IT Admin group and due on the joining_date.
+
+Data Passed:
+  - ticket_title         : "Hardware Provisioning for New Joiner — {full_name}"
+  - assignee_group       : "IT Admin"
+  - due_date             : joining_date
+  - priority             : "High"
+  - custom_fields:
+      - employee_name    : full_name
+      - position         : designation
+      - location         : location_name (resolved from location_id)
+      - joining_date     : joining_date (ISO 8601)
+      - department       : department_name
+      - items_required   : ["Laptop", "Mouse", "Keyboard", "Monitor"]
+
+Sync Type    : Triggered (fires on "Enable Access" click, parallel to INT-3)
+
+User Notification:
+  - IT Admin (role = it_admin):
+      Channel  : in-app + email
+      Title    : "New Hardware Provisioning Ticket"
+      Body     : "A provisioning request has been raised for {full_name}
+                  (joining {joining_date}, {location_name}).
+                  Ticket: TKT-{ticket_id}."
+
+  - HR Admin (action performer):
+      Channel  : in-app
+      Title    : "IT Ticket Created"
+      Body     : "IT provisioning ticket TKT-{ticket_id} has been created
+                  for {full_name}."
+
+--------------------------------------------------------------------------------
+INTEGRATION 5
+Source App   : Onboarding
+Target App   : Training
+--------------------------------------------------------------------------------
+Trigger Event:
+  Two conditions must both be true:
+    a) onboarding_record.access_enabled = true
+    b) The current date equals or exceeds onboarding_record.joining_date
+  A daily background CRON job (runs at 06:00 UTC) checks for employees
+  who meet both conditions and have not yet received their mandatory
+  onboarding training enrollment.
+
+Action Taken in Target:
+  1. Queries the training catalogue for all courses flagged as
+     is_mandatory_onboarding = true.
+  2. Queries for additional role-specific mandatory courses matching the
+     employee's designation or department.
+  3. Creates training_enrollment records for each course with
+     status = enrolled and due_date = joining_date + 30 days.
+  4. Sets onboarding_record.training_enrolled = true to prevent
+     re-processing.
+
+Data Passed:
+  - employee_id          → training_enrollments.employee_id
+  - course_ids[]         → training_enrollments.course_id (one row per course)
+  - due_date             : joining_date + 30 calendar days
+  - enrollment_source    : 'onboarding_auto'
+  - enrolled_by          : system (null user_id, system flag = true)
+
+Sync Type    : Automatic (CRON-triggered background job on joining_date)
+
+User Notification:
+  - Employee:
+      Channel  : in-app + email
+      Title    : "Your Onboarding Training is Ready"
+      Body     : "You have been enrolled in {N} onboarding courses. Please
+                  complete them by {due_date}. Visit the Training section
+                  to get started."
+
+  - HR Admin:
+      Channel  : in-app
+      Title    : "Training Enrollment Confirmed"
+      Body     : "{full_name} has been auto-enrolled in {N} mandatory
+                  onboarding courses (due {due_date})."
+
+--------------------------------------------------------------------------------
+INTEGRATION 6
+Source App   : Onboarding
+Target App   : Communications
+--------------------------------------------------------------------------------
+Trigger Event:
+  Onboarding "Enable Access" action completes successfully (both
+  User Management account creation and IT ticket submission have resolved
+  without error). This fires asynchronously after Integration 3 and 4
+  are acknowledged.
+
+Action Taken in Target:
+  A new post is created in the Communications app under the
+  "All Employees" channel with type = announcement and priority = Low.
+  The post is published immediately (published_at = now()).
+  Content: "Please welcome {full_name} to the {department_name} team as
+  {designation}! {full_name} joins us on {joining_date} — do give them a
+  warm welcome."
+
+Data Passed:
+  - author_id            : system (HR system account)
+  - audience_type        : 'all'
+  - channel_id           : all_employees_channel_id (system constant)
+  - post_type            : 'announcement'
+  - priority             : 'low'
+  - title                : "Welcome {full_name}!"
+  - body                 : welcome message (template above)
+  - published_at         : now()
+  - reference_type       : 'onboarding'
+  - reference_id         : onboarding_record.id
+
+Sync Type    : Automatic (fires after Enable Access completes)
+
+User Notification:
+  - All Employees:
+      Channel  : in-app (dashboard Announcements strip)
+      Title    : "Welcome Announcement"
+      Body     : "Please welcome {full_name} to the {department_name} team!"
+      Note     : Low priority — no email, no web push. Dashboard strip only.
+
+--------------------------------------------------------------------------------
+INTEGRATION 7
+Source App   : Employee Directory
+Target App   : User Management
+--------------------------------------------------------------------------------
+Trigger Event:
+  An employee's status field in the employees table is set to Inactive or
+  Exit. This can be triggered by:
+    a) HR Admin manually setting status on the employee profile, OR
+    b) Offboarding record reaching Completed status (see Integration 21).
+
+Action Taken in Target:
+  1. The corresponding app_users row is found by matching employees.work_email
+     to app_users.email.
+  2. app_users.status is set to 'inactive'.
+  3. All active Supabase Auth sessions for the user are terminated via
+     supabase.auth.admin.signOut(user_id, { scope: 'global' }).
+  4. deactivated_at is stamped on both app_users and the employee record.
+  5. An audit log entry is created in user_audit_log.
+
+Data Passed:
+  - user_id              : app_users.id (resolved by email match)
+  - employee_id          : employees.id
+  - deactivated_at       : now()
+  - deactivation_reason  : 'employee_exit' | 'manual_deactivation' | 'offboarding'
+  - deactivated_by       : acting_user_id (HR Admin who made the change)
+
+Sync Type    : Automatic (AFTER UPDATE trigger on employees WHERE
+               NEW.status IN ('inactive','exit'))
+
+User Notification:
+  - IT Admin (role = it_admin):
+      Channel  : in-app + email
+      Title    : "Employee Account Suspended — Action Required"
+      Body     : "{full_name}'s system account has been suspended.
+                  Please revoke physical access (ID badge, building access)
+                  at the earliest."
+
+  - HR Admin:
+      Channel  : in-app
+      Title    : "User Account Suspended"
+      Body     : "{full_name}'s user account has been suspended and all
+                  active sessions have been terminated."
+
+--------------------------------------------------------------------------------
+INTEGRATION 8
+Source App   : Employee Directory
+Target App   : Collaboration
+--------------------------------------------------------------------------------
+Trigger Event:
+  A new employee record is successfully created in the employees table
+  (INSERT event). This fires after Integration 2 (Onboarding → Employee
+  Directory) completes.
+
+Action Taken in Target:
+  1. The employee is automatically added to the "General" channel
+     (system-designated all-employees channel; channel_type = 'general').
+  2. If a channel exists in Collaboration matching the employee's
+     department_name or department_id (channel_type = 'department'),
+     the employee is also added to that department channel.
+  3. channel_members rows are created for each channel with
+     role = 'member' and joined_at = now().
+
+Data Passed:
+  - user_id              : app_users.id (resolved by work_email)
+  - employee_id          : employees.id
+  - channel_ids[]        : [general_channel_id, department_channel_id (if exists)]
+  - joined_at            : now()
+  - added_by             : system
+
+Sync Type    : Automatic (AFTER INSERT trigger on employees)
+
+User Notification:
+  - Employee:
+      Channel  : in-app
+      Title    : "You've Been Added to Channels"
+      Body     : "You have been added to {N} channels: General
+                  {and {department_name} if applicable}. Head to
+                  Collaboration to say hello!"
+
+  - Channel Admins (role = channel_admin for each affected channel):
+      Channel  : in-app
+      Title    : "New Member Added"
+      Body     : "{full_name} has been added to #{channel_name}."
+
+--------------------------------------------------------------------------------
+INTEGRATION 9
+Source App   : Performance
+Target App   : Training
+--------------------------------------------------------------------------------
+Trigger Event:
+  A performance review is submitted (status transitions to
+  'submitted' or 'completed') and at least one of the following is true:
+    a) The skill_gap_notes field on the review is non-empty (length > 0), OR
+    b) One or more competency ratings in competency_scores JSONB have a
+       score value ≤ 2 (out of 5).
+
+Action Taken in Target:
+  1. The system reads the low-rated competency categories from the review.
+  2. Queries the training_courses catalogue for courses where
+     competency_tags overlap with the identified low-rated categories.
+  3. Creates recommended_training records linking the employee to the
+     matched course IDs (status = 'recommended', not yet enrolled).
+  4. If manager_approval_required = false on the course (self-paced,
+     low-cost courses), auto-enrollment can be triggered immediately.
+  5. For courses requiring manager approval, a Workflow instance is created
+     (see Workflow integration below).
+
+Data Passed:
+  - employee_id          → recommended_training.employee_id
+  - review_id            → recommended_training.source_review_id
+  - skill_categories[]   : competency names with score ≤ 2
+  - recommended_course_ids[]: matched course IDs from catalogue
+  - gap_notes            : skill_gap_notes (text, for context)
+  - cycle_id             : performance_cycles.id
+
+Sync Type    :
+  Automatic  — Recommendation record creation (fires on review submit)
+  Workflow   — Actual enrollment in manager-approval courses routes through
+               a training_enrollment_approval workflow instance.
+
+User Notification:
+  - Employee:
+      Channel  : in-app + email
+      Title    : "Training Recommendations Based on Your Review"
+      Body     : "Based on your {cycle_name} performance review, {N} training
+                  courses have been recommended for you. Visit Training to
+                  explore them."
+
+  - Reporting Manager:
+      Channel  : in-app
+      Title    : "Skill Gap Identified — Training Recommended"
+      Body     : "A skill gap was noted in {full_name}'s review
+                  ({competency_names}). Training courses have been
+                  recommended. Your approval may be required for enrollment."
+
+--------------------------------------------------------------------------------
+INTEGRATION 10
+Source App   : Performance
+Target App   : Employee Directory
+--------------------------------------------------------------------------------
+Trigger Event:
+  A performance review cycle is finalized — the HR Admin or Cycle Owner
+  clicks "Finalize Cycle" on the cycle management page. The cycle status
+  transitions to 'finalized' and calibrated ratings are locked.
+
+Action Taken in Target:
+  For every employee participating in the cycle, the following fields are
+  written/updated on their employees table record:
+    - latest_performance_rating is overwritten with final_rating
+    - latest_review_cycle_id is set to the current cycle_id
+    - An employee_performance_history row is inserted to preserve historical
+      records (non-destructive append).
+
+Data Passed (per employee):
+  - employee_id          → employees.id
+  - final_rating         → employees.latest_performance_rating
+  - calibrated_rating    → employee_performance_history.calibrated_rating
+  - competency_scores    → employee_performance_history.competency_scores (JSONB)
+  - cycle_id             → employee_performance_history.cycle_id
+                         + employees.latest_review_cycle_id
+  - review_date          → employee_performance_history.finalized_at
+
+Sync Type    : Automatic (fires on AFTER UPDATE on performance_cycles WHERE
+               NEW.status = 'finalized'; processes all cycle participants
+               in batch via Edge Function)
+
+User Notification:
+  - Each participating Employee:
+      Channel  : in-app + email
+      Title    : "Your {cycle_name} Review is Complete"
+      Body     : "Your {cycle_name} performance review has been finalized.
+                  Your overall rating: {rating_label}. You can view your
+                  review letter in the Performance section."
+
+--------------------------------------------------------------------------------
+INTEGRATION 11
+Source App   : Performance
+Target App   : Communications
+--------------------------------------------------------------------------------
+Trigger Event:
+  A continuous feedback record of type = 'recognition' is submitted AND the
+  is_public flag is set to true on the feedback record, AND the receiver has
+  not opted out of public recognition (employees.recognition_opt_out = false).
+
+Action Taken in Target:
+  1. A new record is inserted into communications_recognitions.
+  2. A new communications_posts record is created with:
+       post_type = 'recognition'
+       channel   = 'general' (all-employees) or recognition-specific channel
+       body      = recognition message + badge display
+       published_at = now()
+  3. The badge_type and message from the feedback record are rendered into
+     the post template.
+
+Data Passed:
+  - giver_id             : feedback.submitted_by (employee_id)
+  - receiver_id          : feedback.subject_employee_id
+  - badge_type           : feedback.badge_type (e.g., 'Innovator', 'Team Player')
+  - message              : feedback.feedback_text
+  - recognition_id       : feedback.id (cross-reference)
+  - post_type            : 'recognition'
+  - audience_type        : 'all'
+  - priority             : 'low'
+
+Sync Type    : Automatic (fires on INSERT into continuous_feedback WHERE
+               NEW.type = 'recognition' AND NEW.is_public = true)
+
+User Notification:
+  - Recognition Receiver:
+      Channel  : in-app + web push
+      Title    : "You Received a Recognition!"
+      Body     : "{giver_name} recognized you with a {badge_type} badge:
+                  '{message_preview}'"
+
+  - All Employees (Communications feed followers):
+      Channel  : in-app (feed item in Communications)
+      Note     : No push — visible as a feed post only unless they
+                  explicitly follow the recognition channel.
+
+--------------------------------------------------------------------------------
+INTEGRATION 12
+Source App   : Performance
+Target App   : Workflow Automation
+--------------------------------------------------------------------------------
+Trigger Event:
+  A Performance Improvement Plan (PIP) record is created (INSERT into
+  performance_pips table). This can be initiated by a Manager or HR
+  from the employee's review page.
+
+Action Taken in Target:
+  1. A new workflow_instances row is created using the pre-defined
+     pip_creation_approval workflow template.
+  2. The first step (HR Manager approval) is assigned to the HR Manager
+     role for the relevant department.
+  3. The PIP record status is set to 'pending_approval' — the employee
+     is NOT notified at this stage.
+  4. Only after HR Manager approves does the PIP status transition to
+     'active' and the employee notification fires.
+
+Data Passed:
+  - pip_id               → workflow_instances.entity_id
+  - employee_id          → workflow context variable
+  - created_by           → workflow context variable (initiating manager/HR)
+  - pip_details          → workflow context: start_date, end_date, goals[],
+                           review_frequency, escalation_contacts[]
+  - department_id        → used to resolve HR Manager approver
+
+Sync Type    : Workflow (routed through Workflow Automation)
+
+User Notification:
+  - HR Manager (approval step assignee):
+      Channel  : in-app + email + web push
+      Title    : "Approval Required: PIP for {full_name}"
+      Body     : "A Performance Improvement Plan has been initiated for
+                  {full_name} by {initiator_name}. Your approval is required
+                  before the employee is informed."
+
+  - Employee (ONLY after HR Manager approves):
+      Channel  : in-app + email
+      Title    : "Performance Improvement Plan"
+      Body     : "A Performance Improvement Plan has been created for you.
+                  Please review the details and schedule a meeting with
+                  your manager."
+
+  - Initiating Manager (on approval or rejection):
+      Channel  : in-app
+      Title    : "PIP {Approved / Rejected}"
+      Body     : "The PIP for {full_name} has been {approved / rejected}
+                  by {hr_manager_name}. {Rejection reason if applicable.}"
+
+--------------------------------------------------------------------------------
+INTEGRATION 13
+Source App   : Training
+Target App   : Employee Directory
+--------------------------------------------------------------------------------
+Trigger Event:
+  A training course completion record is created with
+  certificate_issued = true (INSERT/UPDATE on training_completions WHERE
+  NEW.certificate_issued = true).
+
+Action Taken in Target:
+  A new row is inserted into employee_certifications linked to the employee's
+  directory record. This certification appears on the employee's profile
+  under the "Certifications" tab.
+
+Data Passed:
+  - employee_id          → employee_certifications.employee_id
+  - course_name          → employee_certifications.certification_name
+  - certificate_url      → employee_certifications.certificate_url
+                           (Supabase Storage URL of issued certificate PDF)
+  - issue_date           → employee_certifications.issue_date (= completed_at)
+  - expiry_date          → employee_certifications.expiry_date (null if perpetual)
+  - provider             → employee_certifications.provider
+                           (internal | external provider name)
+  - course_id            → employee_certifications.training_course_ref
+  - completion_id        → employee_certifications.training_completion_ref
+
+Sync Type    : Automatic (AFTER INSERT/UPDATE trigger on training_completions)
+
+User Notification:
+  - Employee:
+      Channel  : in-app + email
+      Title    : "Certification Earned"
+      Body     : "Congratulations! You have earned the '{course_name}'
+                  certification. It has been added to your employee profile."
+
+  - Reporting Manager:
+      Channel  : in-app
+      Title    : "Team Member Earned Certification"
+      Body     : "{full_name} has completed '{course_name}' and earned a
+                  certification. It is now visible on their profile."
+
+--------------------------------------------------------------------------------
+INTEGRATION 14
+Source App   : Training
+Target App   : Employee Dashboard
+--------------------------------------------------------------------------------
+Trigger Event:
+  A new training_enrollments row is created for an employee
+  (INSERT on training_enrollments).
+
+Action Taken in Target:
+  The Employee Dashboard's "Upcoming Training" widget reads from the
+  training_enrollments view via the dashboard API. No separate write is
+  needed — the Dashboard queries the Training schema directly.
+  The new enrollment appears immediately on next dashboard load or
+  real-time widget refresh.
+
+Data Passed (read by Dashboard API, not pushed):
+  - enrollment_id        : training_enrollments.id
+  - course_name          : training_courses.title
+  - due_date             : training_enrollments.due_date
+  - status               : training_enrollments.status
+  - course_type          : training_courses.course_type
+  - thumbnail_url        : training_courses.thumbnail_url
+
+Sync Type    : Automatic (read-through; Dashboard fetches on load)
+
+User Notification:
+  - Employee:
+      Channel  : in-app
+      Title    : "New Course Assigned: {course_name}"
+      Body     : "You have been enrolled in '{course_name}'. Due date:
+                  {due_date}. Visit Training to begin."
+
+--------------------------------------------------------------------------------
+INTEGRATION 15
+Source App   : Communications
+Target App   : Employee Dashboard
+--------------------------------------------------------------------------------
+Trigger Event:
+  An announcement post is published in Communications with
+  audience_type = 'all' OR audience_type = 'department' where the department
+  matches the employee's department. published_at is set (post goes live).
+
+Action Taken in Target:
+  The Employee Dashboard's "Announcements" strip on the Overview tab reads
+  from a communications_posts_published view. No write needed — the
+  Dashboard queries Communications via a shared view or API endpoint.
+  Announcements are ordered by priority DESC, published_at DESC.
+
+Data Passed (read by Dashboard, not pushed):
+  - post_id              : communications_posts.id
+  - title                : communications_posts.title
+  - body_preview         : first 200 characters of body
+  - priority             : communications_posts.priority
+                           (critical | high | medium | low)
+  - published_at         : communications_posts.published_at
+  - author_name          : resolved from author_id
+  - audience_type        : 'all' | 'department' | 'role'
+
+Sync Type    : Automatic (Dashboard reads from Communications on load;
+               Supabase Realtime can push new announcements to open
+               Dashboard tabs via subscription on communications_posts)
+
+User Notification:
+  Delivery varies by priority:
+  - Critical  : web push + in-app notification + Dashboard strip
+                Title: "[URGENT] {announcement_title}"
+  - High      : in-app notification + Dashboard strip
+                Title: "{announcement_title}"
+  - Medium    : Dashboard strip only (no push)
+  - Low       : Dashboard strip only (no push)
+
+--------------------------------------------------------------------------------
+INTEGRATION 16
+Source App   : Recruitment
+Target App   : Workflow Automation
+--------------------------------------------------------------------------------
+Trigger Event:
+  A new Job Requisition is submitted by a Department Manager or HR
+  (INSERT into job_requisitions with status = 'submitted').
+
+Action Taken in Target:
+  1. A workflow_instances row is created for the job_requisition_approval
+     workflow template.
+  2. Step 1 — Department Manager approval (assigned to the department head
+     for the requisition's department).
+  3. Step 2 — HR Manager final approval (assigned after Step 1 completes).
+  4. On full approval: job_requisitions.status = 'approved', a job_postings
+     record is created and activated.
+  5. On rejection at any step: job_requisitions.status = 'rejected',
+     rejection_reason recorded, requester notified.
+
+Data Passed:
+  - req_id               → workflow_instances.entity_id
+  - position             → workflow context: position_title
+  - department_id        → workflow context (used to resolve approvers)
+  - headcount            → workflow context
+  - justification        → workflow context (text)
+  - requested_by         → workflow context (employee_id of requester)
+  - priority             → workflow context (urgent | normal | backfill)
+
+Sync Type    : Workflow
+
+User Notification:
+  - Department Manager (Step 1 approver):
+      Channel  : in-app + email + web push
+      Title    : "Approval Required: Job Requisition"
+      Body     : "{requester_name} has submitted a requisition for
+                  {headcount}x {position_title} in {department_name}.
+                  Your approval is required."
+
+  - HR Manager (Step 2 approver, after Step 1 approved):
+      Channel  : in-app + email + web push
+      Title    : "Final Approval Required: Job Requisition"
+      Body     : "A job requisition for {headcount}x {position_title}
+                  ({department_name}) is pending your final approval."
+
+  - Requester (on final outcome):
+      Channel  : in-app + email
+      Title    : "Requisition {Approved / Rejected}"
+      Body     : "Your requisition for {position_title} has been
+                  {approved — job posting activated | rejected —
+                  reason: {rejection_reason}}."
+
+--------------------------------------------------------------------------------
+INTEGRATION 17
+Source App   : Workflow Automation
+Target App   : Notification Bell
+--------------------------------------------------------------------------------
+Trigger Event:
+  Any running workflow instance advances to a step that requires user action
+  (step_type = 'approval' | 'review' | 'acknowledgment') and an assignee
+  is determined for that step.
+
+Action Taken in Target:
+  A notifications record is created with type = 'action_required' in the
+  notifications table. The Notification Bell (across all apps, shown in the
+  top nav) reflects this via Supabase Realtime subscription.
+
+Data Passed:
+  - user_id              : assigned approver's user_id
+  - title                : "{workflow_name} — Action Required"
+  - body                 : "Step '{step_name}' in workflow '{workflow_name}'
+                           requires your action. Deadline: {deadline}."
+  - type                 : 'action_required'
+  - app_filter           : 'workflow'
+  - entity_type          : 'workflow_instance'
+  - entity_id            : workflow_instances.id
+  - deep_link            : /workflow/instances/{instance_id}/steps/{step_id}
+  - deadline             : step_deadline (if configured)
+  - priority             : 'high'
+
+Sync Type    : Automatic (created by Workflow engine on step assignment;
+               AFTER INSERT on workflow_step_assignments)
+
+User Notification:
+  - Assigned Approver:
+      Channel  : in-app (Notification Bell) + web push
+      Title    : "Action Required: {workflow_name}"
+      Body     : "Step '{step_name}' is awaiting your response.
+                  Deadline: {deadline}."
+
+--------------------------------------------------------------------------------
+INTEGRATION 18
+Source App   : All Apps
+Target App   : Notification Bell (Global)
+--------------------------------------------------------------------------------
+Rule:
+  Every app in the HR Portal that generates a user-facing event MUST create
+  a notification record by calling the centralized notification write path.
+  This is the single source of truth for all bell notifications.
+
+Write Path:
+  Option A (recommended): Direct INSERT into notifications table with RLS
+  policies enforcing that only service_role or the appropriate app service
+  account can write.
+
+  Option B: POST to /api/notifications (if routing through an API layer).
+  The API layer validates and inserts into the notifications table.
+
+Required fields for every notification:
+  - user_id              : UUID of the recipient (from auth.users)
+  - title                : Short notification title (max 80 chars)
+  - body                 : Notification body text (max 300 chars)
+  - type                 : Enum:
+                             action_required | info | warning |
+                             success | error
+  - app_filter           : Enum: dashboard | directory | recruitment |
+                             onboarding | user_management | performance |
+                             training | communications | collaboration |
+                             workflow
+  - entity_type          : String identifying the record type
+                           (e.g., 'leave_request', 'review_cycle')
+  - entity_id            : UUID of the specific record
+  - deep_link            : Relative URL for navigation
+                           (e.g., /performance/reviews/{id})
+  - is_read              : boolean, default false
+  - created_at           : timestamptz, default now()
+  - expires_at           : optional; notifications older than this are
+                           auto-archived
+
+Real-Time Delivery:
+  The Notification Bell UI component subscribes to the notifications table
+  via Supabase Realtime:
+    supabase
+      .channel('user-notifications')
+      .on('postgres_changes', {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'notifications',
+          filter: 'user_id=eq.{current_user_id}'
+        }, handleNewNotification)
+      .subscribe()
+
+  This ensures zero-polling real-time delivery via websocket for all apps.
+
+Web Push Delivery:
+  In addition to the Realtime bell, any notification with
+  send_web_push = true triggers the Web Push service (Supabase Edge
+  Function push_dispatcher) which uses the VAPID keys and stored
+  push_subscriptions for the user.
+
+--------------------------------------------------------------------------------
+INTEGRATION 19 (CONFIRMATION — same as Integration 10)
+Source App   : Performance
+Target App   : Employee Directory
+--------------------------------------------------------------------------------
+See Integration 10 above for full detail.
+
+Summary confirmation:
+  - Trigger   : Performance cycle finalized (cycle status → 'finalized')
+  - Action    : Write final_rating, calibrated_rating, competency_scores,
+                cycle_id, review_date to employees record and append to
+                employee_performance_history
+  - Sync Type : Automatic (batch Edge Function on cycle finalization)
+  - Notify    : Each participating employee via in-app + email
+
+--------------------------------------------------------------------------------
+INTEGRATION 20 (CONFIRMATION — same as Integration 13)
+Source App   : Training
+Target App   : Employee Directory
+--------------------------------------------------------------------------------
+See Integration 13 above for full detail.
+
+Summary confirmation:
+  - Trigger   : Course completion with certificate_issued = true
+  - Action    : INSERT into employee_certifications
+  - Sync Type : Automatic (database trigger on training_completions)
+  - Notify    : Employee (in-app + email), Manager (in-app)
+
+--------------------------------------------------------------------------------
+INTEGRATION 21
+Source App   : Offboarding (module within Employee Directory / Onboarding)
+Target App   : User Management
+--------------------------------------------------------------------------------
+Trigger Event:
+  An offboarding record is created with last_working_day populated, OR an
+  existing offboarding record has its last_working_day field set/updated.
+
+Action Taken in Target:
+  1. A scheduled deactivation job is registered: the user account will be
+     set to inactive at 23:59:59 local time on last_working_day.
+  2. Implementation: Insert a row into scheduled_jobs table with
+     job_type = 'deactivate_user', execute_at = last_working_day at 23:59,
+     payload = { user_id, reason: 'offboarding' }.
+  3. The CRON worker (Supabase CRON or pg_cron) picks up and executes
+     the deactivation at the scheduled time.
+  4. On execution, the same deactivation logic as Integration 7 runs:
+     app_users.status = 'inactive', sessions terminated.
+
+Data Passed:
+  - user_id              : resolved from employees.work_email → app_users.id
+  - employee_id          : employees.id
+  - deactivation_scheduled_for : last_working_day 23:59 local time
+  - reason               : 'offboarding'
+  - offboarding_id       : offboarding_records.id (audit reference)
+
+Sync Type    : Automatic (scheduled deactivation; fires at end of
+               last_working_day without any user action)
+
+User Notification:
+  - IT Admin (1 day before last_working_day, reminder job fires at 09:00):
+      Channel  : in-app + email
+      Title    : "Offboarding Reminder — Action Required Tomorrow"
+      Body     : "{full_name}'s last working day is tomorrow ({date}).
+                  Please ensure physical access (ID badge, building,
+                  parking) is revoked by end of day tomorrow."
+
+  - HR Admin (on scheduling confirmation):
+      Channel  : in-app
+      Title    : "Account Deactivation Scheduled"
+      Body     : "{full_name}'s system account has been scheduled for
+                  deactivation on {last_working_day} at 23:59."
+
+  - HR Admin (on actual deactivation execution):
+      Channel  : in-app
+      Title    : "Account Deactivated"
+      Body     : "{full_name}'s account was deactivated at 23:59 on
+                  {last_working_day} as scheduled."
+
+--------------------------------------------------------------------------------
+INTEGRATION 22
+Source App   : Offboarding
+Target App   : Communications
+--------------------------------------------------------------------------------
+Trigger Event:
+  Offboarding record status reaches 'completed' — meaning Full & Final
+  settlement is marked done AND exit interview is recorded as completed.
+
+Action Taken in Target:
+  HR Admin is presented with a modal: "Post farewell announcement for
+  {full_name}?" with options: Post Announcement | Skip.
+  If HR chooses to post, a Communications post is created:
+    type     = 'announcement'
+    priority = 'low'
+    body     = "{full_name} has completed their tenure with us. We wish
+                them all the best in their future endeavors!"
+  If HR skips, no post is created.
+
+Data Passed:
+  - employee_id          : employees.id
+  - full_name            : employees.full_name
+  - last_working_day     : offboarding_records.last_working_day
+  - department_name      : resolved from department_id
+  - message_template     : farewell template (can be edited before posting)
+  - post_type            : 'announcement'
+  - audience_type        : 'all'
+  - priority             : 'low'
+  - author_id            : acting HR Admin's user_id
+
+Sync Type    : Triggered (HR explicitly posts or skips in the modal)
+
+User Notification:
+  - All Employees (if post is made):
+      Channel  : in-app (dashboard strip only)
+      Title    : "Farewell Announcement"
+      Body     : "{full_name} has completed their tenure. We wish them
+                  all the best!"
+      Note     : Low priority — no push, no email. Feed/strip only.
+
+--------------------------------------------------------------------------------
+INTEGRATION 23
+Source App   : Performance
+Target App   : Notification Bell
+--------------------------------------------------------------------------------
+Trigger Event:
+  A daily background CRON job (runs at 08:00 UTC) checks all open
+  performance review cycles and finds employees whose self-assessment
+  deadline is exactly 3 days from today AND who have not yet submitted
+  their self-assessment (self_assessments.status != 'submitted').
+
+Action Taken in Target:
+  For each qualifying employee, a notifications record is created with
+  type = 'warning', app_filter = 'performance'.
+
+Data Passed:
+  - user_id              : each pending employee's user_id
+  - cycle_id             : performance_cycles.id
+  - deadline             : self-assessment deadline date
+  - employee_ids_pending[]: list processed in this batch (logged for audit)
+  - type                 : 'warning'
+  - deep_link            : /performance/self-assessment/{cycle_id}
+
+Sync Type    : Automatic (CRON-triggered daily check)
+
+User Notification:
+  - Each Pending Employee:
+      Channel  : in-app + web push
+      Title    : "Self-Assessment Due in 3 Days"
+      Body     : "Your self-assessment for '{cycle_name}' is due on
+                  {deadline}. Please complete it before the deadline."
+
+--------------------------------------------------------------------------------
+INTEGRATION 24
+Source App   : Training
+Target App   : Notification Bell (and Department Manager)
+--------------------------------------------------------------------------------
+Trigger Event:
+  A daily CRON job checks training_enrollments for records where:
+    - status = 'enrolled' or 'in_progress'
+    - due_date < today - 14 days (i.e., overdue by more than 14 days)
+    - is_mandatory = true on the related training_courses record
+    - A notification has NOT already been sent for this enrollment
+      in the past 7 days (prevents spam; stored in notification_sent_at
+      on enrollment record)
+
+Action Taken in Target:
+  Notifications created for both the employee (warning) and their
+  department manager (warning).
+
+Data Passed:
+  - employee_id          : training_enrollments.employee_id
+  - manager_id           : employees.reporting_manager_id
+  - course_name          : training_courses.title
+  - days_overdue         : today - due_date (integer)
+  - enrollment_id        : training_enrollments.id
+  - deep_link (manager)  : /training/team-compliance
+  - deep_link (employee) : /training/my-courses/{enrollment_id}
+
+Sync Type    : Automatic (daily CRON at 07:00 UTC)
+
+User Notification:
+  - Department Manager:
+      Channel  : in-app + email
+      Title    : "Mandatory Training Overdue — Team Member"
+      Body     : "{employee_name} is {N} days overdue on mandatory
+                  training: '{course_name}'. Please follow up."
+
+  - Employee:
+      Channel  : in-app + web push
+      Title    : "Mandatory Training Overdue"
+      Body     : "'{course_name}' was due {N} days ago and is still
+                  incomplete. Please complete it immediately."
+
+--------------------------------------------------------------------------------
+INTEGRATION 25
+Source App   : Collaboration
+Target App   : Notification Bell
+--------------------------------------------------------------------------------
+Trigger Event:
+  Any of the following Supabase Realtime events on the Collaboration schema:
+    a) New row in chat_messages where recipient_user_id = current user
+       AND channel_type = 'direct' (Direct Message received)
+    b) New row in chat_messages where message_body contains @{username}
+       of any user (Mention in channel)
+    c) New row in channel_invitations where invitee_id = current user
+
+Action Taken in Target:
+  Notification record created via INSERT on notifications table.
+  For DMs and mentions: also triggers web push if the user has granted
+  push permission and the originating channel is not muted.
+
+Data Passed:
+  - user_id              : recipient user_id
+  - sender_id            : chat_messages.sender_id
+  - channel_id           : chat_messages.channel_id
+  - message_preview      : first 100 characters of message_body
+  - mention_type         : 'direct_message' | 'channel_mention' | 'thread_reply'
+  - deep_link            : /collaboration/channels/{channel_id}/messages/{message_id}
+  - app_filter           : 'collaboration'
+  - entity_type          : 'chat_message'
+  - entity_id            : chat_messages.id
+
+Sync Type    : Automatic (Supabase Realtime AFTER INSERT trigger on
+               chat_messages, evaluated server-side in Edge Function)
+
+User Notification:
+  - Direct Message Recipient:
+      Channel  : in-app + web push (if not muted)
+      Title    : "New Message from {sender_name}"
+      Body     : "{message_preview}"
+
+  - Mentioned User (@ mention):
+      Channel  : in-app + web push
+      Title    : "{sender_name} mentioned you in #{channel_name}"
+      Body     : "{message_preview}"
+
+  - Channel Invite Recipient:
+      Channel  : in-app
+      Title    : "Channel Invitation"
+      Body     : "You have been invited to join #{channel_name}
+                  by {inviter_name}."
+
+  - Thread Reply (on user's message):
+      Channel  : in-app (web push only if user has thread notifications on)
+      Title    : "{sender_name} replied to your message"
+      Body     : "{message_preview}"
+
+  - New Channel Message (non-muted channel):
+      Channel  : in-app only (no push for general channel activity)
+      Note     : Batched — single notification per channel per session,
+                 not per message.
+
+
+================================================================================
+SECTION A4: PUSH NOTIFICATION EVENTS CATALOG
+================================================================================
+
+Organization: Events are grouped by app. Each entry follows this format:
+
+  Event Key              | Trigger Condition
+  Recipients             | Title Template
+  Body Template          | Type
+  App Filter Tag         | Web Push (Y/N)
+
+Notification Types:
+  action_required — User must take an action (approve, submit, etc.)
+  info            — Informational; no action needed
+  warning         — Alert requiring attention but not immediate action
+  success         — Confirms a positive outcome
+  error           — System or process error requiring attention
+
+--------------------------------------------------------------------------------
+APP: EMPLOYEE DASHBOARD
+--------------------------------------------------------------------------------
+
+  Event Key              : leave_applied
+  Trigger Condition      : Employee submits a leave request (status = submitted)
+  Recipients             : Employee's reporting manager
+  Title Template         : "Leave Request from {employee_name}"
+  Body Template          : "{employee_name} has applied for {leave_type} from
+                            {from_date} to {to_date} ({duration} days).
+                            Please review."
+  Type                   : action_required
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+  Event Key              : leave_approved
+  Trigger Condition      : Manager or HR approves the leave request
+  Recipients             : Employee who applied
+  Title Template         : "Leave Approved"
+  Body Template          : "Your {leave_type} from {from_date} to {to_date}
+                            has been approved by {approver_name}."
+  Type                   : success
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+  Event Key              : leave_rejected
+  Trigger Condition      : Manager or HR rejects the leave request
+  Recipients             : Employee who applied
+  Title Template         : "Leave Request Rejected"
+  Body Template          : "Your {leave_type} request for {from_date}–{to_date}
+                            was rejected. Reason: {rejection_reason}."
+  Type                   : warning
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+  Event Key              : leave_cancelled_by_employee
+  Trigger Condition      : Employee cancels an approved or pending leave
+  Recipients             : Reporting manager + HR
+  Title Template         : "Leave Cancelled"
+  Body Template          : "{employee_name} has cancelled their {leave_type}
+                            request for {from_date}–{to_date}."
+  Type                   : info
+  App Filter Tag         : dashboard
+  Web Push               : N
+
+  Event Key              : wfh_requested
+  Trigger Condition      : Employee submits a Work From Home request
+  Recipients             : Reporting manager
+  Title Template         : "WFH Request from {employee_name}"
+  Body Template          : "{employee_name} has requested to work from home on
+                            {date}. Please approve or reject."
+  Type                   : action_required
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+  Event Key              : wfh_approved
+  Trigger Condition      : Manager approves the WFH request
+  Recipients             : Employee
+  Title Template         : "WFH Request Approved"
+  Body Template          : "Your work-from-home request for {date} has been
+                            approved."
+  Type                   : success
+  App Filter Tag         : dashboard
+  Web Push               : N
+
+  Event Key              : wfh_rejected
+  Trigger Condition      : Manager rejects the WFH request
+  Recipients             : Employee
+  Title Template         : "WFH Request Rejected"
+  Body Template          : "Your WFH request for {date} was rejected.
+                            Reason: {rejection_reason}."
+  Type                   : warning
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+  Event Key              : regularization_submitted
+  Trigger Condition      : Employee submits an attendance regularization request
+  Recipients             : Reporting manager
+  Title Template         : "Regularization Request from {employee_name}"
+  Body Template          : "{employee_name} has submitted a regularization for
+                            {date} (reason: {reason}). Please review."
+  Type                   : action_required
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+  Event Key              : regularization_approved
+  Trigger Condition      : Manager approves regularization
+  Recipients             : Employee
+  Title Template         : "Regularization Approved"
+  Body Template          : "Your regularization request for {date} has been
+                            approved."
+  Type                   : success
+  App Filter Tag         : dashboard
+  Web Push               : N
+
+  Event Key              : regularization_rejected
+  Trigger Condition      : Manager rejects regularization
+  Recipients             : Employee
+  Title Template         : "Regularization Rejected"
+  Body Template          : "Your regularization for {date} was rejected.
+                            Reason: {rejection_reason}."
+  Type                   : warning
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+  Event Key              : compoff_submitted
+  Trigger Condition      : Employee submits a compensatory off request after
+                            working on a holiday/weekend
+  Recipients             : Reporting manager
+  Title Template         : "Comp-Off Request from {employee_name}"
+  Body Template          : "{employee_name} has requested compensatory leave
+                            for working on {worked_date}. Please approve."
+  Type                   : action_required
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+  Event Key              : compoff_approved
+  Trigger Condition      : Manager approves comp-off request
+  Recipients             : Employee
+  Title Template         : "Comp-Off Approved"
+  Body Template          : "Your comp-off request for {worked_date} has been
+                            approved. Credit added to your leave balance."
+  Type                   : success
+  App Filter Tag         : dashboard
+  Web Push               : N
+
+  Event Key              : task_assigned
+  Trigger Condition      : A task is assigned to the employee (by manager or
+                            system)
+  Recipients             : Employee
+  Title Template         : "New Task Assigned: {task_title}"
+  Body Template          : "You have been assigned a new task: '{task_title}'.
+                            Due: {due_date}."
+  Type                   : action_required
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+  Event Key              : task_overdue
+  Trigger Condition      : Daily CRON — task due_date has passed and status
+                            is not 'completed'
+  Recipients             : Employee + reporting manager
+  Title Template         : "Task Overdue: {task_title}"
+  Body Template          : "The task '{task_title}' (assigned to {employee_name})
+                            was due on {due_date} and is still pending."
+  Type                   : warning
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+  Event Key              : shift_assigned
+  Trigger Condition      : HR/Admin assigns or changes employee's shift
+  Recipients             : Employee
+  Title Template         : "Shift Updated"
+  Body Template          : "Your shift has been updated to {shift_name}
+                            effective {effective_date}."
+  Type                   : info
+  App Filter Tag         : dashboard
+  Web Push               : N
+
+  Event Key              : upcoming_holiday
+  Trigger Condition      : 1 day before a company-wide or location-specific
+                            holiday
+  Recipients             : All employees at the relevant location
+  Title Template         : "Holiday Tomorrow: {holiday_name}"
+  Body Template          : "Reminder: {holiday_name} is a public holiday
+                            tomorrow ({date}). Enjoy your day off!"
+  Type                   : info
+  App Filter Tag         : dashboard
+  Web Push               : N
+
+  Event Key              : attendance_anomaly
+  Trigger Condition      : Employee has not checked in by 10:00 AM on a
+                            working day (CRON check at 10:05 AM)
+  Recipients             : Employee + reporting manager
+  Title Template         : "Attendance Alert: No Check-In Recorded"
+  Body Template          : "No check-in recorded for {employee_name} today
+                            ({date}). Please regularize if you are working."
+  Type                   : warning
+  App Filter Tag         : dashboard
+  Web Push               : Y
+
+--------------------------------------------------------------------------------
+APP: EMPLOYEE DIRECTORY
+--------------------------------------------------------------------------------
+
+  Event Key              : employee_created
+  Trigger Condition      : New employee record inserted into employees table
+                            (from Onboarding completion — Integration 2)
+  Recipients             : HR Admin, reporting manager
+  Title Template         : "Employee Record Created: {full_name}"
+  Body Template          : "{full_name} has been added to the Employee
+                            Directory with Employee ID {employee_id}."
+  Type                   : info
+  App Filter Tag         : directory
+  Web Push               : N
+
+  Event Key              : employee_profile_updated
+  Trigger Condition      : Core profile fields updated on an employee record
+                            (name, designation, department, manager)
+  Recipients             : Employee (if their own profile is updated by HR),
+                            HR Admin
+  Title Template         : "Profile Updated"
+  Body Template          : "Your employee profile has been updated by
+                            {updated_by}. Field changed: {field_name}."
+  Type                   : info
+  App Filter Tag         : directory
+  Web Push               : N
+
+  Event Key              : document_uploaded
+  Trigger Condition      : A document is uploaded to an employee's documents
+                            section
+  Recipients             : Employee
+  Title Template         : "Document Added to Your Profile"
+  Body Template          : "'{document_name}' has been uploaded to your
+                            employee documents by {uploaded_by}."
+  Type                   : info
+  App Filter Tag         : directory
+  Web Push               : N
+
+  Event Key              : document_expiry_warning_30d
+  Trigger Condition      : Monthly CRON — employee document's expiry_date
+                            is within 30 days
+  Recipients             : Employee, HR Admin
+  Title Template         : "Document Expiring Soon: {document_name}"
+  Body Template          : "Your '{document_name}' expires on {expiry_date}
+                            (in {days_remaining} days). Please renew and
+                            upload the updated document."
+  Type                   : warning
+  App Filter Tag         : directory
+  Web Push               : N
+
+  Event Key              : document_expired
+  Trigger Condition      : Daily CRON — document expiry_date = today or
+                            has passed
+  Recipients             : Employee, HR Admin
+  Title Template         : "Document Expired: {document_name}"
+  Body Template          : "'{document_name}' for {employee_name} has
+                            expired as of {expiry_date}. Please upload
+                            a renewed version immediately."
+  Type                   : warning
+  App Filter Tag         : directory
+  Web Push               : Y
+
+  Event Key              : birthday_today
+  Trigger Condition      : Daily CRON at 08:00 — employee's date_of_birth
+                            month + day = today
+  Recipients             : Reporting manager, HR Admin
+  Title Template         : "Birthday Today: {employee_name}"
+  Body Template          : "Today is {employee_name}'s birthday! Don't
+                            forget to wish them."
+  Type                   : info
+  App Filter Tag         : directory
+  Web Push               : N
+
+  Event Key              : work_anniversary_today
+  Trigger Condition      : Daily CRON at 08:00 — employee's join_date
+                            anniversary = today
+  Recipients             : Employee, reporting manager
+  Title Template         : "Work Anniversary: {employee_name} — {years} Year(s)"
+  Body Template          : "Today marks {years} year(s) since {employee_name}
+                            joined the team. Congratulations!"
+  Type                   : info
+  App Filter Tag         : directory
+  Web Push               : N
+
+  Event Key              : employee_deactivated
+  Trigger Condition      : Employee status set to inactive/exit
+                            (Integration 7 fires)
+  Recipients             : IT Admin, HR Admin
+  Title Template         : "Employee Account Deactivated: {full_name}"
+  Body Template          : "{full_name}'s employee record has been marked
+                            {status} and their system access has been revoked."
+  Type                   : warning
+  App Filter Tag         : directory
+  Web Push               : Y
+
+  Event Key              : org_chart_updated
+  Trigger Condition      : employees.reporting_manager_id changes for any
+                            employee record
+  Recipients             : Affected employee (the one whose manager changed)
+  Title Template         : "Your Reporting Manager Has Changed"
+  Body Template          : "Your reporting manager has been updated to
+                            {new_manager_name} effective {effective_date}."
+  Type                   : info
+  App Filter Tag         : directory
+  Web Push               : N
+
+--------------------------------------------------------------------------------
+APP: RECRUITMENT
+--------------------------------------------------------------------------------
+
+  Event Key              : candidate_applied
+  Trigger Condition      : New candidate application received for a job posting
+  Recipients             : HR Recruiter assigned to the posting
+  Title Template         : "New Application: {position_title}"
+  Body Template          : "{candidate_name} has applied for the
+                            {position_title} position ({source_channel})."
+  Type                   : info
+  App Filter Tag         : recruitment
+  Web Push               : N
+
+  Event Key              : interview_scheduled_interviewer
+  Trigger Condition      : An interview is scheduled and an interviewer
+                            is assigned
+  Recipients             : Assigned interviewer
+  Title Template         : "Interview Scheduled: {candidate_name}"
+  Body Template          : "You have an interview with {candidate_name} for
+                            {position_title} on {date} at {time}
+                            ({interview_mode})."
+  Type                   : action_required
+  App Filter Tag         : recruitment
+  Web Push               : Y
+
+  Event Key              : interview_scheduled_candidate
+  Trigger Condition      : Same as above — candidate-facing event
+  Recipients             : Candidate (external email)
+  Title Template         : "Interview Confirmed — {position_title} at
+                            {company_name}"
+  Body Template          : "Your interview for {position_title} has been
+                            scheduled for {date} at {time}.
+                            Details: {meeting_link_or_location}."
+  Type                   : info
+  App Filter Tag         : recruitment
+  Web Push               : N (email only; candidate is external)
+
+  Event Key              : feedback_due_24h
+  Trigger Condition      : Interview completed 24+ hours ago and
+                            interviewer has not submitted feedback
+  Recipients             : Interviewer
+  Title Template         : "Interview Feedback Due: {candidate_name}"
+  Body Template          : "Please submit your feedback for the interview
+                            with {candidate_name} (conducted {date}).
+                            Due: {deadline}."
+  Type                   : warning
+  App Filter Tag         : recruitment
+  Web Push               : Y
+
+  Event Key              : feedback_overdue_72h
+  Trigger Condition      : Feedback not submitted 72 hours after interview
+  Recipients             : Interviewer + HR Recruiter
+  Title Template         : "Feedback Overdue (72h): {candidate_name}"
+  Body Template          : "Feedback for {candidate_name}'s interview is
+                            72 hours overdue. Please submit immediately or
+                            contact the interviewer."
+  Type                   : warning
+  App Filter Tag         : recruitment
+  Web Push               : Y
+
+  Event Key              : candidate_stage_changed
+  Trigger Condition      : Candidate is moved to a different pipeline stage
+  Recipients             : HR Recruiter, hiring manager
+  Title Template         : "Candidate Stage Updated: {candidate_name}"
+  Body Template          : "{candidate_name} has been moved from
+                            '{previous_stage}' to '{new_stage}' for
+                            {position_title}."
+  Type                   : info
+  App Filter Tag         : recruitment
+  Web Push               : N
+
+  Event Key              : offer_sent
+  Trigger Condition      : Offer letter is sent to the candidate
+  Recipients             : HR Recruiter, hiring manager
+  Title Template         : "Offer Sent: {candidate_name}"
+  Body Template          : "An offer has been sent to {candidate_name}
+                            for {position_title}. Awaiting response."
+  Type                   : info
+  App Filter Tag         : recruitment
+  Web Push               : N
+
+  Event Key              : offer_accepted
+  Trigger Condition      : Candidate accepts the offer
+                            (offer_status = 'accepted')
+  Recipients             : HR Recruiter, hiring manager, HR Admin
+  Title Template         : "Offer Accepted: {candidate_name}"
+  Body Template          : "{candidate_name} has accepted the offer for
+                            {position_title}. Joining date: {joining_date}.
+                            Onboarding record has been created."
+  Type                   : success
+  App Filter Tag         : recruitment
+  Web Push               : Y
+
+  Event Key              : offer_rejected
+  Trigger Condition      : Candidate rejects the offer
+                            (offer_status = 'rejected')
+  Recipients             : HR Recruiter, hiring manager
+  Title Template         : "Offer Rejected: {candidate_name}"
+  Body Template          : "{candidate_name} has rejected the offer for
+                            {position_title}. Reason (if provided):
+                            {rejection_reason}."
+  Type                   : warning
+  App Filter Tag         : recruitment
+  Web Push               : Y
+
+  Event Key              : offer_expiring_2d
+  Trigger Condition      : Offer expiry_date is 2 days away and candidate
+                            has not responded
+  Recipients             : HR Recruiter
+  Title Template         : "Offer Expiring in 2 Days: {candidate_name}"
+  Body Template          : "The offer sent to {candidate_name} for
+                            {position_title} expires on {expiry_date}.
+                            No response received yet."
+  Type                   : warning
+  App Filter Tag         : recruitment
+  Web Push               : Y
+
+  Event Key              : offer_expired
+  Trigger Condition      : offer expiry_date has passed with no response
+  Recipients             : HR Recruiter
+  Title Template         : "Offer Expired: {candidate_name}"
+  Body Template          : "The offer for {candidate_name} ({position_title})
+                            has expired without a response."
+  Type                   : warning
+  App Filter Tag         : recruitment
+  Web Push               : N
+
+  Event Key              : candidate_hired
+  Trigger Condition      : Candidate status = 'hired' (after offer accepted
+                            or manual hire action)
+  Recipients             : HR Admin, hiring manager
+  Title Template         : "Candidate Hired: {candidate_name}"
+  Body Template          : "{candidate_name} has been officially hired for
+                            {position_title}. Onboarding initiated."
+  Type                   : success
+  App Filter Tag         : recruitment
+  Web Push               : N
+
+  Event Key              : requisition_submitted
+  Trigger Condition      : Job requisition submitted (Integration 16 trigger)
+  Recipients             : Workflow approver (department head)
+  Title Template         : "Requisition Approval Required"
+  Body Template          : "{requester_name} has submitted a requisition for
+                            {headcount}x {position_title}. Your approval
+                            is required."
+  Type                   : action_required
+  App Filter Tag         : recruitment
+  Web Push               : Y
+
+  Event Key              : requisition_approved
+  Trigger Condition      : Job requisition fully approved via workflow
+  Recipients             : Requester
+  Title Template         : "Requisition Approved: {position_title}"
+  Body Template          : "Your job requisition for {position_title} has
+                            been approved. The job posting has been activated."
+  Type                   : success
+  App Filter Tag         : recruitment
+  Web Push               : N
+
+  Event Key              : requisition_rejected
+  Trigger Condition      : Job requisition rejected at any workflow step
+  Recipients             : Requester
+  Title Template         : "Requisition Rejected: {position_title}"
+  Body Template          : "Your job requisition for {position_title} was
+                            rejected by {rejector_name}. Reason:
+                            {rejection_reason}."
+  Type                   : warning
+  App Filter Tag         : recruitment
+  Web Push               : Y
+
+--------------------------------------------------------------------------------
+APP: ONBOARDING
+--------------------------------------------------------------------------------
+
+  Event Key              : onboarding_record_created
+  Trigger Condition      : Onboarding record auto-created from Recruitment
+                            (Integration 1)
+  Recipients             : HR Admin, assigned onboarding coordinator
+  Title Template         : "New Onboarding Record: {full_name}"
+  Body Template          : "A new onboarding record has been created for
+                            {full_name} joining as {designation} on
+                            {joining_date}."
+  Type                   : info
+  App Filter Tag         : onboarding
+  Web Push               : N
+
+  Event Key              : preboarding_link_sent
+  Trigger Condition      : HR sends the pre-boarding portal link to the
+                            new joiner's personal email
+  Recipients             : HR Admin (confirmation)
+  Title Template         : "Pre-boarding Link Sent to {full_name}"
+  Body Template          : "The pre-boarding link has been sent to
+                            {personal_email}. The link expires in 7 days."
+  Type                   : info
+  App Filter Tag         : onboarding
+  Web Push               : N
+
+  Event Key              : preboarding_incomplete_day_before_joining
+  Trigger Condition      : Daily CRON — pre-boarding tasks are incomplete
+                            and joining_date = tomorrow
+  Recipients             : HR Admin, onboarding coordinator
+  Title Template         : "Pre-boarding Incomplete — Joining Tomorrow"
+  Body Template          : "{full_name} is joining tomorrow but has not
+                            completed pre-boarding tasks: {pending_tasks}.
+                            Please follow up immediately."
+  Type                   : warning
+  App Filter Tag         : onboarding
+  Web Push               : Y
+
+  Event Key              : checklist_task_overdue
+  Trigger Condition      : Onboarding checklist task is past its due_date
+                            and not completed
+  Recipients             : Task assignee + HR Admin
+  Title Template         : "Onboarding Task Overdue: {task_name}"
+  Body Template          : "Onboarding task '{task_name}' for {employee_name}
+                            was due on {due_date} and is still pending.
+                            Assignee: {assignee_name}."
+  Type                   : warning
+  App Filter Tag         : onboarding
+  Web Push               : Y
+
+  Event Key              : access_enabled
+  Trigger Condition      : HR clicks "Enable Access" successfully
+                            (Integrations 3 + 4 complete)
+  Recipients             : New employee (on first login), HR Admin
+  Title Template         : "Access Enabled for {full_name}"
+  Body Template          : "System access has been enabled for {full_name}.
+                            Invitation email sent. IT ticket: TKT-{ticket_id}."
+  Type                   : success
+  App Filter Tag         : onboarding
+  Web Push               : N
+
+  Event Key              : buddy_assigned
+  Trigger Condition      : HR assigns an onboarding buddy to a new joiner
+  Recipients             : New joiner + assigned buddy
+  Title Template         : "Onboarding Buddy Assigned"
+  Body Template (joiner) : "Your onboarding buddy is {buddy_name}
+                            ({buddy_designation}). They will help you
+                            settle in — feel free to reach out!"
+  Body Template (buddy)  : "You have been assigned as the onboarding buddy
+                            for {new_joiner_name} who joins on {joining_date}."
+  Type                   : info
+  App Filter Tag         : onboarding
+  Web Push               : N
+
+  Event Key              : onboarding_completed
+  Trigger Condition      : All mandatory onboarding tasks marked complete;
+                            onboarding_record.status = 'completed'
+  Recipients             : HR Admin, reporting manager
+  Title Template         : "Onboarding Completed: {full_name}"
+  Body Template          : "{full_name} has completed all mandatory onboarding
+                            tasks. Employee record created in Directory."
+  Type                   : success
+  App Filter Tag         : onboarding
+  Web Push               : N
+
+  Event Key              : probation_review_due_7d
+  Trigger Condition      : Employee's probation_end_date is 7 days away and
+                            probation review has not been initiated
+  Recipients             : Reporting manager, HR Admin
+  Title Template         : "Probation Review Due in 7 Days: {employee_name}"
+  Body Template          : "{employee_name}'s probation period ends on
+                            {probation_end_date}. Please initiate the
+                            probation review."
+  Type                   : warning
+  App Filter Tag         : onboarding
+  Web Push               : Y
+
+  Event Key              : offboarding_initiated
+  Trigger Condition      : An offboarding record is created for an employee
+  Recipients             : HR Admin, reporting manager, employee (if notice
+                            served voluntarily)
+  Title Template         : "Offboarding Initiated: {employee_name}"
+  Body Template          : "Offboarding has been initiated for {employee_name}.
+                            Last working day: {last_working_day}."
+  Type                   : info
+  App Filter Tag         : onboarding
+  Web Push               : N
+
+  Event Key              : last_working_day_tomorrow
+  Trigger Condition      : Daily CRON — offboarding record where
+                            last_working_day = tomorrow (Integration 21
+                            reminder)
+  Recipients             : IT Admin, HR Admin, reporting manager
+  Title Template         : "Last Working Day Tomorrow: {employee_name}"
+  Body Template          : "{employee_name}'s last working day is tomorrow
+                            ({date}). Please ensure exit checklist and
+                            access revocation are completed."
+  Type                   : warning
+  App Filter Tag         : onboarding
+  Web Push               : Y
+
+--------------------------------------------------------------------------------
+APP: USER MANAGEMENT
+--------------------------------------------------------------------------------
+
+  Event Key              : user_invited
+  Trigger Condition      : supabase.auth.admin.createUser() or
+                            admin.inviteUserByEmail() called (Integration 3)
+  Recipients             : Invited user (email), HR Admin (in-app)
+  Title Template         : "Welcome to {Company Name} — Activate Your Account"
+  Body Template          : "Your HR portal account has been created.
+                            Click the link in your email to set your
+                            password. Link expires in 72 hours."
+  Type                   : info
+  App Filter Tag         : user_management
+  Web Push               : N (email-based; user not yet in system)
+
+  Event Key              : invitation_expiring_24h
+  Trigger Condition      : Invitation email sent 48h ago and user has not
+                            activated account
+  Recipients             : HR Admin
+  Title Template         : "Invitation Expiring Soon: {user_name}"
+  Body Template          : "The account invitation for {user_name}
+                            ({email}) was sent 48 hours ago and has not
+                            been accepted. It expires in 24 hours."
+  Type                   : warning
+  App Filter Tag         : user_management
+  Web Push               : N
+
+  Event Key              : user_account_activated
+  Trigger Condition      : User sets password and completes first login
+                            (Supabase Auth user_confirmed event)
+  Recipients             : HR Admin, reporting manager
+  Title Template         : "Account Activated: {full_name}"
+  Body Template          : "{full_name} has activated their account and
+                            logged in for the first time."
+  Type                   : info
+  App Filter Tag         : user_management
+  Web Push               : N
+
+  Event Key              : role_changed
+  Trigger Condition      : An admin changes a user's role in the
+                            user_management app
+  Recipients             : Affected user
+  Title Template         : "Your Role Has Been Updated"
+  Body Template          : "Your role in the HR Portal has been changed
+                            from {previous_role} to {new_role} by
+                            {changed_by}. Your access has been updated."
+  Type                   : info
+  App Filter Tag         : user_management
+  Web Push               : N
+
+  Event Key              : account_deactivated
+  Trigger Condition      : User account set to inactive (Integrations 7, 21)
+  Recipients             : HR Admin, IT Admin
+  Title Template         : "Account Deactivated: {full_name}"
+  Body Template          : "{full_name}'s account has been deactivated.
+                            All active sessions terminated."
+  Type                   : warning
+  App Filter Tag         : user_management
+  Web Push               : Y
+
+  Event Key              : suspicious_login
+  Trigger Condition      : Login from unrecognized location or device
+                            (IP geolocation mismatch from past 30 days)
+  Recipients             : User, HR Admin (security alert)
+  Title Template         : "Suspicious Login Detected"
+  Body Template          : "A login to your account was detected from
+                            {location} on {device} at {timestamp}. If
+                            this was not you, change your password
+                            immediately."
+  Type                   : error
+  App Filter Tag         : user_management
+  Web Push               : Y
+
+  Event Key              : password_reset_requested
+  Trigger Condition      : User requests a password reset
+  Recipients             : User (email)
+  Title Template         : "Password Reset Request"
+  Body Template          : "A password reset was requested for your
+                            account. Use the link in this email.
+                            If you didn't request this, ignore it."
+  Type                   : info
+  App Filter Tag         : user_management
+  Web Push               : N (email only)
+
+  Event Key              : mfa_enrollment_required
+  Trigger Condition      : Admin enables MFA enforcement policy;
+                            user has not enrolled in MFA
+  Recipients             : Affected user
+  Title Template         : "Multi-Factor Authentication Required"
+  Body Template          : "Your organization now requires MFA for
+                            portal access. Please enroll in MFA within
+                            {deadline} days to avoid being locked out."
+  Type                   : action_required
+  App Filter Tag         : user_management
+  Web Push               : Y
+
+  Event Key              : access_review_due
+  Trigger Condition      : Quarterly CRON — access review cycle opened
+                            for managers to verify their team's permissions
+  Recipients             : All managers with direct reports
+  Title Template         : "Quarterly Access Review Due"
+  Body Template          : "The Q{quarter} access review is now open.
+                            Please review and certify your team's
+                            access rights by {deadline}."
+  Type                   : action_required
+  App Filter Tag         : user_management
+  Web Push               : Y
+
+  Event Key              : account_deletion_warning_7d
+  Trigger Condition      : Deactivated account scheduled for hard deletion
+                            in 7 days (data retention policy)
+  Recipients             : HR Admin
+  Title Template         : "Account Deletion Scheduled: {full_name}"
+  Body Template          : "{full_name}'s deactivated account will be
+                            permanently deleted on {deletion_date} per
+                            data retention policy. Take any required
+                            data export actions before this date."
+  Type                   : warning
+  App Filter Tag         : user_management
+  Web Push               : N
+
+--------------------------------------------------------------------------------
+APP: PERFORMANCE
+--------------------------------------------------------------------------------
+
+  Event Key              : review_cycle_opened
+  Trigger Condition      : HR activates a new performance review cycle
+  Recipients             : All employees in the cycle
+  Title Template         : "{cycle_name} Performance Review Has Opened"
+  Body Template          : "The {cycle_name} performance review cycle is
+                            now open. Your self-assessment is due by
+                            {deadline}. Visit Performance to begin."
+  Type                   : info
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : self_assessment_due_7d
+  Trigger Condition      : Daily CRON — self-assessment deadline is
+                            7 days away and not yet submitted
+  Recipients             : Employee
+  Title Template         : "Self-Assessment Due in 7 Days"
+  Body Template          : "Your self-assessment for '{cycle_name}' is
+                            due on {deadline}. Please complete it at
+                            your earliest convenience."
+  Type                   : warning
+  App Filter Tag         : performance
+  Web Push               : N
+
+  Event Key              : self_assessment_due_3d
+  Trigger Condition      : Integration 23 — self-assessment deadline is
+                            exactly 3 days away
+  Recipients             : Employee
+  Title Template         : "Self-Assessment Due in 3 Days — Urgent"
+  Body Template          : "Your self-assessment for '{cycle_name}' is
+                            due in 3 days ({deadline}). Don't miss
+                            the deadline."
+  Type                   : warning
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : self_assessment_deadline_passed
+  Trigger Condition      : Deadline passed with no submission; daily CRON
+  Recipients             : Employee, reporting manager
+  Title Template         : "Self-Assessment Deadline Missed"
+  Body Template          : "{employee_name}'s self-assessment for
+                            '{cycle_name}' was not submitted by the
+                            deadline ({deadline})."
+  Type                   : warning
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : feedback_request_received
+  Trigger Condition      : A peer or 360 feedback request is sent to
+                            the user
+  Recipients             : Feedback provider (who must give feedback)
+  Title Template         : "Feedback Requested: {requestee_name}"
+  Body Template          : "{requestee_name} has requested feedback from
+                            you as part of the {cycle_name} review.
+                            Due: {deadline}."
+  Type                   : action_required
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : feedback_deadline_3d
+  Trigger Condition      : Feedback request deadline is 3 days away;
+                            feedback not yet submitted
+  Recipients             : Feedback provider
+  Title Template         : "Feedback Due in 3 Days: {requestee_name}"
+  Body Template          : "Your feedback for {requestee_name} ({cycle_name})
+                            is due on {deadline}. Please submit it soon."
+  Type                   : warning
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : feedback_submitted_manager
+  Trigger Condition      : Manager submits their review/feedback for
+                            a direct report
+  Recipients             : HR Admin (for cycle tracking)
+  Title Template         : "Manager Review Submitted: {employee_name}"
+  Body Template          : "{manager_name} has submitted their review for
+                            {employee_name} in the {cycle_name} cycle."
+  Type                   : info
+  App Filter Tag         : performance
+  Web Push               : N
+
+  Event Key              : review_letter_available
+  Trigger Condition      : Cycle finalized and review letters generated;
+                            shared with employee
+  Recipients             : Employee
+  Title Template         : "Your Performance Review Letter is Available"
+  Body Template          : "Your {cycle_name} performance review letter
+                            is now available. Visit Performance to
+                            view and acknowledge it."
+  Type                   : info
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : pip_created_employee
+  Trigger Condition      : PIP approved by HR Manager (Integration 12 —
+                            employee notified only after approval)
+  Recipients             : Employee
+  Title Template         : "Performance Improvement Plan"
+  Body Template          : "A Performance Improvement Plan has been created
+                            for you effective {start_date}. Please review
+                            the goals and schedule a discussion with your
+                            manager."
+  Type                   : action_required
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : pip_milestone_due_tomorrow
+  Trigger Condition      : Daily CRON — PIP milestone due_date = tomorrow
+  Recipients             : Employee, reporting manager
+  Title Template         : "PIP Milestone Due Tomorrow: {milestone_title}"
+  Body Template          : "PIP milestone '{milestone_title}' for
+                            {employee_name} is due tomorrow ({due_date}).
+                            Please ensure it is on track."
+  Type                   : warning
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : pip_milestone_missed
+  Trigger Condition      : Daily CRON — PIP milestone due_date passed,
+                            status not 'achieved'
+  Recipients             : Employee, reporting manager, HR Admin
+  Title Template         : "PIP Milestone Missed: {milestone_title}"
+  Body Template          : "{employee_name} missed PIP milestone
+                            '{milestone_title}' (due {due_date}).
+                            Please review the plan immediately."
+  Type                   : warning
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : pip_escalated
+  Trigger Condition      : Multiple milestones missed or HR manually
+                            escalates the PIP
+  Recipients             : HR Manager, Department Head
+  Title Template         : "PIP Escalated: {employee_name}"
+  Body Template          : "The PIP for {employee_name} has been escalated
+                            due to {escalation_reason}. Immediate management
+                            attention is required."
+  Type                   : error
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : okr_checkin_overdue
+  Trigger Condition      : OKR check-in is more than 14 days past the
+                            scheduled check-in date
+  Recipients             : Employee, reporting manager
+  Title Template         : "OKR Check-In Overdue"
+  Body Template          : "{employee_name}'s OKR check-in for
+                            '{okr_title}' is overdue by {days_overdue} days.
+                            Please update key results."
+  Type                   : warning
+  App Filter Tag         : performance
+  Web Push               : N
+
+  Event Key              : cycle_finalized_employee
+  Trigger Condition      : Integration 10 — cycle finalized, rating written
+                            to employee record
+  Recipients             : Employee
+  Title Template         : "Your {cycle_name} Review is Complete"
+  Body Template          : "Your {cycle_name} performance review has been
+                            finalized. Overall rating: {rating_label}.
+                            Your review letter is now available."
+  Type                   : info
+  App Filter Tag         : performance
+  Web Push               : Y
+
+  Event Key              : recognition_received
+  Trigger Condition      : Integration 11 — public recognition submitted
+                            via continuous feedback
+  Recipients             : Recognition receiver
+  Title Template         : "You Received a Recognition from {giver_name}"
+  Body Template          : "{giver_name} recognized you with a
+                            {badge_type} badge: '{message_preview}'"
+  Type                   : success
+  App Filter Tag         : performance
+  Web Push               : Y
+
+--------------------------------------------------------------------------------
+APP: TRAINING
+--------------------------------------------------------------------------------
+
+  Event Key              : enrollment_confirmed
+  Trigger Condition      : training_enrollments row created with
+                            status = 'enrolled' (auto or manual)
+  Recipients             : Employee
+  Title Template         : "Enrolled in Course: {course_name}"
+  Body Template          : "You have been enrolled in '{course_name}'.
+                            Due date: {due_date}. Start learning today."
+  Type                   : info
+  App Filter Tag         : training
+  Web Push               : N
+
+  Event Key              : enrollment_approved
+  Trigger Condition      : Manager approves a training enrollment request
+                            (for manager-approval courses)
+  Recipients             : Employee
+  Title Template         : "Training Enrollment Approved"
+  Body Template          : "Your enrollment request for '{course_name}'
+                            has been approved by {approver_name}.
+                            You are now enrolled."
+  Type                   : success
+  App Filter Tag         : training
+  Web Push               : N
+
+  Event Key              : enrollment_rejected
+  Trigger Condition      : Manager rejects a training enrollment request
+  Recipients             : Employee
+  Title Template         : "Training Enrollment Rejected"
+  Body Template          : "Your request to enroll in '{course_name}'
+                            was rejected by {approver_name}.
+                            Reason: {rejection_reason}."
+  Type                   : warning
+  App Filter Tag         : training
+  Web Push               : N
+
+  Event Key              : course_due_7d
+  Trigger Condition      : Daily CRON — enrollment due_date is 7 days away
+                            and course not completed
+  Recipients             : Employee
+  Title Template         : "Course Due in 7 Days: {course_name}"
+  Body Template          : "'{course_name}' is due on {due_date}.
+                            You have {days_remaining} days to complete it."
+  Type                   : warning
+  App Filter Tag         : training
+  Web Push               : N
+
+  Event Key              : course_due_3d
+  Trigger Condition      : Daily CRON — enrollment due_date is 3 days away,
+                            not completed
+  Recipients             : Employee
+  Title Template         : "Course Due in 3 Days: {course_name}"
+  Body Template          : "'{course_name}' is due in 3 days ({due_date}).
+                            Please complete it as soon as possible."
+  Type                   : warning
+  App Filter Tag         : training
+  Web Push               : Y
+
+  Event Key              : course_overdue
+  Trigger Condition      : Daily CRON — enrollment due_date passed,
+                            status not 'completed'
+  Recipients             : Employee, reporting manager (if mandatory)
+  Title Template         : "Course Overdue: {course_name}"
+  Body Template          : "'{course_name}' was due on {due_date} and
+                            has not been completed. Please finish it
+                            immediately."
+  Type                   : warning
+  App Filter Tag         : training
+  Web Push               : Y
+
+  Event Key              : mandatory_course_assigned
+  Trigger Condition      : is_mandatory = true course enrollment created
+                            (onboarding auto-enroll or HR manual assignment)
+  Recipients             : Employee
+  Title Template         : "Mandatory Training Assigned: {course_name}"
+  Body Template          : "A mandatory training course has been assigned
+                            to you: '{course_name}'. Due: {due_date}.
+                            Completion is required."
+  Type                   : action_required
+  App Filter Tag         : training
+  Web Push               : Y
+
+  Event Key              : certificate_earned
+  Trigger Condition      : Integration 13 — course completed,
+                            certificate_issued = true
+  Recipients             : Employee
+  Title Template         : "Certificate Earned: {course_name}"
+  Body Template          : "Congratulations! You have earned the
+                            '{course_name}' certificate. It has been
+                            added to your employee profile."
+  Type                   : success
+  App Filter Tag         : training
+  Web Push               : Y
+
+  Event Key              : certification_expiry_30d
+  Trigger Condition      : Monthly CRON — employee_certifications.expiry_date
+                            is within 30 days
+  Recipients             : Employee, reporting manager
+  Title Template         : "Certification Expiring Soon: {certification_name}"
+  Body Template          : "Your '{certification_name}' certification
+                            expires on {expiry_date} ({days_remaining} days).
+                            Please plan renewal."
+  Type                   : warning
+  App Filter Tag         : training
+  Web Push               : N
+
+  Event Key              : certification_expiry_7d
+  Trigger Condition      : Daily CRON — expiry_date is within 7 days
+  Recipients             : Employee, reporting manager, HR Admin
+  Title Template         : "Certification Expiring in 7 Days: {certification_name}"
+  Body Template          : "'{certification_name}' expires on {expiry_date}
+                            (7 days). Renew immediately to avoid lapse."
+  Type                   : warning
+  App Filter Tag         : training
+  Web Push               : Y
+
+  Event Key              : certification_expired
+  Trigger Condition      : Daily CRON — expiry_date has passed
+  Recipients             : Employee, reporting manager, HR Admin
+  Title Template         : "Certification Expired: {certification_name}"
+  Body Template          : "'{certification_name}' for {employee_name}
+                            expired on {expiry_date} and has not been
+                            renewed."
+  Type                   : warning
+  App Filter Tag         : training
+  Web Push               : Y
+
+  Event Key              : session_registered
+  Trigger Condition      : Employee registers for a live/virtual
+                            training session
+  Recipients             : Employee
+  Title Template         : "Session Registration Confirmed: {session_title}"
+  Body Template          : "You are registered for '{session_title}'
+                            on {session_date} at {session_time}
+                            ({location_or_link})."
+  Type                   : success
+  App Filter Tag         : training
+  Web Push               : N
+
+  Event Key              : session_reminder_1d
+  Trigger Condition      : Daily CRON — registered session is tomorrow
+  Recipients             : All registered employees
+  Title Template         : "Training Session Tomorrow: {session_title}"
+  Body Template          : "Reminder: '{session_title}' is tomorrow
+                            ({session_date}) at {session_time}.
+                            Join link: {meeting_link}."
+  Type                   : info
+  App Filter Tag         : training
+  Web Push               : Y
+
+  Event Key              : session_waitlist_promoted
+  Trigger Condition      : A spot opens in a full session and the
+                            first waitlisted employee is promoted
+  Recipients             : Promoted employee
+  Title Template         : "You're Off the Waitlist: {session_title}"
+  Body Template          : "A spot has opened up in '{session_title}'
+                            ({session_date}). You have been moved from
+                            the waitlist to registered."
+  Type                   : success
+  App Filter Tag         : training
+  Web Push               : Y
+
+  Event Key              : compliance_overdue_employee
+  Trigger Condition      : Integration 24 — mandatory course overdue
+                            > 14 days
+  Recipients             : Employee
+  Title Template         : "Mandatory Training Compliance Overdue"
+  Body Template          : "'{course_name}' is {days_overdue} days overdue.
+                            This is a mandatory compliance requirement.
+                            Please complete it immediately."
+  Type                   : warning
+  App Filter Tag         : training
+  Web Push               : Y
+
+  Event Key              : compliance_overdue_manager
+  Trigger Condition      : Same as above — fires to manager
+  Recipients             : Reporting manager
+  Title Template         : "Team Compliance Alert: {employee_name} Overdue"
+  Body Template          : "{employee_name} is {days_overdue} days overdue
+                            on mandatory training: '{course_name}'.
+                            Please follow up."
+  Type                   : warning
+  App Filter Tag         : training
+  Web Push               : Y
+
+--------------------------------------------------------------------------------
+APP: COMMUNICATIONS
+--------------------------------------------------------------------------------
+
+  Event Key              : announcement_critical
+  Trigger Condition      : Announcement published with priority = 'critical'
+  Recipients             : All employees (or target audience)
+  Title Template         : "[URGENT] {announcement_title}"
+  Body Template          : "{body_preview} — Posted by {author_name}."
+  Type                   : action_required
+  App Filter Tag         : communications
+  Web Push               : Y
+
+  Event Key              : announcement_high
+  Trigger Condition      : Announcement published with priority = 'high'
+  Recipients             : All employees (or target audience)
+  Title Template         : "{announcement_title}"
+  Body Template          : "{body_preview} — Posted by {author_name}."
+  Type                   : info
+  App Filter Tag         : communications
+  Web Push               : N (in-app notification + dashboard strip)
+
+  Event Key              : event_reminder_1d
+  Trigger Condition      : Daily CRON — company event is tomorrow and
+                            employee is in the audience
+  Recipients             : Target audience employees
+  Title Template         : "Event Tomorrow: {event_title}"
+  Body Template          : "Reminder: '{event_title}' is tomorrow
+                            ({event_date}) at {event_time}.
+                            Location/Link: {venue_or_link}."
+  Type                   : info
+  App Filter Tag         : communications
+  Web Push               : Y
+
+  Event Key              : event_reminder_1h
+  Trigger Condition      : CRON — company event starts in 1 hour
+  Recipients             : Registered/target employees
+  Title Template         : "Starting in 1 Hour: {event_title}"
+  Body Template          : "'{event_title}' starts in 1 hour at
+                            {event_time}. {meeting_link_if_virtual}."
+  Type                   : info
+  App Filter Tag         : communications
+  Web Push               : Y
+
+  Event Key              : poll_closing_24h
+  Trigger Condition      : A published poll's closing_date is 24 hours away
+                            and the employee has not voted
+  Recipients             : All employees in poll audience who haven't voted
+  Title Template         : "Poll Closing Tomorrow: {poll_question}"
+  Body Template          : "'{poll_question}' closes tomorrow. Cast your
+                            vote before it closes."
+  Type                   : info
+  App Filter Tag         : communications
+  Web Push               : N
+
+  Event Key              : mention_in_post
+  Trigger Condition      : A Communications post body contains @{username}
+  Recipients             : Mentioned user
+  Title Template         : "{author_name} Mentioned You in a Post"
+  Body Template          : "{author_name} mentioned you in:
+                            '{post_title_or_preview}'"
+  Type                   : info
+  App Filter Tag         : communications
+  Web Push               : Y
+
+  Event Key              : mention_in_comment
+  Trigger Condition      : A comment on a Communications post contains
+                            @{username}
+  Recipients             : Mentioned user
+  Title Template         : "{commenter_name} Mentioned You in a Comment"
+  Body Template          : "{commenter_name} mentioned you in a comment
+                            on '{post_title}': '{comment_preview}'"
+  Type                   : info
+  App Filter Tag         : communications
+  Web Push               : Y
+
+  Event Key              : recognition_received_comms
+  Trigger Condition      : Integration 11 — recognition post published
+                            in Communications feed
+  Recipients             : Recognition receiver + feed
+  Title Template         : "{giver_name} Recognized You!"
+  Body Template          : "You received a {badge_type} recognition from
+                            {giver_name}: '{message_preview}'"
+  Type                   : success
+  App Filter Tag         : communications
+  Web Push               : Y
+
+  Event Key              : scheduled_post_published
+  Trigger Condition      : A post that was scheduled for future publication
+                            goes live (published_at = now)
+  Recipients             : Post author
+  Title Template         : "Scheduled Post Published: {post_title}"
+  Body Template          : "Your scheduled post '{post_title}' has been
+                            published and is now visible to the audience."
+  Type                   : success
+  App Filter Tag         : communications
+  Web Push               : N
+
+  Event Key              : channel_invite
+  Trigger Condition      : An employee is invited to a specific
+                            Communications channel
+  Recipients             : Invited employee
+  Title Template         : "Channel Invitation: #{channel_name}"
+  Body Template          : "{inviter_name} has invited you to join
+                            the '#{channel_name}' channel."
+  Type                   : info
+  App Filter Tag         : communications
+  Web Push               : N
+
+--------------------------------------------------------------------------------
+APP: COLLABORATION
+--------------------------------------------------------------------------------
+
+  Event Key              : direct_message_received
+  Trigger Condition      : New chat_messages row with channel_type = 'direct'
+                            and recipient is current user
+  Recipients             : DM recipient
+  Title Template         : "New Message from {sender_name}"
+  Body Template          : "{message_preview}"
+  Type                   : info
+  App Filter Tag         : collaboration
+  Web Push               : Y (if tab not focused; respects mute settings)
+
+  Event Key              : mention_in_channel
+  Trigger Condition      : Message body contains @{username} of a
+                            channel member
+  Recipients             : Mentioned user
+  Title Template         : "{sender_name} Mentioned You in #{channel_name}"
+  Body Template          : "{message_preview}"
+  Type                   : info
+  App Filter Tag         : collaboration
+  Web Push               : Y
+
+  Event Key              : channel_invite_received
+  Trigger Condition      : channel_invitations row created for user
+  Recipients             : Invited user
+  Title Template         : "Invited to Join #{channel_name}"
+  Body Template          : "{inviter_name} has invited you to join
+                            '#{channel_name}'. Click to view the channel."
+  Type                   : info
+  App Filter Tag         : collaboration
+  Web Push               : N
+
+  Event Key              : thread_reply_on_your_message
+  Trigger Condition      : A reply is added to a thread started by the user
+                            (parent_message_id = user's message)
+  Recipients             : Original message author
+  Title Template         : "{sender_name} Replied to Your Message"
+  Body Template          : "In #{channel_name}: '{reply_preview}'"
+  Type                   : info
+  App Filter Tag         : collaboration
+  Web Push               : Y (if user has thread notifications enabled)
+
+  Event Key              : new_message_channel
+  Trigger Condition      : New message posted in any channel the user is
+                            a member of (not a DM, not a mention)
+  Recipients             : Channel members
+  Title Template         : "New Activity in #{channel_name}"
+  Body Template          : "{sender_name}: '{message_preview}'"
+  Type                   : info
+  App Filter Tag         : collaboration
+  Web Push               : N (in-app badge increment only; respects per-channel
+                              notification preferences; no push for non-DM/mention
+                              general channel activity)
+
+  Event Key              : file_shared_in_channel
+  Trigger Condition      : A file is uploaded and shared in a channel
+  Recipients             : Channel members
+  Title Template         : "{sender_name} Shared a File in #{channel_name}"
+  Body Template          : "'{file_name}' was shared in #{channel_name}."
+  Type                   : info
+  App Filter Tag         : collaboration
+  Web Push               : N
+
+--------------------------------------------------------------------------------
+APP: WORKFLOW AUTOMATION
+--------------------------------------------------------------------------------
+
+  Event Key              : approval_assigned
+  Trigger Condition      : Integration 17 — a workflow step requiring
+                            approval is assigned to a user
+  Recipients             : Assigned approver
+  Title Template         : "Approval Required: {workflow_name}"
+  Body Template          : "Step '{step_name}' in '{workflow_name}' requires
+                            your approval. Deadline: {deadline}."
+  Type                   : action_required
+  App Filter Tag         : workflow
+  Web Push               : Y
+
+  Event Key              : approval_deadline_2h
+  Trigger Condition      : CRON — approval step deadline is 2 hours away
+                            and no response recorded
+  Recipients             : Assigned approver
+  Title Template         : "Approval Deadline in 2 Hours: {workflow_name}"
+  Body Template          : "You have 2 hours to respond to the approval
+                            request for '{workflow_name}' — step '{step_name}'.
+                            Please act now."
+  Type                   : warning
+  App Filter Tag         : workflow
+  Web Push               : Y
+
+  Event Key              : approval_escalated_to_you
+  Trigger Condition      : Original approver did not respond by deadline;
+                            step escalated to next-level approver
+  Recipients             : Escalation target approver
+  Title Template         : "Escalated Approval: {workflow_name}"
+  Body Template          : "The approval for '{workflow_name}' — step
+                            '{step_name}' — has been escalated to you
+                            because the original approver ({previous_approver})
+                            did not respond by the deadline."
+  Type                   : action_required
+  App Filter Tag         : workflow
+  Web Push               : Y
+
+  Event Key              : approval_response_received
+  Trigger Condition      : An approver approves or rejects a step
+  Recipients             : Workflow initiator / process owner
+  Title Template         : "Approval {Approved/Rejected}: {workflow_name}"
+  Body Template          : "{approver_name} has {approved/rejected}
+                            '{step_name}' in '{workflow_name}'.
+                            {Rejection reason if applicable.}"
+  Type                   : info
+  App Filter Tag         : workflow
+  Web Push               : N
+
+  Event Key              : workflow_instance_completed
+  Trigger Condition      : All steps in a workflow instance reach terminal
+                            'completed' state
+  Recipients             : Workflow initiator
+  Title Template         : "Workflow Completed: {workflow_name}"
+  Body Template          : "All steps in '{workflow_name}' have been
+                            completed. Final outcome: {outcome_summary}."
+  Type                   : success
+  App Filter Tag         : workflow
+  Web Push               : N
+
+  Event Key              : workflow_instance_failed
+  Trigger Condition      : A workflow step encounters an error
+                            (external API call fails, validation error, etc.)
+                            and the instance is set to 'failed'
+  Recipients             : Workflow Admin, HR Admin
+  Title Template         : "Workflow Failed: {workflow_name}"
+  Body Template          : "'{workflow_name}' (instance {instance_id}) has
+                            failed at step '{step_name}'. Error: {error_message}.
+                            Manual intervention required."
+  Type                   : error
+  App Filter Tag         : workflow
+  Web Push               : Y
+
+  Event Key              : workflow_activated
+  Trigger Condition      : A new workflow template is published/activated
+                            by the Workflow Admin
+  Recipients             : Workflow Admin team
+  Title Template         : "Workflow Activated: {workflow_name}"
+  Body Template          : "The workflow '{workflow_name}' has been
+                            activated and is now live. It will trigger
+                            on: {trigger_description}."
+  Type                   : info
+  App Filter Tag         : workflow
+  Web Push               : N
+
+  Event Key              : approval_auto_escalated_due_to_timeout
+  Trigger Condition      : Approval step timeout exceeded; system
+                            auto-advances or escalates per the workflow
+                            escalation policy
+  Recipients             : Escalation target + original approver + initiator
+  Title Template         : "Auto-Escalation: {workflow_name} — {step_name}"
+  Body Template          : "The approval step '{step_name}' in '{workflow_name}'
+                            was not responded to within {timeout_hours} hours
+                            and has been automatically escalated to
+                            {escalated_to_name}."
+  Type                   : warning
+  App Filter Tag         : workflow
+  Web Push               : Y
+
+
+================================================================================
+SUMMARY TABLE: NOTIFICATION EVENTS BY APP
+================================================================================
+
+  App                    | Total Events | Web Push Events
+  -----------------------+--------------+-----------------
+  Employee Dashboard     |     17       |      9
+  Employee Directory     |      9       |      3
+  Recruitment            |     15       |      7
+  Onboarding             |     10       |      5
+  User Management        |     10       |      4
+  Performance            |     15       |     11
+  Training               |     16       |     10
+  Communications         |     10       |      5
+  Collaboration          |      6       |      2
+  Workflow Automation    |      8       |      4
+  -----------------------+--------------+-----------------
+  TOTAL                  |    116       |     60
+
+Notes on Web Push:
+  1. Web push requires browser opt-in via the service worker permission
+     prompt. Users who have not opted in receive in-app + email fallback.
+  2. Web Push = N does not mean the event is silent — it means it uses
+     in-app bell only (or email in some cases). Review each entry for
+     the full channel specification.
+  3. All Action-Required type events should be treated as candidates for
+     web push upgrade if conversion data shows them being missed.
+  4. The push_dispatcher Edge Function routes all web push events and
+     reads per-user push_subscriptions from the database. It should
+     batch per-user when multiple events fire in quick succession
+     (< 5 seconds) to avoid push spam.
+
+================================================================================
+END OF SECTION A3 AND A4
+================================================================================

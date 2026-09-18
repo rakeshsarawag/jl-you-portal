@@ -1,0 +1,1242 @@
+================================================================================
+PORTAL SPECIFICATION — PART 3: ADVANCED FEATURES & DOCUMENTATION
+Tech Stack: React + Supabase + Tailwind CSS v4
+App Accent: #6366F1 (Indigo)
+Push Notifications: Web Push API (VAPID)
+Date: 2026-09-04
+================================================================================
+
+
+================================================================================
+APP 5: ADVANCED FEATURES
+================================================================================
+
+Current File: AdvancedFeaturesDashboard.tsx
+Current Data: ALL stored in localStorage via ReportingService — CRITICAL GAP
+Current Tabs: Reports, Templates, Integrations (no-ops), Monitoring (hardcoded static)
+Hero Section: 6 feature category cards with "Explore ->" no-op buttons
+
+KNOWN GAPS BEING FIXED:
+  G1 (HIGH)   Reports stored in localStorage — not server-side or shared
+  G2 (HIGH)   "Explore ->" buttons and integration action buttons are all no-ops
+  G3 (HIGH)   Monitoring tab shows entirely static/hardcoded data
+  G4 (MEDIUM) Template preview is no-op
+  G5 (MEDIUM) Scheduled reports stat shown but not implemented
+  G6 (HIGH)   Report "run" only updates timestamp — no actual data query
+  G7 (MEDIUM) CSV export outputs only column headers — no row data
+
+--------------------------------------------------------------------------------
+1. MIGRATION PLAN — Fix localStorage (G1)
+--------------------------------------------------------------------------------
+
+CREATE TABLE: custom_reports
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  name                  TEXT NOT NULL CHECK (length(name) BETWEEN 3 AND 100)
+  description           TEXT
+  type                  TEXT NOT NULL CHECK (type IN ('table', 'chart', 'dashboard'))
+  domain                TEXT NOT NULL  -- e.g. 'hr', 'finance', 'it', 'training'
+  metric_config         JSONB NOT NULL DEFAULT '{}'
+  filter_config         JSONB NOT NULL DEFAULT '{}'
+  is_favorite           BOOLEAN NOT NULL DEFAULT false
+  schedule              TEXT CHECK (schedule IN (NULL, 'daily', 'weekly', 'monthly', 'custom'))
+  schedule_time         TEXT  -- e.g. '08:00'
+  schedule_cron         TEXT  -- for custom schedule, e.g. '0 8 * * 1'
+  schedule_recipients   TEXT[] NOT NULL DEFAULT '{}'
+  last_run_at           TIMESTAMPTZ
+  last_run_output       JSONB  -- { columns: [...], rows: [...], row_count: N }
+  run_count             INTEGER NOT NULL DEFAULT 0
+  created_by            UUID NOT NULL REFERENCES auth.users(id)
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+
+MIGRATION STEPS:
+  Step 1: Create custom_reports table and report_runs table (see Data Model section).
+  Step 2: Expose REST endpoints:
+    GET  /api/custom-reports?user_id=         -> returns user's reports
+    POST /api/custom-reports                  -> creates new report
+    PUT  /api/custom-reports/{id}             -> updates report
+    DEL  /api/custom-reports/{id}             -> deletes report
+    POST /api/custom-reports/{id}/run         -> server-side execution, returns row data
+  Step 3: Replace ReportingService.getReports() with GET /api/custom-reports?user_id=
+  Step 4: Replace ReportingService.createReport() with POST /api/custom-reports
+  Step 5: Replace ReportingService.runReport(id) with POST /api/custom-reports/{id}/run
+  Step 6: On POST /{id}/run — server queries the report's domain API using filter_config,
+          returns { columns, rows, run_at, row_count } and stores in last_run_output (max 1000 rows)
+  Step 7: Migrate any existing localStorage reports to DB on first user login
+          (check localStorage key 'custom_reports', POST each to API, then clear localStorage)
+
+--------------------------------------------------------------------------------
+2. FEATURE ENHANCEMENTS
+--------------------------------------------------------------------------------
+
+--- 2A. LIVE SYSTEM MONITORING (Fix G3) ---
+
+Replace all static/hardcoded monitoring data with real metrics.
+
+METRICS TO COLLECT:
+  - API Response Time (ms): logged by each Edge Function into monitoring_metrics on every invocation
+  - Error Rate (%): count HTTP 5xx responses in monitoring_metrics in last 60 minutes
+  - Active Users (count): count Supabase auth sessions active in last 15 minutes
+  - Database Connections (count): pg_stat_activity count — visible to admin role only
+  - Memory Usage (% or MB): if hosted on VPS/dedicated server, returned by /api/server-metrics;
+    for Supabase-hosted deployments, show Supabase project quota usage from Supabase Management API
+  - Storage Usage (GB): Supabase Storage bucket total usage
+
+METRIC COLLECTION:
+  - Each Supabase Edge Function logs its own response time at the end of execution:
+      INSERT INTO monitoring_metrics (metric_name, value, unit, status, timestamp)
+      VALUES ('api_response_time', <ms>, 'ms', <derived_status>, now())
+  - A separate health-check Edge Function runs every 60 seconds (scheduled):
+      Collects: active users, DB connections, storage usage
+      Inserts a batch of rows into monitoring_metrics
+
+THRESHOLDS (configurable in Master Data: MONITORING_THRESHOLDS):
+  API Response Time:  warning > 500ms    critical > 2000ms
+  Error Rate:         warning > 1%       critical > 5%
+  Active Users:       informational only (no threshold)
+  DB Connections:     warning > 80       critical > 100
+  Memory Usage:       warning > 70%      critical > 90%
+  Storage Usage:      warning > 80%      critical > 95%
+
+STATUS DERIVATION:
+  healthy  = below warning threshold
+  warning  = at or above warning, below critical
+  critical = at or above critical threshold
+
+UI BEHAVIOR:
+  Auto-refresh: polling every 60 seconds (not Realtime; polling is correct for monitoring)
+  Display: countdown "Refreshing in 45s" shown in top-right of Monitoring tab
+  Manual refresh: [Refresh Now] button resets countdown and immediately re-fetches
+  Each metric shows: current value, status badge (green/yellow/red), sparkline of last 24 readings
+  Gauge style: semi-circle gauge with needle, colored by status
+  Recent Events log: last 50 monitoring_metrics rows, columns: Timestamp | Metric | Value | Status | Details link
+
+--- 2B. INTEGRATIONS HUB (Fix G2 — make functional) ---
+
+INTEGRATION REGISTRY (Master Data: INTEGRATIONS — see Master Data Config section)
+
+INTEGRATION STATES:
+  Not Connected  -> gray badge
+  Connected      -> green badge, shows last_synced timestamp
+  Error          -> red badge, shows error message with [Retry] button
+  Suspended      -> yellow badge (manually suspended by admin)
+
+AVAILABLE INTEGRATIONS:
+
+  1. Slack
+     auth_type: webhook_url
+     config: { webhook_url: string, channel: string, notify_on: string[] }
+     sends: workflow events, notification events to configured Slack channel
+     test: POST test message to webhook URL
+
+  2. Microsoft Teams
+     auth_type: webhook_url
+     config: { webhook_url: string, notify_on: string[] }
+     sends: same event types as Slack
+     test: POST Adaptive Card test message
+
+  3. Google Workspace
+     auth_type: oauth2
+     config: { client_id, client_secret, scope: ['calendar', 'meet'] }
+     features: sync employee calendar events, generate Google Meet links for interviews
+     test: GET /calendar/v3/calendars/primary to verify token
+
+  4. Microsoft 365
+     auth_type: oauth2
+     config: { tenant_id, client_id, client_secret, scope: ['Calendars.ReadWrite', 'OnlineMeetings.ReadWrite'] }
+     features: similar to Google Workspace
+     test: GET /v1.0/me to verify token
+
+  5. WhatsApp Business
+     auth_type: api_key
+     config: { api_key: string, phone_number_id: string, template_namespace: string }
+     sends: notification events via WhatsApp message templates
+     test: send test template message to admin phone number
+
+  6. Custom Webhook
+     auth_type: none (or bearer_token)
+     config: { url: string (HTTPS required), method: 'POST', headers: object, secret: string }
+     sends: any configured portal event as JSON POST
+     test: POST { event: 'test', timestamp: ISO } to the URL, expect 2xx
+
+  7. Email SMTP
+     auth_type: credentials
+     config: { host, port, secure: boolean, username, password, from_name, from_email }
+     replaces: Supabase default email for outgoing notifications
+     test: send test email to admin email address
+
+  8. AWS S3
+     auth_type: access_key
+     config: { access_key_id, secret_access_key, region, bucket_name, path_prefix }
+     replaces: Supabase Storage for file uploads/exports
+     test: PUT + DELETE a small test object in the bucket
+
+  9. Azure Blob Storage
+     auth_type: connection_string
+     config: { connection_string, container_name, path_prefix }
+     replaces: Supabase Storage for file uploads/exports
+     test: upload + delete a small test blob
+
+CONNECT FLOW (step-by-step):
+  1. User clicks [Connect] on integration card
+  2. Modal opens:
+     - OAuth2 integrations: redirect to provider OAuth consent screen;
+       on callback, store encrypted tokens in integrations_config.credentials
+     - Webhook/API key integrations: show credential form with labeled fields
+  3. After credential entry, user must click [Test Connection]
+     - POST /api/integrations/{integration_id}/test
+     - Returns: { success: boolean, message: string, latency_ms: number }
+  4. If test passes: [Save & Connect] button becomes active
+  5. On save: upsert row in integrations_config with status = 'connected'
+  6. Confirmation toast + push notification: "integration_connected"
+
+CONNECTED INTEGRATION CARD ACTIONS:
+  [Configure]         -> re-open credential/config form pre-filled
+  [Test Connection]   -> re-run test, update last_tested_at
+  [Disconnect]        -> confirmation dialog -> set status = 'disconnected', clear credentials
+  Last synced: <timestamp> shown below integration name
+
+INTEGRATION EVENT LOG:
+  Per integration: last 50 events from integration_events table
+  Columns: Timestamp | Direction (In/Out) | Event Type | Status | Payload Preview | [Details]
+  [Details] -> modal showing full payload (redacted secrets)
+
+--- 2C. REPORT BUILDER — PROPER EXECUTION (Fix G6, G7) ---
+
+REPORT RUN FLOW:
+  1. User clicks [Run] on a report card
+  2. POST /api/custom-reports/{id}/run
+  3. Server-side Edge Function:
+     a. Loads report's domain + filter_config + metric_config
+     b. Queries the appropriate domain API (e.g., HR API for employee metrics)
+     c. Applies filters from filter_config
+     d. Returns: { columns: [...], rows: [...], run_at: ISO, row_count: N }
+     e. Stores result in custom_reports.last_run_output (truncated to 1000 rows max)
+     f. Inserts row into report_runs table
+     g. Updates custom_reports.last_run_at and run_count
+  4. Client receives result, displays DataTable inline below the report card
+  5. Push notification (in-app): "report_ready" -> report creator
+
+EXPORT:
+  CSV:   proper rows from last_run_output.rows, comma-separated with quoted strings; includes header row
+  Excel: SheetJS (xlsx library) binary format; each column typed correctly (numbers as numbers)
+  PDF:   open browser print dialog scoped to the data table div (CSS @media print), or
+         POST /api/custom-reports/{id}/export?format=pdf -> puppeteer-generated PDF -> download URL
+
+DATA TABLE DISPLAY:
+  White card, full width, below report card
+  Column headers bold, sticky on scroll
+  Alternating row shading (gray-50 / white)
+  Row count displayed: "Showing {N} rows" (or "Showing 1,000 of {total} — export for full data")
+  [Download] button in table header row
+
+--- 2D. REPORT SCHEDULING (Fix G5) ---
+
+PER-REPORT SCHEDULE UI:
+  [Schedule v] dropdown button on report card
+  Options:
+    - Daily — 8:00 AM (default time, configurable)
+    - Weekly — Monday 9:00 AM (default, configurable day + time)
+    - Monthly — 1st of month, 9:00 AM
+    - Custom cron — text input for cron expression (power users)
+    - Remove Schedule
+
+  On selecting a schedule option:
+    Modal: "Schedule Report"
+      - Confirm schedule: "Every Monday at 9:00 AM"
+      - Recipients (required): multi-email input, min 1 valid email
+      - [Save Schedule] -> updates custom_reports.schedule, schedule_time, schedule_cron, schedule_recipients
+
+CRON EDGE FUNCTION (runs every minute, checks for due reports):
+  SELECT * FROM custom_reports WHERE schedule IS NOT NULL AND next_run_at <= now()
+  For each due report:
+    1. Run the report (same as POST /{id}/run)
+    2. Format email: HTML summary table (first 20 rows) + CSV attachment (full data)
+    3. Send email to each schedule_recipient via Supabase email (or SMTP integration if configured)
+    4. Update next_run_at based on schedule
+    5. Insert into report_runs with status = 'scheduled'
+    6. Push notification: "scheduled_report_sent" -> report creator
+
+REPORT CARD SCHEDULE INDICATOR:
+  Schedule chip: "Daily 8AM" / "Weekly Mon" / "Monthly 1st"
+  Next run hint: "Next run: Tomorrow at 8:00 AM"
+
+--- 2E. SMART SEARCH (New Feature — previously a no-op hero card) ---
+
+ENTRY POINT:
+  Global search bar in Advanced Features hero section
+  Keyboard shortcut: Cmd+K (Mac) / Ctrl+K (Windows) -> opens search modal from ANY app in the portal
+
+SEARCH SCOPE (queries across all app entities):
+  - employees         (HR app)
+  - tasks             (Task Management app)
+  - projects          (Project Management app)
+  - defects           (Defect Tracking app)
+  - invoices          (Finance app)
+  - IT tickets        (IT Service Management app)
+  - training courses  (Training app)
+  - announcements     (Communications app)
+  - documents         (Document Management app)
+
+IMPLEMENTATION:
+  Full-text search using Supabase pg_tsvector columns on each key table
+  Each table has: ALTER TABLE <table> ADD COLUMN search_vector tsvector GENERATED ALWAYS AS (...) STORED;
+  Supabase Edge Function: POST /api/search { query: string, scopes?: string[] }
+    -> parallel queries across all scoped tables using to_tsquery()
+    -> returns { results: [ { entity_type, id, title, preview, route, score } ] }
+    -> sorted by rank (ts_rank) within each entity type group
+
+RESULTS UI:
+  Grouped by entity type: "Employees (3)", "IT Tickets (2)", "Training Courses (5)"
+  Each result: icon chip + title bold + 1-line preview text
+  Click result: navigate to entity in source app (uses route from search result)
+  No results: "No results for '{query}'" with suggested corrections
+
+RATE LIMIT:
+  10 requests per minute per user (enforced in Edge Function via sliding window in Redis or Supabase KV)
+  Min query length: 3 characters (enforced client-side and server-side)
+
+--- 2F. AUTOMATION STUDIO (New Feature — previously a no-op hero card) ---
+
+PURPOSE:
+  Visual interface for creating and managing automations that map to the Workflow Automation app's templates.
+
+LAYOUT:
+  Left panel: Automation list (search + [+ Create Automation] button)
+  Right panel: Automation detail / builder canvas
+
+CREATE AUTOMATION WIZARD (3-step modal):
+  Step 1 — Choose Trigger:
+    - New Employee Joined (HR)
+    - Invoice Overdue (Finance)
+    - IT Ticket SLA Breached (ITSM)
+    - OKR Check-In Missed (OKR app)
+    - Task Overdue (Task Management)
+    - Custom Event (webhook / manual trigger)
+
+  Step 2 — Choose Actions (one or more, ordered):
+    - Assign Task (Task Management)
+    - Send Email Notification
+    - Send Push Notification
+    - Create IT Ticket
+    - Enroll in Training Course
+    - Forward to Slack / Teams (if integration connected)
+    - Call Webhook (Custom Webhook integration)
+
+  Step 3 — Configure + Name:
+    - Name the automation
+    - Configure each action's parameters (e.g., task template, email template, training course)
+    - Enable / Disable toggle
+    - [Save Automation] -> POST /api/workflows/automations
+
+PRE-BUILT RECIPES (shown as template cards on empty state):
+  1. "New Hire Onboarding"
+     Trigger: New Employee Joined
+     Actions: Assign Laptop Request IT Ticket -> Enroll in Onboarding Training -> Send Welcome Email
+     Maps to: New Hire Onboarding workflow template
+
+  2. "Overdue Invoice Reminder"
+     Trigger: Invoice Overdue (by 7 days)
+     Actions: Send Email Reminder to Client -> Notify Finance Manager -> Create follow-up Task
+
+  3. "SLA Breach Escalation"
+     Trigger: IT Ticket SLA Breached
+     Actions: Send Push Notification to IT Manager -> Update Ticket Priority to Critical -> Forward to Slack
+
+  4. "OKR Check-In Reminder"
+     Trigger: OKR Check-In Missed (weekly)
+     Actions: Send Push Notification to Owner -> Send Email Reminder
+
+AUTOMATION LIST VIEW:
+  Name | Trigger | Actions count | Status (Active/Inactive) | Last Triggered | [Edit] [Enable/Disable] [Delete]
+
+--------------------------------------------------------------------------------
+3. DATA MODEL
+--------------------------------------------------------------------------------
+
+TABLE: custom_reports
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  name                  TEXT NOT NULL CHECK (length(name) BETWEEN 3 AND 100)
+  description           TEXT
+  type                  TEXT NOT NULL CHECK (type IN ('table', 'chart', 'dashboard'))
+  domain                TEXT NOT NULL
+  metric_config         JSONB NOT NULL DEFAULT '{}'
+  filter_config         JSONB NOT NULL DEFAULT '{}'
+  is_favorite           BOOLEAN NOT NULL DEFAULT false
+  schedule              TEXT CHECK (schedule IN ('daily', 'weekly', 'monthly', 'custom'))
+  schedule_time         TEXT
+  schedule_cron         TEXT
+  schedule_recipients   TEXT[] NOT NULL DEFAULT '{}'
+  next_run_at           TIMESTAMPTZ
+  last_run_at           TIMESTAMPTZ
+  last_run_output       JSONB
+  run_count             INTEGER NOT NULL DEFAULT 0
+  created_by            UUID NOT NULL REFERENCES auth.users(id)
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+
+  CONSTRAINTS:
+    UNIQUE (name, created_by)  -- report names unique per user
+
+TABLE: report_runs
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  report_id             UUID NOT NULL REFERENCES custom_reports(id) ON DELETE CASCADE
+  run_at                TIMESTAMPTZ NOT NULL DEFAULT now()
+  run_by                UUID REFERENCES auth.users(id)  -- NULL if scheduled
+  trigger               TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled'))
+  status                TEXT NOT NULL CHECK (status IN ('running', 'success', 'error'))
+  row_count             INTEGER
+  output_url            TEXT  -- for large outputs stored in Supabase Storage
+  error_message         TEXT
+
+TABLE: monitoring_metrics
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  metric_name           TEXT NOT NULL  -- e.g. 'api_response_time', 'error_rate', 'active_users'
+  value                 NUMERIC NOT NULL
+  unit                  TEXT NOT NULL  -- e.g. 'ms', '%', 'count', 'GB'
+  status                TEXT NOT NULL CHECK (status IN ('healthy', 'warning', 'critical'))
+  source                TEXT  -- e.g. 'edge_function_name', 'health_check', 'server_metrics'
+  timestamp             TIMESTAMPTZ NOT NULL DEFAULT now()
+
+  INDEX: (metric_name, timestamp DESC)
+
+TABLE: integrations_config
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  integration_id        TEXT NOT NULL  -- foreign key to INTEGRATIONS master data
+  workspace_id          UUID NOT NULL  -- tenant/workspace identifier
+  credentials           JSONB  -- encrypted at rest via Supabase Vault; never returned to client
+  status                TEXT NOT NULL CHECK (status IN ('connected', 'disconnected', 'error', 'suspended'))
+  last_tested_at        TIMESTAMPTZ
+  last_synced_at        TIMESTAMPTZ
+  config                JSONB NOT NULL DEFAULT '{}'  -- non-sensitive config (channel names, etc.)
+  error_message         TEXT
+  created_by            UUID NOT NULL REFERENCES auth.users(id)
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+
+  CONSTRAINTS:
+    UNIQUE (integration_id, workspace_id)
+
+TABLE: integration_events
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  integration_id        TEXT NOT NULL
+  workspace_id          UUID NOT NULL
+  direction             TEXT NOT NULL CHECK (direction IN ('outbound', 'inbound'))
+  event_type            TEXT NOT NULL  -- e.g. 'notification_sent', 'calendar_sync', 'test_connection'
+  payload_preview       TEXT  -- first 500 chars of payload, secrets redacted
+  status                TEXT NOT NULL CHECK (status IN ('success', 'error', 'pending'))
+  http_status           INTEGER
+  error_message         TEXT
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+
+  INDEX: (integration_id, workspace_id, created_at DESC)
+  -- retain only last 1000 events per integration (handled by cleanup cron or trigger)
+
+--------------------------------------------------------------------------------
+4. MASTER DATA CONFIG
+--------------------------------------------------------------------------------
+
+MONITORING_THRESHOLDS (table or JSONB config in master_data):
+  Fields: metric_name | warning_value | critical_value | unit | description
+  Default rows:
+    api_response_time  | 500   | 2000 | ms      | API response time in milliseconds
+    error_rate         | 1     | 5    | %        | Percentage of 5xx responses in last hour
+    active_users       | NULL  | NULL | count    | Informational only
+    db_connections     | 80    | 100  | count    | Active database connections (admin only)
+    memory_usage       | 70    | 90   | %        | Server memory usage percentage
+    storage_usage      | 80    | 95   | %        | Storage bucket usage percentage
+  Editable by: Admin role via Master Data app
+
+INTEGRATIONS (table or JSONB in master_data):
+  Fields: integration_id | name | type | icon_url | auth_type | config_schema (JSONB) | documentation_url | is_available
+  Pre-populated with the 9 integrations listed above
+  is_available: can be toggled false to hide an integration from the UI (e.g., not licensed)
+  Editable by: Admin role via Master Data app
+
+REPORT_TEMPLATES (table or JSONB in master_data):
+  Fields: template_id | name | category | description | default_domain | default_metrics (JSONB) | preview_image_url
+  Pre-populated with common report templates per domain
+  Editable by: Admin role via Master Data app
+
+--------------------------------------------------------------------------------
+5. VALIDATION RULES
+--------------------------------------------------------------------------------
+
+Report Name:
+  - Required
+  - Min 3 chars, max 100 chars
+  - Must be unique per user (enforced by DB UNIQUE constraint + API 409 response)
+
+Scheduled Report Recipients:
+  - At least 1 recipient required if schedule is set
+  - Each recipient must be a valid email format (RFC 5322)
+  - Max 50 recipients per report
+
+Custom Webhook URL:
+  - Must be a valid URL (parseable by URL constructor)
+  - Must use HTTPS scheme (no HTTP)
+  - Must not resolve to private IP ranges (SSRF protection in Edge Function)
+
+Integration "Test Connection":
+  - Must successfully pass before [Save & Connect] is available
+  - Test result is time-limited: re-test required if more than 5 minutes since last test
+
+Report Run Output:
+  - Max 1000 rows stored in last_run_output JSONB
+  - If total rows > 1000: store first 1000 in DB, full dataset written to Supabase Storage as CSV
+    and output_url stored in report_runs.output_url
+  - Larger datasets require export (CSV/Excel/PDF) to access all rows
+
+Smart Search:
+  - Min 3 characters in query (enforced client-side and server-side)
+  - Rate limit: 10 requests per minute per user (sliding window)
+  - Max 50 results returned per entity type, max 200 total results per query
+
+--------------------------------------------------------------------------------
+6. CROSS-APP INTEGRATIONS
+--------------------------------------------------------------------------------
+
+Advanced Features -> All Apps:
+  Smart Search queries all app data sources; results link directly to the entity in the source app
+
+Advanced Features -> Workflow Automation:
+  Automation Studio creates and manages automations stored in the Workflow Automation app's data model
+  GET /api/workflows/automations -> lists automations created via Automation Studio
+  POST /api/workflows/automations -> creates new automation
+
+Advanced Features -> Security:
+  All report exports (CSV, Excel, PDF) are logged as audit events
+  All integration connect/disconnect actions are logged as audit events
+  Audit log payload: { user_id, action, entity_type, entity_id, metadata, timestamp }
+
+Advanced Features -> Notifications Bell:
+  Events that generate in-app notifications (via notification_events table):
+    report_ready, scheduled_report_sent, integration_error, integration_connected,
+    monitoring_critical, monitoring_warning
+
+Integrations (Slack/Teams/WhatsApp) -> All Apps:
+  Notification events from all portal apps can be forwarded to external channels
+  Each integration's notify_on config field controls which event types are forwarded
+  Event forwarding handled by: notification delivery Edge Function that checks active integrations
+
+Advanced Features -> Analytics:
+  Custom reports can reference Analytics API endpoints as their domain
+  Analytics domain reports query the same underlying data as the Analytics app dashboards
+
+--------------------------------------------------------------------------------
+7. PUSH NOTIFICATIONS
+--------------------------------------------------------------------------------
+
+report_ready:
+  recipient:  report creator
+  channel:    in-app
+  type:       info
+  title:      "Report Ready"
+  body:       "Your report '{name}' is ready — {N} rows"
+  action_url: /advanced-features/reports/{id}
+
+scheduled_report_sent:
+  recipient:  report creator
+  channel:    in-app
+  type:       info
+  title:      "Scheduled Report Sent"
+  body:       "Scheduled report '{name}' sent to {N} recipients"
+  action_url: /advanced-features/reports/{id}
+
+integration_error:
+  recipient:  admin users
+  channel:    in-app + web push
+  type:       warning
+  title:      "Integration Error"
+  body:       "{integration_name} integration error: {error_message}"
+  action_url: /advanced-features/integrations
+
+integration_connected:
+  recipient:  user who initiated the connection
+  channel:    in-app
+  type:       success
+  title:      "Integration Connected"
+  body:       "{integration_name} connected successfully"
+  action_url: /advanced-features/integrations
+
+monitoring_critical:
+  recipient:  admin users
+  channel:    web push (high priority)
+  type:       critical
+  title:      "System Alert"
+  body:       "System alert: {metric_name} is critical — {value}{unit}"
+  action_url: /advanced-features/monitoring
+
+monitoring_warning:
+  recipient:  admin users
+  channel:    in-app
+  type:       warning
+  title:      "System Warning"
+  body:       "System warning: {metric_name} is {value}{unit} (warning threshold)"
+  action_url: /advanced-features/monitoring
+
+--------------------------------------------------------------------------------
+8. FIGMA PROMPT — APP 5: ADVANCED FEATURES
+--------------------------------------------------------------------------------
+
+Design Advanced Features Dashboard at 1440x900px, indigo (#6366F1) accent.
+
+LAYOUT:
+  Full-width layout. Sidebar 240px (shared portal nav). Content area 1200px.
+
+HERO SECTION (full-width banner, indigo gradient left-to-right #6366F1 -> #4F46E5, height 120px):
+  Left: "Advanced Features" H1 white 32px bold
+        "Powerful tools for reporting, automation, and integrations" subtitle white/80 16px
+  Right: 6 tab chips (rounded pill, white/20 bg, white text 13px, hover: white/30):
+    [Reports] [Integrations] [Monitoring] [Automation] [Smart Search] [Templates]
+  Each chip scrolls to / activates its tab
+
+TABS (sticky below hero, white bg, border-bottom gray-200):
+  Tab items: Reports | Templates | Integrations | Monitoring | Automation Studio | Smart Search
+  Active tab: indigo underline 2px, indigo text; inactive: gray-600
+
+---- REPORTS TAB ----
+
+Stats Row (4 mini-cards, white bg, border, radius-8, padding 16px, gap 16px):
+  [Total Reports: 12]  [Favorites: 4 ★]  [Scheduled: 3 📅]  [Recently Run: 5]
+  Each card: number 28px bold gray-900 + label 12px gray-500
+
+Toolbar (flex row, gap 12px, margin-top 20px):
+  Search input 320px: "Search reports..." with magnifier icon
+  Spacer (flex-grow)
+  [Schedule v] secondary button (gray outline)
+  [+ Create Report] primary button indigo (#6366F1) white text
+
+Report Cards Grid (3 columns, gap 16px, margin-top 16px):
+  ReportCard (white, border gray-200, radius-12, padding 20px, hover shadow-md):
+    Top row: ★ favorite toggle (gray default, yellow filled) | flex-grow | type chip (Table: blue / Chart: purple / Dashboard: indigo)
+    Name: 16px bold gray-900
+    Description: 14px gray-500, 1 line truncate
+    Meta row: "Last run: Apr 8, 2026" 12px gray-400 | schedule chip if set (e.g. "Daily 8AM" indigo/10 bg indigo text)
+    Next run hint (if scheduled): "Next run: Tomorrow at 8:00 AM" 11px indigo
+    Action row (border-top gray-100, padding-top 12px, flex gap 8px):
+      [Run ▶] indigo small button
+      [Edit] gray ghost small button
+      [Export v] gray ghost small button with dropdown: CSV | Excel | PDF
+      [Delete] red ghost small button (icon only: trash)
+
+Report Output View (white card, full width, below report card grid, visible after Run):
+  Header: "Report: {name}" bold | "Showing {N} rows" gray | [Download CSV] button right
+  DataTable:
+    Column headers: 12px uppercase gray-500, sticky, border-bottom
+    Rows: alternating white / gray-50, 14px gray-900, 44px row height
+    If row_count > 1000: banner "Showing 1,000 of {total} rows — export for full data"
+
+---- INTEGRATIONS TAB ----
+
+Integration Cards Grid (3 columns, gap 16px):
+  IntegrationCard (white, border, radius-12, padding 20px):
+    Logo: 64px square rounded-12, gray-100 bg (placeholder letter avatar in brand color)
+    Name: 16px bold gray-900
+    Type chip: 12px (Communication / Calendar / Storage / Webhook / Email)
+    Status badge (top-right): Connected (green dot + "Connected") | Not Connected (gray) | Error (red) | Suspended (yellow)
+
+    Connected state:
+      "Last synced: 5 min ago" 12px gray-500
+      Button row: [Configure] ghost | [Test] ghost | [Disconnect] red ghost
+
+    Not Connected state:
+      [Connect ->] indigo primary button full width
+
+    Error state:
+      Error message: 12px red-600 italic (truncated 1 line)
+      [Retry] indigo button | [Disconnect] red ghost
+
+---- MONITORING TAB ----
+
+Section Header: "System Health" 20px bold | [Refresh Now] gray button | "Refreshing in 45s" 13px gray-500 (countdown)
+
+System Health Card (white, border, radius-12, padding 24px):
+  4 metric gauges in a row (flex, gap 24px):
+    MetricGauge:
+      Semi-circle SVG gauge (180deg arc), needle pointing to current value
+      Colors: green (#22C55E) healthy | yellow (#EAB308) warning | red (#EF4444) critical
+      Value: 24px bold gray-900 centered below gauge
+      Unit: 12px gray-500
+      Label: 14px gray-600
+      Examples:
+        API Response Time | 78ms | green
+        Error Rate        | 0.2% | green
+        Active Users      | 24   | blue (informational)
+        DB Load           | 45%  | yellow
+
+Recent Events Log (white card, border, radius-12, padding 0 — table inside):
+  Table header: Timestamp | Metric | Value | Status | Details
+  Rows (alternating): 14px, 44px height
+  Status chip: healthy (green/10 bg green text) | warning (yellow) | critical (red)
+  [Details] link: indigo small text link
+
+---- AUTOMATION STUDIO TAB ----
+
+Left panel (280px, white, border-right, full height):
+  "My Automations" 16px bold
+  Search input
+  [+ Create Automation] indigo button
+  Automation list items: name | status toggle | chevron-right
+
+Right panel (flex-1, gray-50 bg):
+  Empty state: illustration + "Create your first automation" + [+ Create Automation] indigo button
+  Recipe cards (3-col grid): name | trigger chip | actions count | [Use Template] button
+
+Create Automation Modal (600px wide, 3-step wizard):
+  Step indicators: 1 Trigger -> 2 Actions -> 3 Configure
+  Each step: title + description cards to select from
+  Step 3: form fields for each action's parameters + name input + [Save Automation] indigo button
+
+---- SMART SEARCH TAB ----
+
+Centered layout (max-width 720px):
+  Large search input (56px height, 100% width, shadow-lg):
+    Magnifier icon left | "Search employees, tasks, tickets..." placeholder | Cmd+K badge right
+  Scope filter pills below: [All] [Employees] [Tasks] [Tickets] [Invoices] [Courses] [Documents]
+  Results:
+    Grouped sections: "Employees (3)", "IT Tickets (2)"
+    Result item: entity icon | title bold | preview text gray | entity type chip | arrow-right
+  Empty state: "Type at least 3 characters to search"
+  No results: "No results for '{query}'"
+
+================================================================================
+APP 6: DOCUMENTATION
+================================================================================
+
+Current File: UserDocumentationEnhanced.tsx
+Current Data: ALL content hardcoded in appDocumentation array — no CMS
+Current Views: app list grid -> app detail (Quick Start, Features, FAQs, Guides)
+
+KNOWN GAPS BEING FIXED:
+  G1 (HIGH)   All 22 app docs are hardcoded — no admin edit interface
+  G2 (MEDIUM) Video tutorial placeholders never link to real content
+  G3 (MEDIUM) Download Guide / Download PDF non-functional
+  G4 (LOW)    No i18n via t()
+  G5 (LOW)    No search within single app detail
+  G6 (LOW)    No standardized content schema
+
+--------------------------------------------------------------------------------
+1. MIGRATION PLAN — CMS-Backed Documentation
+--------------------------------------------------------------------------------
+
+CREATE TABLE: doc_apps
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  name                  TEXT NOT NULL
+  icon                  TEXT NOT NULL  -- emoji or icon name/URL
+  description           TEXT NOT NULL
+  route                 TEXT NOT NULL  -- e.g. '/hr', '/finance'
+  role_access           TEXT[] NOT NULL DEFAULT '{}'  -- empty = all roles
+  sort_order            INTEGER NOT NULL DEFAULT 0
+  is_active             BOOLEAN NOT NULL DEFAULT true
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+
+CREATE TABLE: doc_sections
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  app_id                UUID NOT NULL REFERENCES doc_apps(id) ON DELETE CASCADE
+  section_type          TEXT NOT NULL CHECK (section_type IN ('quickstart', 'feature', 'faq', 'guide', 'video'))
+  title                 TEXT NOT NULL
+  content               JSONB NOT NULL DEFAULT '{}'  -- rich text as ProseMirror/TipTap JSON
+  sort_order            INTEGER NOT NULL DEFAULT 0
+  required_role         TEXT  -- NULL = visible to all
+  status                TEXT NOT NULL CHECK (status IN ('published', 'draft')) DEFAULT 'draft'
+  view_count            INTEGER NOT NULL DEFAULT 0
+  is_active             BOOLEAN NOT NULL DEFAULT true
+  created_by            UUID REFERENCES auth.users(id)
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+
+CREATE TABLE: doc_quick_steps
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  app_id                UUID NOT NULL REFERENCES doc_apps(id) ON DELETE CASCADE
+  step_number           INTEGER NOT NULL
+  title                 TEXT NOT NULL
+  description           TEXT NOT NULL
+  screenshot_url        TEXT  -- Supabase Storage: doc-images bucket
+  is_active             BOOLEAN NOT NULL DEFAULT true
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+
+  CONSTRAINTS:
+    UNIQUE (app_id, step_number)
+    CHECK (step_number BETWEEN 1 AND 20)
+
+CREATE TABLE: doc_faqs
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  app_id                UUID NOT NULL REFERENCES doc_apps(id) ON DELETE CASCADE
+  category              TEXT NOT NULL CHECK (category IN ('basic', 'technical', 'troubleshooting'))
+  question              TEXT NOT NULL CHECK (length(question) >= 10)
+  answer                TEXT NOT NULL CHECK (length(answer) >= 20)
+  sort_order            INTEGER NOT NULL DEFAULT 0
+  status                TEXT NOT NULL CHECK (status IN ('published', 'draft')) DEFAULT 'draft'
+  is_active             BOOLEAN NOT NULL DEFAULT true
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+
+CREATE TABLE: doc_videos
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  app_id                UUID NOT NULL REFERENCES doc_apps(id) ON DELETE CASCADE
+  title                 TEXT NOT NULL
+  youtube_url           TEXT  -- validated as YouTube or Vimeo URL
+  vimeo_url             TEXT
+  thumbnail_url         TEXT
+  duration_mins         NUMERIC(5,1)
+  sort_order            INTEGER NOT NULL DEFAULT 0
+  status                TEXT NOT NULL CHECK (status IN ('published', 'draft')) DEFAULT 'draft'
+  is_active             BOOLEAN NOT NULL DEFAULT true
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+
+CREATE TABLE: doc_feedback
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  content_type          TEXT NOT NULL CHECK (content_type IN ('faq', 'section', 'quickstep', 'video'))
+  content_id            UUID NOT NULL  -- references the relevant table by content_type
+  user_id               UUID REFERENCES auth.users(id)
+  rating                INTEGER NOT NULL CHECK (rating IN (1, -1))  -- 1 = helpful, -1 = not helpful
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+
+  CONSTRAINTS:
+    UNIQUE (content_type, content_id, user_id)  -- one vote per user per item
+
+ADD SEARCH VECTORS:
+  ALTER TABLE doc_faqs ADD COLUMN search_vector tsvector GENERATED ALWAYS AS
+    (to_tsvector('english', question || ' ' || answer)) STORED;
+  CREATE INDEX doc_faqs_search_idx ON doc_faqs USING GIN(search_vector);
+
+  ALTER TABLE doc_sections ADD COLUMN search_vector tsvector GENERATED ALWAYS AS
+    (to_tsvector('english', title || ' ' || COALESCE(content->>'text', ''))) STORED;
+  CREATE INDEX doc_sections_search_idx ON doc_sections USING GIN(search_vector);
+
+  ALTER TABLE doc_quick_steps ADD COLUMN search_vector tsvector GENERATED ALWAYS AS
+    (to_tsvector('english', title || ' ' || description)) STORED;
+
+POPULATE FROM HARDCODED DATA:
+  Step 1: Write migration script to read appDocumentation array from UserDocumentationEnhanced.tsx
+  Step 2: Insert one row per app into doc_apps
+  Step 3: Insert quick steps, FAQs, features, guides into respective tables
+  Step 4: Set all migrated rows to status = 'published'
+  Step 5: Remove hardcoded appDocumentation array from component; replace with API calls
+
+API ENDPOINTS:
+  GET  /api/docs/apps                        -> list all active apps (filtered by caller's role)
+  GET  /api/docs/apps/{appId}                -> single app with metadata
+  GET  /api/docs/apps/{appId}/sections       -> all sections for app (by section_type)
+  GET  /api/docs/apps/{appId}/quicksteps     -> ordered quick steps
+  GET  /api/docs/apps/{appId}/faqs           -> FAQs (can filter by category)
+  GET  /api/docs/apps/{appId}/videos         -> video list
+  GET  /api/docs/apps/{appId}/search?q=      -> full-text search within app
+  GET  /api/docs/apps/{appId}/pdf            -> generates and returns PDF download URL
+  GET  /api/docs/apps/{appId}/guide          -> returns markdown text file download
+  POST /api/docs/feedback                    -> submit helpful/not helpful rating
+
+  ADMIN ONLY:
+  POST   /api/admin/docs/apps                -> create app doc entry
+  PUT    /api/admin/docs/apps/{appId}        -> update app doc
+  DELETE /api/admin/docs/apps/{appId}        -> soft-delete (is_active = false)
+  POST   /api/admin/docs/apps/{appId}/sections      -> create section
+  PUT    /api/admin/docs/sections/{sectionId}        -> update section
+  PUT    /api/admin/docs/quicksteps/{stepId}          -> update quick step (with screenshot upload)
+  POST   /api/admin/docs/faqs                        -> create FAQ
+  PUT    /api/admin/docs/faqs/{faqId}                -> update FAQ
+  POST   /api/admin/docs/videos                      -> create video entry
+  GET    /api/admin/docs/feedback-stats              -> content quality report
+
+--------------------------------------------------------------------------------
+2. FEATURE ENHANCEMENTS
+--------------------------------------------------------------------------------
+
+--- 2A. CMS ADMIN INTERFACE (New — Documentation Admin role only) ---
+
+ACCESS:
+  Role: Documentation Admin (new role, defined in Permissions app)
+  Entry point: "Admin" tab in Documentation app (hidden from non-admin users)
+  All CMS edits are auto-logged to Security app audit log
+
+ADMIN SIDEBAR NAVIGATION:
+  - Manage Apps (list of all doc_apps entries)
+  - Content Quality (low-rated FAQs, draft sections count)
+  - Feedback Report
+
+MANAGE APPS VIEW:
+  Table: app name | icon | route | status (active/inactive) | sections count | last updated | [Edit] [Manage Content]
+  [+ Add App] button -> modal form:
+    App name (required) | icon (emoji picker or URL) | description | route | role_access (multi-select) | sort_order
+  Drag-to-reorder: drag handles on table rows to change sort_order
+
+MANAGE CONTENT VIEW (per app):
+  Tabs: Quick Start | Features | FAQs | Guides | Videos
+  Each tab shows content items in a drag-sortable list
+  Per item: title | status badge (Published / Draft) | last updated | [Edit] [Publish/Unpublish] [Delete]
+  [+ Add Item] button opens edit panel (right-side slide-over)
+
+RICH TEXT EDITOR (for Guide sections and Features):
+  Library: TipTap (built on ProseMirror)
+  Supported formatting: H1, H2, H3 | Bold, Italic, Underline | Bullet list, Numbered list
+  Supported blocks: Quote block | Code block (syntax highlighted) | Image (upload to doc-images bucket) | Callout box (info/warning/tip)
+  Max content length: 50,000 characters per section
+  Content stored as TipTap JSON in doc_sections.content
+
+QUICK STEP EDITOR:
+  Form fields: step_number (auto-increment, editable) | title | description | screenshot upload
+  Screenshot upload: drag-and-drop or file picker -> stored in Supabase Storage: doc-images/{appId}/steps/
+  Drag-to-reorder: step cards can be dragged to reorder (updates step_number on save)
+  Validation: min 1 step, max 20 steps per app
+
+FAQ EDITOR:
+  Form fields: category (Basic/Technical/Troubleshooting) | question | answer (plain text, no rich text for FAQs)
+  Drag-to-reorder within each category
+  Publish/Draft toggle per FAQ
+
+VIDEO EDITOR:
+  Form fields: title | YouTube or Vimeo URL | thumbnail URL (or auto-fetched from YouTube API) | duration_mins
+  YouTube URL auto-detection: paste URL -> validates format -> fetches title/thumbnail via YouTube oEmbed API
+  Vimeo URL: same via Vimeo oEmbed API
+
+PREVIEW MODE:
+  [Preview] button in admin content view -> shows exact employee-facing rendering
+  Uses same React components as the public Documentation app, fed with draft data
+  Preview mode banner: "PREVIEW — Draft Content" yellow bar at top
+
+PUBLISH WORKFLOW:
+  All new/edited content starts as Draft
+  [Publish] button -> sets status = 'published'
+  Unpublish -> sets status = 'draft' (hides from public view immediately)
+  Publish triggers push notification: "new_doc_published"
+
+--- 2B. RICH CONTENT SUPPORT ---
+
+Guide Tab content renderer reads TipTap JSON and renders:
+  Headings (H1, H2, H3): styled with gray-900, decreasing sizes
+  Paragraph: 16px gray-700, line-height 1.7
+  Bullet list / numbered list: proper indentation, custom list markers in indigo
+  Inline code: monospace, indigo-50 bg, indigo-700 text, rounded-4
+  Code block: dark bg (#1E293B), syntax highlighted via Prism.js, language label top-right
+  Image: renders <img> from Supabase Storage URL, max-width 100%, rounded-8, optional caption
+  Callout box: colored left-border card — info (blue), warning (yellow), tip (green)
+  Quote block: left border indigo-300, italic gray-600
+
+--- 2C. IN-APP SEARCH (Fix G5) ---
+
+LOCATION: search bar above tabs in App Detail view
+  Input: "Search this app's docs..." with magnifier icon, 100% width of content area
+
+BEHAVIOR:
+  Debounced 300ms before querying
+  Queries: GET /api/docs/apps/{appId}/search?q={query}
+  Server: searches doc_faqs.search_vector + doc_sections.search_vector + doc_quick_steps.search_vector
+  Returns: [ { type: 'faq'|'section'|'step', id, title, preview, relevance_score } ]
+
+RESULTS DISPLAY:
+  Shown as dropdown below search bar (or inline panel if no results)
+  Each result: type badge + title + 1-line preview snippet with search terms highlighted
+  Click result: scrolls to the relevant tab + item (sets active tab, scrolls to element)
+  Close: click outside or press Escape
+
+--- 2D. DOWNLOAD & EXPORT (Fix G3) ---
+
+DOWNLOAD PDF:
+  Button: [Download PDF] in Guides tab header (right-aligned)
+  Request: GET /api/docs/apps/{appId}/pdf
+  Edge Function (puppeteer-core or @sparticuz/chromium on Supabase):
+    1. Render the app's documentation HTML (all sections: quick start, features, guide, FAQs)
+    2. Apply print-friendly CSS (white bg, black text, page breaks between sections)
+    3. Generate PDF binary
+    4. Upload to Supabase Storage: doc-exports/{appId}/{appId}-guide-{date}.pdf
+    5. Return signed URL (expires 1 hour)
+  Client: opens signed URL in new tab / triggers download
+
+DOWNLOAD GUIDE:
+  Button: [Download Guide] in Guides tab (secondary, beside Download PDF)
+  Request: GET /api/docs/apps/{appId}/guide
+  Edge Function:
+    1. Compile all sections as Markdown text
+    2. Return as text/markdown response with Content-Disposition: attachment
+
+--- 2E. HELP FEEDBACK (New Feature) ---
+
+PER ITEM FEEDBACK:
+  Location: bottom of each FAQ answer; bottom of each Guide section; bottom of each Quick Step
+  UI: "Was this helpful?" | [👍 Yes] [👎 No] — small, low-prominence
+  On click: POST /api/docs/feedback { content_type, content_id, rating: 1|-1 }
+  After vote: show "Thanks for your feedback!" + disable the voted button + show vote counts (optional)
+  One vote per user per item (UNIQUE constraint enforced; second vote updates existing)
+
+ADMIN CMS — CONTENT QUALITY VIEW:
+  "Needs Improvement" section: content items with avg_rating < 0 and feedback_count >= 3
+  Table: item title | type | app name | views | avg rating | feedback count | [Edit] link
+  Sort by: worst rated first
+
+ADMIN FEEDBACK STATS:
+  Per app: total views | avg rating | helpful % | low-rated items count
+  Per content item: view_count | helpful votes | not helpful votes | helpful%
+  View count increments on: GET /api/docs/apps/{appId}/sections (server-side, per section_id)
+
+--- 2F. CONTEXTUAL HELP (New Portal-Wide Feature) ---
+
+ENTRY POINT:
+  [? Help] button added to the TopNav component of EVERY portal app
+  Position: top-right nav, beside notifications bell
+  Icon: question mark circle outline, gray-400, hover indigo
+
+BEHAVIOR ON CLICK:
+  Opens a 360px right-side slide-over panel (over current app content, not full-page navigate)
+  Panel header: "Help: {current app name}" bold | [View Full Docs ↗] link | [X Close] button
+  Panel content:
+    Quick Start (condensed): numbered steps, titles only, clicking a step expands description
+    Most Helpful FAQs: top 3 FAQs by helpful rating from doc_faqs for this app
+    [Show all FAQs ->] link (expands list or navigates to Documentation app)
+  "View Full Docs" link: navigates to /documentation with the current app pre-selected
+
+IMPLEMENTATION:
+  ContextualHelpProvider: React context wrapping the portal shell
+  useContextualHelp() hook: provides openHelp(appId), closeHelp(), isOpen
+  Each app's TopNav calls: openHelp('hr-app') when [? Help] clicked
+  HelpSlideOver component: fetches GET /api/docs/apps/{appId}/quicksteps?limit=all
+    and GET /api/docs/apps/{appId}/faqs?limit=3&sort=helpful_rating
+
+--------------------------------------------------------------------------------
+3. DATA MODEL (see Migration Plan above for CREATE TABLE statements)
+--------------------------------------------------------------------------------
+
+TABLES:
+  doc_apps          -> one row per portal app (22+ apps)
+  doc_sections      -> guide sections and features per app (rich text JSONB)
+  doc_quick_steps   -> numbered getting-started steps per app
+  doc_faqs          -> questions/answers per app, categorized
+  doc_videos        -> video tutorial entries per app
+  doc_feedback      -> per-user thumbs ratings on any content item
+
+STORAGE BUCKET: doc-images
+  Path structure: doc-images/{appId}/steps/{stepId}.png
+                  doc-images/{appId}/sections/{sectionId}-img-{n}.png
+  Access: public read for published content; admin write
+  Max file size: 5MB per image
+  Allowed types: image/png, image/jpeg, image/webp
+
+STORAGE BUCKET: doc-exports
+  Path structure: doc-exports/{appId}/{appId}-guide-{YYYY-MM-DD}.pdf
+  Access: signed URL (1 hour expiry)
+  Generated by: Edge Function on demand (not pre-generated)
+
+--------------------------------------------------------------------------------
+4. MASTER DATA CONFIG
+--------------------------------------------------------------------------------
+
+DOC_CATEGORIES (used in FAQ category field):
+  Basic Usage | Technical | Troubleshooting | Admin | Integration
+  Editable by: Admin role via Master Data app
+
+DOC_ROLE_ACCESS (default visibility rules per app):
+  Maps role -> [ list of app_ids accessible ]
+  Default: all roles can see all apps unless doc_apps.role_access is non-empty
+  Editable by: Admin via Master Data app
+
+DOC_TEMPLATES (skeletons for new app documentation):
+  Fields: template_id | name | content_structure (JSONB with default sections/steps/FAQs skeleton)
+  Example: "Standard App Template" -> 5 quick steps, 3 FAQ categories, 1 guide section
+  Admin can select a template when creating a new app doc entry (pre-populates draft content)
+  Editable by: Documentation Admin via Master Data app
+
+--------------------------------------------------------------------------------
+5. VALIDATION RULES
+--------------------------------------------------------------------------------
+
+Quick Steps:
+  - Minimum 1 step per app (cannot publish app docs with 0 steps)
+  - Maximum 20 steps per app (enforced by DB CHECK constraint)
+  - Step title: required, min 3 chars, max 100 chars
+  - Screenshot: optional; if provided: max 5MB, PNG/JPEG/WebP only
+
+FAQs:
+  - Question: required, min 10 chars, max 500 chars
+  - Answer: required, min 20 chars, max 5000 chars
+  - category: must be one of: basic, technical, troubleshooting
+
+Videos:
+  - URL validation: must match YouTube (youtube.com/watch?v= or youtu.be/) or Vimeo (vimeo.com/) URL patterns
+  - Title: required, min 3 chars, max 200 chars
+  - Duration: optional; if provided, must be numeric and > 0
+
+Rich Text (Guide Sections):
+  - Max 50,000 characters per section (counted from TipTap JSON text nodes)
+  - Images within content: same 5MB / PNG/JPEG/WebP rules as screenshots
+
+CMS Edit Authorization:
+  - Requires Documentation Admin role (checked server-side on all /api/admin/docs/* endpoints)
+  - All admin edits are logged to Security app audit table: { user_id, action, table, row_id, before, after, timestamp }
+
+PDF Generation:
+  - Max one PDF generation per app per user per 5 minutes (rate limit to prevent abuse)
+  - Edge Function timeout: 30 seconds (increase in Supabase project settings for this function)
+
+Feedback:
+  - One vote per user per content item (enforced by UNIQUE constraint)
+  - Anonymous voting not permitted (user must be authenticated)
+
+--------------------------------------------------------------------------------
+6. CROSS-APP INTEGRATIONS
+--------------------------------------------------------------------------------
+
+Documentation -> All Apps (Contextual Help):
+  HelpSlideOver component embedded in portal shell's TopNav
+  Any app's Help button fetches docs for that app's appId
+  No navigation away from current app required
+
+Documentation -> Security:
+  Every CMS admin action (create, update, delete, publish, unpublish) auto-logs to Security app audit table
+  Payload: { actor_id, action_type, entity_type, entity_id, diff: { before, after }, timestamp }
+
+Documentation -> User Management:
+  On new user created (event from User Management app):
+    Trigger: send "Getting Started" email linking to Documentation app
+    Email includes: direct link to the new user's role-relevant top apps
+    Implementation: Edge Function triggered by user creation event
+
+Documentation -> Notifications Bell:
+  new_doc_published: push notification to relevant users when content is published (see Push Notifications)
+  doc_feedback_low_rating: admin notification when content receives repeated low ratings
+  doc_content_draft: weekly reminder to Documentation Admin about unpublished draft content
+
+Advanced Features -> Documentation:
+  Smart Search (App 5) queries doc_faqs.search_vector and doc_sections.search_vector
+  Results from Documentation shown in Smart Search under "Documentation" entity group
+
+--------------------------------------------------------------------------------
+7. PUSH NOTIFICATIONS
+--------------------------------------------------------------------------------
+
+new_doc_published:
+  recipient:  all users (or role-targeted if doc_apps.role_access is set)
+  channel:    in-app
+  type:       info
+  title:      "New Documentation Published"
+  body:       "New guide published: {app_name} — {section_title}"
+  action_url: /documentation/{appId}
+  trigger:    admin publishes a doc_sections row (status -> 'published')
+
+doc_feedback_low_rating:
+  recipient:  Documentation Admin role users
+  channel:    in-app
+  type:       info
+  title:      "Content Needs Improvement"
+  body:       "FAQ '{question truncated to 60 chars}' received low rating from {N} users"
+  action_url: /documentation/admin/feedback-stats
+  trigger:    doc_feedback insert where count of -1 ratings for item >= 3 AND avg_rating < 0
+
+doc_content_draft:
+  recipient:  Documentation Admin role users
+  channel:    in-app
+  type:       reminder
+  title:      "Draft Content Pending"
+  body:       "You have {N} draft sections pending publish across {M} apps"
+  action_url: /documentation/admin
+  trigger:    weekly cron Edge Function (every Monday 9:00 AM)
+              only fires if COUNT(*) FROM doc_sections/doc_faqs WHERE status = 'draft' > 0
+
+--------------------------------------------------------------------------------
+8. FIGMA PROMPT — APP 6: DOCUMENTATION
+--------------------------------------------------------------------------------
+
+Design Documentation at 1440x900px, indigo (#6366F1) accent.
+
+LAYOUT:
+  Full-width. Sidebar 240px (shared portal nav). Content area 1200px.
+
+---- APP LIST VIEW ----
+
+PageHeader (white, border-bottom, padding 24px):
+  Left: "Help & Documentation" H1 32px bold gray-900
+        "Everything you need to get started and use the portal" subtitle 16px gray-500
+  Right: Search input 320px, placeholder "Search all docs...", magnifier icon, border gray-300, rounded-8
+
+Filter bar (below header, flex, gap 8px, padding 16px 0):
+  [All Apps] [HR] [Finance] [Operations] [Analytics] [Admin]
+  Active filter: indigo bg white text; inactive: gray-100 bg gray-700 text; rounded-full pills
+
+App Grid (4 columns, gap 16px, margin-top 16px):
+  AppDocCard (white, border gray-200, radius-12, padding 20px, hover shadow-sm):
+    App icon: 48px rounded-12, indigo-50 bg, indigo emoji or icon
+    App name: 16px bold gray-900
+    Description: 14px gray-500, 2-line clamp
+    Chips row (flex, gap 8px, margin-top 12px):
+      "12 features" chip (gray-100 bg, gray-600 text, 12px)
+      "8 FAQs" chip (gray-100 bg, gray-600 text, 12px)
+    Footer (flex, align-items center, margin-top 12px):
+      [View Docs ->] indigo text link 14px
+      Role badge (if restricted): "Admin Only" red/10 bg red text 11px, absolute bottom-right
+
+---- APP DETAIL VIEW ----
+
+Breadcrumb: "<- Back to all docs" indigo text link | app icon + name H2 28px bold gray-900
+Role badge (beside name): user's role "Your role: Manager" gray-100 bg gray-700 text rounded-full
+
+In-Detail Search (full width, margin-bottom 16px):
+  Input: "Search this app's docs..." magnifier icon, height 44px, border gray-300
+
+Tabs (sticky, white, border-bottom):
+  Quick Start | Features | FAQs | Guides | Videos
+  Active: indigo underline + indigo text; inactive: gray-600
+
+QUICK START TAB:
+  Access Level Notice: gray-50 bg, gray-200 border, rounded-8, padding 12px 16px:
+    "Your role: Manager — you have access to all features"
+  Numbered Steps (vertical list, gap 16px):
+    StepCard (white, border, radius-12, padding 20px):
+      Step number: 32px circle, indigo bg, white bold number
+      Title: 18px bold gray-900 (beside number, flex row)
+      Description: 14px gray-600, margin-top 8px
+      Screenshot (if available): image below description, max-height 280px, rounded-8, border
+
+FAQs TAB:
+  Category Filter (flex pills): [All] [Basic] [Technical] [Troubleshooting]
+  FAQ Rows (white card, border, radius-8, divide-y):
+    FAQItem (padding 16px, cursor pointer):
+      Question row: bold 15px gray-900 | chevron-down icon (rotates on expand)
+      Expanded: answer text 14px gray-600, padding 0 0 16px 0
+      Feedback row (below answer): "Was this helpful?" 12px gray-500 | [👍 Yes] [👎 No] ghost buttons 12px
+
+GUIDES TAB:
+  Toolbar (flex, justify-between, margin-bottom 16px):
+    "Guide" heading 20px bold gray-900
+    Button group: [Download PDF] indigo | [Download Guide] gray outline
+  Guide sections rendered as rich text (see Rich Content section above)
+  Each section: title H2 24px | content | feedback row at bottom
+
+VIDEOS TAB:
+  Video Cards Grid (3 columns, gap 16px):
+    VideoCard (white, border, radius-12, overflow hidden):
+      Thumbnail: 100% width, 160px height, object-cover, relative
+        Play button overlay: 48px circle, white/90 bg, indigo play icon, centered
+      Body (padding 16px):
+        Title: 14px bold gray-900
+        Duration chip: 12px gray-500 "12 min"
+        [Watch ->] indigo text link
+  If no videos: "Coming Soon" placeholder card with camera icon, gray-100 bg, centered text
+
+CONTEXTUAL HELP SLIDE-OVER (appears in EVERY portal app, not just Documentation):
+  Slide-over: 360px wide, from right edge, full viewport height
+  Overlay: left side 50% black/20 opacity
+  Background: white, border-left gray-200, shadow-xl
+
+  Header (indigo bg #6366F1, padding 16px 20px):
+    "Help: {App Name}" 16px bold white
+    [View Full Docs ↗] white/70 text link 13px (right of title)
+    [X Close] white icon button (top-right)
+
+  Content (padding 16px, overflow-y auto):
+    Section: "Getting Started" gray-500 uppercase 11px tracking-wide label
+    Quick steps (condensed list):
+      Step number badge indigo | Title 14px gray-900
+      Click to expand: description gray-600 14px
+    Divider
+    Section: "Common Questions" gray-500 uppercase 11px
+    Top 3 FAQs: collapsible rows
+    [Show all FAQs ->] indigo text link
+
+  Footer (border-top, padding 12px 16px):
+    [View Full Documentation ->] indigo filled button full-width
+
+================================================================================
+END OF SPECIFICATION — PART 3
+================================================================================

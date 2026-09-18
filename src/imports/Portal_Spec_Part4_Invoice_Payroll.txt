@@ -1,0 +1,1660 @@
+================================================================================
+PORTAL SPECIFICATION — PART 4
+APPS 7 & 8: INVOICE GENERATION + PAYROLL MANAGEMENT
+================================================================================
+Tech Stack  : React + Supabase + Tailwind CSS v4
+Permissions : Role-based via Permissions App
+Push Notifs : Web Push API (VAPID)
+App Accent  : #6366F1 (Indigo)
+Statutory   : Indian regulations — PF, ESI, Professional Tax, TDS (FY 2025-26)
+Date Written: 2026-09-04
+================================================================================
+
+
+════════════════════════════════════════════════════════════════════════════════
+APP 7 — INVOICE GENERATION
+════════════════════════════════════════════════════════════════════════════════
+
+Current file : InvoiceGenerationSystem.tsx
+Current DB   : invoices, invoice_items
+Current tabs : Invoices (list) | Create | Analytics
+
+--------------------------------------------------------------------------------
+SECTION 1 — FIX PLAN (Gap Resolutions)
+--------------------------------------------------------------------------------
+
+G2 — EMAIL PREVIEW BEFORE "SAVE & SEND"
+  Trigger     : User clicks [Send Invoice] on any Draft invoice.
+  Flow:
+    1. UI opens <EmailPreviewModal> (460 px wide, centered, z-50).
+    2. Modal header: "Preview Email to {client.email}".
+    3. Email preview card (white bg, 1 px border, rounded-lg, shadow-md):
+         Subject line field (editable): "Invoice {invoice_number} from
+           {company_name} for ₹{formatted_total}"
+         Body area (HTML rendered in sandboxed iframe or a styled div):
+           - Greeting: "Dear {client.name},"
+           - Body copy (editable textarea, collapsed by default):
+               "Please find attached Invoice {number} dated {invoice_date}
+                due on {due_date}."
+           - Summary table embedded in body:
+               | Description | Qty | Rate | Amount |
+               (rows from invoice_items)
+               | Sub-total | | | ₹X |
+               | CGST / IGST | | | ₹Y |
+               | Total | | | ₹Z |
+           - Footer: "Regards, {company_name} | {company_email}"
+    4. Action row:
+         [← Edit]  — secondary button, closes modal, returns to invoice form.
+         [Send Now ✉]  — green primary button; on click:
+           POST /functions/v1/send-invoice  { invoice_id }
+           Updates: invoices.status = 'Sent', invoices.sent_at = now(),
+                    invoices.email_sent_to = client.email
+           Shows toast "Invoice {number} sent to {client.email}".
+           Closes modal.
+  State managed via React useState; email subject/body stored locally until Send.
+
+G3 — ADD NEW CLIENT FROM INVOICE FORM
+  Client dropdown in Create tab:
+    - Renders all active clients from clients table.
+    - Last option, always pinned: "+ New Client" (indigo, italic).
+    - Selecting "+ New Client" opens <InlineClientMiniForm> below the dropdown
+      (not a modal — inline expansion, animated slide-down).
+    Mini-form fields (compact, 2-column grid):
+      | Company / Name (required) | Email (required) |
+      | Phone                     | GST Number       |
+      | Address (full-width)      |                  |
+    [Cancel] [Save Client] buttons.
+    On Save:
+      INSERT into clients (name, email, phone, gst_number, address,
+        currency='INR', is_active=true, created_by=auth.uid())
+      Refreshes client dropdown.
+      Auto-selects the newly created client in the invoice form.
+      Collapses mini-form.
+
+G6 — PAGINATION ON INVOICE LIST
+  Implementation: server-side pagination, 20 records per page.
+  Supabase query:
+    .from('invoices')
+    .select('*', { count: 'exact' })
+    .range(offset, offset + PAGE_SIZE - 1)
+    .order('created_at', { ascending: false })
+  Page controls (bottom of table, right-aligned):
+    [← Prev]  Page {current} of {total_pages}  [Next →]
+    Jump to page: <input type="number"> (optional UX enhancement).
+  Alternatively (if UX prefers): infinite scroll using IntersectionObserver
+    on a sentinel div at bottom of table; auto-fetches next 20 on visibility.
+  URL reflects page: ?page=2 (React Router search param) for bookmarkability.
+
+G5 — PARTIAL PAYMENT TRACKING
+  Covered in full under Section 2 — Partial Payments.
+
+G1 — RECURRING INVOICES
+  Covered in full under Section 2 — Recurring Invoices.
+
+G4 — ANALYTICS DATE RANGE FILTER
+  Add DateRangePicker component to Analytics tab header.
+  Filter options: Last 30 days | Last 90 days | This FY | Custom Range.
+  All charts and KPI tiles re-query with the selected date filter applied.
+  Supabase queries receive .gte('invoice_date', from).lte('invoice_date', to).
+
+--------------------------------------------------------------------------------
+SECTION 2 — FEATURE ENHANCEMENTS
+--------------------------------------------------------------------------------
+
+2.1 CLIENT MANAGEMENT (New Tab: "Clients")
+──────────────────────────────────────────
+
+DB Table: clients
+  id               UUID          PK DEFAULT gen_random_uuid()
+  name             TEXT          NOT NULL
+  email            TEXT          NOT NULL
+  phone            TEXT
+  address          TEXT
+  city             TEXT
+  country          TEXT          DEFAULT 'India'
+  gst_number       TEXT
+  pan_number       TEXT
+  currency         TEXT          DEFAULT 'INR'
+  payment_terms    TEXT          DEFAULT 'NET30'
+                                 CHECK IN ('NET15','NET30','NET45','NET60')
+  notes            TEXT
+  is_active        BOOLEAN       DEFAULT true
+  created_by       UUID          REFERENCES auth.users(id)
+  created_at       TIMESTAMPTZ   DEFAULT now()
+  updated_at       TIMESTAMPTZ   DEFAULT now()
+
+RLS: Finance role + Admin can INSERT/UPDATE/DELETE. All authenticated users
+     can SELECT (for the client dropdown in invoice creation).
+
+Client List View (Clients tab):
+  Search bar: filters by name, email, gst_number in real time (debounced 300ms).
+  Status filter chips: [All] [Active] [Inactive].
+  Table columns: Name | Email | Phone | GST No. | Currency | Payment Terms |
+                 Open Invoices | Total Billed | Outstanding | Active? | Actions.
+  Row actions: [View] [Edit] [Deactivate / Activate].
+
+Client Detail Slide-Over (740 px):
+  Header: Client name + city + country | Status badge | [Edit] [Deactivate].
+  Metrics row (4 tiles):
+    Total Billed | Amount Paid | Outstanding Balance | Open Invoices count.
+  Invoice History sub-table: Invoice # | Date | Amount | Status | Due Date.
+  Payment History sub-table: Date | Amount | Method | Reference.
+  Notes section (free text, editable inline).
+  Client Portal Link placeholder:
+    Greyed card: "Client portal coming soon — share a unique link with
+    {client.name} to let them view and download their invoices."
+
+[+ Add Client] button (top-right of Clients tab):
+  Opens <AddClientModal> (full form, 2-column, all fields from schema above).
+  Validation: name required; email required + valid format; gst_number format
+    validation (15-char alphanumeric GSTIN pattern if supplied).
+
+2.2 INVOICE TEMPLATES
+──────────────────────
+
+DB Table: invoice_templates
+  id               UUID          PK DEFAULT gen_random_uuid()
+  name             TEXT          NOT NULL
+  description      TEXT
+  line_items       JSONB         -- array of {description, hsn_code, qty,
+                                 --   rate, gst_rate}
+  notes_template   TEXT
+  payment_terms    TEXT          DEFAULT 'NET30'
+  tax_rate         NUMERIC(5,2)  DEFAULT 18.00
+  is_default       BOOLEAN       DEFAULT false
+  created_by       UUID          REFERENCES auth.users(id)
+  created_at       TIMESTAMPTZ   DEFAULT now()
+
+Unique constraint: only one row may have is_default = true at a time
+  (enforced via partial unique index: CREATE UNIQUE INDEX ON
+   invoice_templates (is_default) WHERE is_default = true).
+
+"Use Template" in Create Tab:
+  Dropdown/button above line-items section: [Use Template ▾].
+  Lists all templates. Selecting one pre-fills: line items, notes, tax rate,
+  payment terms. Existing unsaved data replaced after [Confirm] prompt.
+
+Admin Template Management (sub-section within Create tab or Settings):
+  Table: Template Name | Default? | Last Used | Actions [Edit][Delete][Set Default].
+  [+ New Template] button → modal with full template form.
+  [Save as Template] button appears on invoice form bottom bar → opens modal
+    pre-filled with current invoice line items and settings → prompts for
+    template name → saves to invoice_templates.
+
+2.3 RECURRING INVOICES (New Tab: "Recurring")
+──────────────────────────────────────────────
+
+DB Table: recurring_invoice_configs
+  id               UUID          PK DEFAULT gen_random_uuid()
+  template_id      UUID          REFERENCES invoice_templates(id)
+  client_id        UUID          REFERENCES clients(id) NOT NULL
+  frequency        TEXT          NOT NULL
+                                 CHECK IN ('weekly','monthly','quarterly',
+                                           'annually')
+  start_date       DATE          NOT NULL
+  end_date         DATE          -- nullable; null = runs indefinitely
+  next_run_date    DATE          NOT NULL
+  auto_send        BOOLEAN       DEFAULT false
+  status           TEXT          DEFAULT 'active'
+                                 CHECK IN ('active','paused','completed')
+  created_by       UUID          REFERENCES auth.users(id)
+  created_at       TIMESTAMPTZ   DEFAULT now()
+
+Supabase Edge Function: process-recurring-invoices
+  Schedule: daily at 00:30 IST via pg_cron or Supabase cron.
+  Logic:
+    SELECT * FROM recurring_invoice_configs
+      WHERE status = 'active' AND next_run_date <= CURRENT_DATE;
+    For each config:
+      1. Create invoice record (clone template line items; set client, dates,
+         invoice_number per policy format, status = 'Draft').
+      2. If auto_send = true: POST to send-invoice function → status = 'Sent'.
+      3. Compute next_run_date based on frequency:
+           weekly    → next_run_date + 7 days
+           monthly   → next_run_date + 1 month (same day)
+           quarterly → next_run_date + 3 months
+           annually  → next_run_date + 1 year
+      4. If end_date set and new next_run_date > end_date:
+           UPDATE status = 'completed'.
+      5. INSERT notification (recurring_invoice_created).
+
+Recurring Tab UI:
+  Table: Client | Template | Frequency | Start Date | End Date | Next Run |
+         Auto-Send | Status | Actions [Pause/Resume][Edit][Delete].
+  [+ New Recurring Config] button → <RecurringConfigModal>:
+    Client picker | Template picker (optional) | Frequency radio |
+    Start Date | End Date (optional) | [Auto-Send?] toggle.
+
+Create Tab — "Make Recurring" Toggle:
+  Below standard invoice fields: [🔄 Make this a recurring invoice] toggle.
+  When toggled ON: reveals Frequency / Start Date / End Date / Auto-Send fields.
+  On Save: creates both the invoice AND a recurring_invoice_config record.
+
+Invoice List: Recurring invoices show indigo "🔄 Recurring" badge in
+  Invoice # column.
+
+2.4 EMAIL SENDING ENHANCEMENT (G2 — full spec)
+────────────────────────────────────────────────
+  See Section 1 G2 for complete modal spec.
+
+  Backend: Supabase Edge Function send-invoice
+    POST body: { invoice_id: string }
+    Actions:
+      - Fetch invoice + items + client from DB.
+      - Render HTML email using a stored template string.
+      - Call Resend API (or SendGrid) with from = company_email,
+        to = client.email, subject, html body.
+      - On success: UPDATE invoices SET status='Sent', sent_at=now(),
+          email_sent_to=client.email WHERE id = invoice_id.
+      - Return { success: true, message_id }.
+    Error handling: on send failure, status remains Draft; toast error shown.
+
+2.5 PARTIAL PAYMENTS (G5 — full spec)
+──────────────────────────────────────
+
+DB Table: invoice_payments
+  id               UUID          PK DEFAULT gen_random_uuid()
+  invoice_id       UUID          REFERENCES invoices(id) NOT NULL
+  amount           NUMERIC(12,2) NOT NULL CHECK (amount > 0)
+  payment_date     DATE          NOT NULL DEFAULT CURRENT_DATE
+  payment_method   TEXT          NOT NULL
+                                 CHECK IN ('Bank Transfer','UPI','Cheque',
+                                           'Cash','Online')
+  reference_number TEXT
+  notes            TEXT
+  recorded_by      UUID          REFERENCES auth.users(id)
+  created_at       TIMESTAMPTZ   DEFAULT now()
+
+Invoice Status Hierarchy:
+  Draft → Sent → Partially Paid → Paid
+                ↓
+              Overdue (auto-set)
+                ↓
+            Cancelled (manual, creates credit note reference)
+
+Status auto-update trigger (Supabase DB trigger on invoice_payments INSERT):
+  total_paid = SUM(amount) FROM invoice_payments WHERE invoice_id = NEW.invoice_id;
+  IF total_paid >= invoice.total_amount THEN status = 'Paid';
+  ELSIF total_paid > 0 THEN status = 'Partially Paid';
+  END IF;
+
+Invoice Detail — Payment Section:
+  Shown when invoice status IN ('Sent','Partially Paid','Paid','Overdue').
+  Header: "Payments" | Outstanding Balance: ₹{balance_due} (red if > 0).
+  Payment History list: Date | Amount | Method | Reference | Recorded By.
+  [+ Record Payment] button (Finance role):
+    Opens <RecordPaymentModal>:
+      Amount (pre-filled with balance_due, editable) |
+      Payment Date | Payment Method dropdown | Reference # | Notes.
+      Warning if amount > balance_due: "This amount exceeds balance due
+        (₹{balance_due}). Overpayment will be recorded."
+      [Cancel] [Record Payment].
+
+Invoice List Actions:
+  [Record Payment] button visible on rows where status IN
+    ('Sent','Partially Paid','Overdue').
+
+2.6 GST / TAX SUPPORT (Indian Context)
+────────────────────────────────────────
+
+invoice_items additions:
+  hsn_code         TEXT          -- HSN (goods) or SAC (services) code
+  gst_rate         NUMERIC(4,1)  DEFAULT 18.0
+                                 CHECK IN (0, 5, 12, 18, 28)
+  cgst_amount      NUMERIC(12,2) GENERATED ALWAYS AS (
+                     CASE WHEN supply_type = 'intrastate'
+                          THEN (amount * gst_rate / 200) ELSE 0 END
+                   ) STORED   -- computed on invoice level, stored here
+  sgst_amount      NUMERIC(12,2) -- same as cgst_amount for intrastate
+  igst_amount      NUMERIC(12,2) GENERATED ALWAYS AS (
+                     CASE WHEN supply_type = 'interstate'
+                          THEN (amount * gst_rate / 100) ELSE 0 END
+                   ) STORED
+
+  NOTE: supply_type is on the parent invoices row; GENERATED columns
+  reference it via a DB view or are computed in application code at
+  save-time and stored as regular columns (simpler approach recommended).
+
+invoices additions:
+  supply_type      TEXT          CHECK IN ('interstate','intrastate')
+  place_of_supply  TEXT          -- 2-digit state code e.g. '27' Maharashtra
+
+Auto-calculate logic (frontend + confirmed on save):
+  IF supply_type = 'interstate':
+    item.igst_amount = item.amount * item.gst_rate / 100
+    item.cgst_amount = 0; item.sgst_amount = 0
+  ELSE (intrastate):
+    item.cgst_amount = item.sgst_amount = item.amount * item.gst_rate / 200
+    item.igst_amount = 0
+
+GST Invoice Format (UI + PDF):
+  Invoice header section:
+    Left: company name, address, GSTIN, PAN, state code.
+    Right: "TAX INVOICE" heading, Invoice No., Invoice Date, Due Date.
+  Bill To:  Client name, address, GSTIN, PAN.
+  Line items table columns:
+    # | Description | HSN/SAC | Qty | Unit | Rate | Taxable Value | GST% |
+    CGST | SGST | IGST | Total
+  Tax summary table (below line items):
+    HSN/SAC | Taxable Value | CGST Rate | CGST Amt | SGST Rate | SGST Amt |
+    IGST Rate | IGST Amt | Total Tax
+  Totals: Taxable Amount | Total CGST | Total SGST | Total IGST | Grand Total.
+  Grand Total in words (Indian numbering: Lakhs, Crores).
+  Bank details for payment (from INVOICE_POLICIES.company_details).
+
+[Download GST Invoice PDF] button:
+  Uses @react-pdf/renderer or jsPDF + html2canvas.
+  Format: A4 portrait, 15mm margins.
+  Filename: {invoice_number}_{client_name}_{date}.pdf
+
+2.7 OVERDUE MANAGEMENT
+───────────────────────
+
+Auto-Overdue Edge Function (run daily, same cron as recurring):
+  UPDATE invoices
+    SET status = 'Overdue'
+  WHERE due_date < CURRENT_DATE
+    AND status IN ('Sent', 'Partially Paid');
+
+Overdue Reminder Emails:
+  Check INVOICE_POLICIES.overdue_reminder_days (e.g. [1, 7, 14]).
+  For each overdue invoice, if (CURRENT_DATE - due_date) IN reminder_days
+    AND no reminder already sent for that day interval:
+    → Send reminder email to client.
+    → Log in invoice_reminder_log table (invoice_id, reminder_day, sent_at).
+
+Late Fee:
+  INVOICE_POLICIES.late_fee_percent_per_month (e.g. 2.0).
+  If late_fee > 0 and invoice overdue > 30 days:
+    Add a "Late Fee" line item (automatically, or prompt Finance to add).
+  Late fee amount = balance_due × (late_fee_percent / 100) × (months_overdue).
+
+Invoice List: Overdue rows styled with bg-red-50; due date cell shows
+  "Overdue {N}d" in red badge with subtle pulse animation.
+
+Analytics — Overdue Aging Report:
+  Bar chart + table: Outstanding grouped by age buckets:
+    0-30 days | 31-60 days | 61-90 days | 90+ days
+  Drill-down: click bucket → filtered invoice list for that bucket.
+
+--------------------------------------------------------------------------------
+SECTION 3 — DATA MODEL ADDITIONS
+--------------------------------------------------------------------------------
+
+All tables in public schema; RLS enabled; created_at / updated_at triggers
+via moddatetime extension.
+
+3.1  clients               (full schema in Section 2.1)
+
+3.2  invoice_templates     (full schema in Section 2.2)
+
+3.3  recurring_invoice_configs  (full schema in Section 2.3)
+
+3.4  invoice_payments      (full schema in Section 2.5)
+
+3.5  invoices — additional columns:
+  client_id              UUID          REFERENCES clients(id)
+  template_id            UUID          REFERENCES invoice_templates(id)
+  is_recurring           BOOLEAN       DEFAULT false
+  recurring_config_id    UUID          REFERENCES recurring_invoice_configs(id)
+  sent_at                TIMESTAMPTZ
+  email_sent_to          TEXT
+  supply_type            TEXT          CHECK IN ('interstate','intrastate')
+  place_of_supply        TEXT
+  -- Computed / maintained by triggers:
+  total_paid             NUMERIC(12,2) DEFAULT 0
+  balance_due            NUMERIC(12,2) -- = total_amount - total_paid
+  overdue_days           INTEGER       -- = GREATEST(0, CURRENT_DATE - due_date)
+                                       --   when status = 'Overdue'
+  -- Cancellation:
+  cancelled_at           TIMESTAMPTZ
+  cancelled_by           UUID          REFERENCES auth.users(id)
+  cancel_reason          TEXT
+  credit_note_reference  TEXT
+
+3.6  invoice_reminder_log:
+  id                     UUID          PK DEFAULT gen_random_uuid()
+  invoice_id             UUID          REFERENCES invoices(id)
+  reminder_day           INTEGER       -- e.g. 1, 7, 14
+  sent_at                TIMESTAMPTZ   DEFAULT now()
+
+--------------------------------------------------------------------------------
+SECTION 4 — MASTER DATA CONFIG (keys in Master Data App)
+--------------------------------------------------------------------------------
+
+Group: INVOICE_POLICIES
+  Key                          Type     Default / Notes
+  ─────────────────────────────────────────────────────
+  default_payment_terms        TEXT     'NET30'
+  default_tax_rate             NUMERIC  18.0
+  late_fee_percent_per_month   NUMERIC  0  (0 = disabled)
+  overdue_reminder_days        JSONB    [1, 7, 14]
+  invoice_number_format        TEXT     'INV-YYYY-NNN'
+                                          YYYY = year, NNN = zero-padded seq
+  company_name                 TEXT     required
+  company_address              TEXT     required
+  company_gstin                TEXT     15-char GSTIN
+  company_pan                  TEXT     10-char PAN
+  company_email                TEXT     from-address for invoice emails
+  company_bank_name            TEXT
+  company_bank_account         TEXT
+  company_bank_ifsc            TEXT
+  company_bank_branch          TEXT
+  company_logo_url             TEXT     Supabase storage URL
+
+Group: GST_TAX_RATES
+  Standard rates (read-only seed): 0, 5, 12, 18, 28
+  Admins may add custom rates for special categories (rare; requires Finance
+  Manager role).
+
+Group: HSN_SAC_CODES (seeded defaults)
+  Code     Description
+  ───────────────────────────────────────────────────
+  998314   IT Design and development services
+  998316   IT infrastructure and network management
+  998313   Software maintenance and support services
+  999211   Management consulting and advisory services
+  998312   Business process outsourcing services
+  998315   Data processing and hosting services
+  996111   General management consulting
+
+Group: INVOICE_STATUSES (display config only — values are code-controlled)
+  Draft | Sent | Partially Paid | Paid | Overdue | Cancelled
+
+--------------------------------------------------------------------------------
+SECTION 5 — VALIDATION RULES
+--------------------------------------------------------------------------------
+
+Invoice Number:
+  Auto-generated per INVOICE_POLICIES.invoice_number_format on first save.
+  Immutable once the invoice exits Draft status.
+  Sequence stored in a DB sequence or a counter row in app_settings.
+
+Client:
+  Required; must be is_active = true.
+  If client deactivated after invoice creation, invoice remains valid
+  (historical record preserved).
+
+Line Items:
+  Minimum 1 line item required.
+  description: required, max 500 chars.
+  quantity: required, > 0, up to 6 decimal places.
+  rate: required, >= 0 (zero-rate line items allowed for free items).
+  gst_rate: must be from GST_TAX_RATES (0/5/12/18/28).
+  hsn_code: recommended; warning shown if absent (not blocking).
+
+Dates:
+  invoice_date: defaults to today; can be backdated (Finance role).
+  due_date: must be >= invoice_date.
+
+Paid Invoice Editing:
+  Cannot edit a Paid invoice. Actions available: [View] [Cancel with Reason].
+  Cancel creates a credit note reference (credit_note_reference field).
+  Cancellation requires Finance Manager role + mandatory cancel_reason.
+
+Delete Rules:
+  Cannot delete Paid or Overdue invoices.
+  Paid → Cancel only (with credit note reference).
+  Overdue → Cancel only (with reason).
+  Draft / Sent → Delete allowed (Finance role), permanently removed.
+
+Recurring Config:
+  start_date >= today (cannot create recurring configs for past dates).
+  end_date, if provided: must be > start_date.
+  end_date, if provided: must be > today at creation time.
+
+Payment Recording:
+  amount > 0 (positive only).
+  amount <= balance_due is recommended; if amount > balance_due:
+    warning modal: "Amount ₹{X} exceeds outstanding balance ₹{balance_due}.
+    This will record an overpayment. Continue?"
+    [Cancel] [Record Overpayment]
+
+GST Validation:
+  If company_gstin set: supply_type is required on invoice.
+  If supply_type = 'interstate': igst applies; cgst/sgst must be 0.
+  If supply_type = 'intrastate': cgst + sgst applies; igst must be 0.
+  place_of_supply: required if supply_type set; must be valid 2-digit state code.
+
+--------------------------------------------------------------------------------
+SECTION 6 — CROSS-APP INTEGRATIONS
+--------------------------------------------------------------------------------
+
+Invoice → Payroll:
+  Contractor/freelancer invoices may reference an employee record.
+  Optional field on invoice: contractor_employee_id (FK to employees table).
+  Payroll app can filter invoices for contractors to show "Service Invoices"
+  alongside payroll records.
+
+Invoice → Executive Dashboard:
+  Supabase view exec_dashboard_finance_kpis queries:
+    - Monthly revenue (SUM total_amount WHERE status = 'Paid')
+    - Outstanding AR (SUM balance_due WHERE status IN ('Sent','Partially Paid'))
+    - Overdue AR (SUM balance_due WHERE status = 'Overdue')
+  Executive Dashboard Finance tab reads from this view.
+
+Invoice → Analytics:
+  Analytics Finance tab includes invoice metrics:
+    Revenue trend (monthly), Top clients by revenue, Invoice aging chart.
+
+Invoice → Security (Audit Log):
+  Events auto-logged to audit_events table:
+    invoice_created, invoice_sent, invoice_payment_recorded, invoice_paid,
+    invoice_cancelled, invoice_deleted, recurring_config_created,
+    recurring_config_paused, client_created, client_deactivated.
+  Payload: user_id, resource_type='invoice', resource_id, action, metadata.
+
+Invoice → Notifications Bell:
+  On each trigger event (Section 7), INSERT into notifications table:
+    { user_id, type, title, body, resource_type, resource_id, read: false }
+
+Invoice → Workflow Automation:
+  Trigger: invoice status = 'Overdue' for > 7 days.
+  Workflow: "Overdue Invoice Follow-up" — steps: send reminder email,
+    notify account manager, escalate to Finance Manager after 14 days.
+
+Invoice → Communications:
+  Optional milestone notification via company feed:
+    When monthly revenue crosses ₹1,00,000 for first time:
+    Post to company feed: "Invoice milestone: ₹1L revenue this month! 🎉"
+    (Toggleable in INVOICE_POLICIES: revenue_milestone_notification BOOL).
+
+--------------------------------------------------------------------------------
+SECTION 7 — PUSH NOTIFICATIONS (Web Push API / VAPID)
+--------------------------------------------------------------------------------
+
+All notifications stored in notifications table AND pushed via Web Push API.
+Recipient resolution uses Permissions App role membership.
+
+Event: invoice_sent
+  Recipients : users with role 'finance' + 'admin'
+  Type       : info
+  Title      : "Invoice Sent"
+  Body       : "Invoice {invoice_number} sent to {client.name} for
+                ₹{formatted_total}"
+  Action URL : /invoices/{id}
+
+Event: invoice_paid
+  Recipients : users with role 'finance' + invoice created_by user
+  Type       : success
+  Title      : "Invoice Paid"
+  Body       : "Invoice {invoice_number} paid by {client.name} — ₹{total}"
+  Action URL : /invoices/{id}
+
+Event: invoice_overdue
+  Recipients : users with role 'finance' + 'admin'
+  Type       : warning
+  Title      : "Invoice Overdue"
+  Body       : "Invoice {invoice_number} from {client.name} is overdue by
+                {overdue_days} days — ₹{balance_due} outstanding"
+  Action URL : /invoices/{id}
+
+Event: invoice_overdue_14d
+  Recipients : users with role 'finance'
+  Type       : urgent-warning
+  Title      : "Invoice Overdue 14+ Days"
+  Body       : "Invoice {invoice_number} overdue 14+ days — consider escalation"
+  Action URL : /invoices/{id}
+
+Event: partial_payment_received
+  Recipients : users with role 'finance'
+  Type       : info
+  Title      : "Partial Payment Received"
+  Body       : "{client.name} made partial payment ₹{payment.amount} on
+                Invoice {invoice_number}"
+  Action URL : /invoices/{id}
+
+Event: recurring_invoice_created
+  Recipients : users with role 'finance'
+  Type       : info
+  Title      : "Recurring Invoice Created"
+  Body       : "Recurring invoice {invoice_number} auto-created for {client.name}"
+  Action URL : /invoices/{id}
+
+Event: invoice_cancelled
+  Recipients : users with role 'finance'
+  Type       : info
+  Title      : "Invoice Cancelled"
+  Body       : "Invoice {invoice_number} cancelled by {cancelled_by.name}"
+  Action URL : /invoices/{id}
+
+Push delivery:
+  Edge Function send-push-notification receives { user_ids[], event, payload }.
+  Fetches push_subscriptions for each user_id from push_subscriptions table.
+  Calls web-push library with VAPID keys.
+  Falls back gracefully if subscription expired (removes stale record).
+
+--------------------------------------------------------------------------------
+SECTION 8 — FIGMA PROMPT
+--------------------------------------------------------------------------------
+
+Design Invoice Generation at 1440x900px, indigo (#6366F1) accent.
+Font: Inter. Background: gray-50. Cards: white, rounded-xl, shadow-sm.
+
+NAVIGATION:
+  Top tab bar (indigo underline active state):
+  Invoices | Clients | Recurring | Create | Analytics
+
+──────────────────────────────────────────────────
+INVOICES TAB
+──────────────────────────────────────────────────
+
+Filter row (below tabs, full width, gray-100 bg, 12px vertical padding):
+  [🔍 Search by number or client name            ] — 280px
+  Status chips (horizontal scrollable):
+    [All] [Draft — gray] [Sent — blue] [Partially Paid — orange]
+    [Paid — green] [Overdue — red, subtle pulse] [Cancelled — gray strikethrough]
+  [📅 Date Range ▾] — date range picker dropdown
+  [Client ▾] — client filter dropdown
+
+Summary strip (indigo-50 bg, 1px indigo-200 border, 8px vertical padding):
+  "₹45.2L total invoiced  |  ₹12.3L outstanding  |  ₹8.1L overdue (red text)"
+
+DataTable (white card, full width):
+  Columns:
+    Invoice #   | 130px  | "INV-2026-042" indigo link
+    Client      | 160px  | client name
+    Invoice Date| 110px  | DD MMM YYYY
+    Due Date    | 110px  | red if overdue: "15 Aug 2026 • Overdue 12d" + red badge
+    Amount      | 110px  | taxable amount, right-aligned
+    Tax         | 90px   | total tax, right-aligned, gray text
+    Total       | 110px  | grand total, right-aligned, semi-bold
+    Status      | 120px  | colored badge (see status definitions below)
+    Paid        | 100px  | total_paid, right-aligned
+    Balance     | 100px  | balance_due — red if > 0
+    Actions     | 180px  | icon buttons (role-gated)
+
+  Status badge definitions:
+    Draft          : gray-100 text-gray-600
+    Sent           : blue-100 text-blue-700
+    Partially Paid : orange-100 text-orange-700
+    Paid           : green-100 text-green-700
+    Overdue        : red-100 text-red-700 + CSS pulse ring
+    Cancelled      : gray-100 text-gray-400 line-through
+
+  Overdue rows: row bg = red-50 tint.
+
+  Action buttons (icon + tooltip on hover):
+    [👁 View]     — always visible
+    [✏ Edit]     — Draft only
+    [✉ Send]     — Draft only
+    [💳 Pay]     — Sent / Partially Paid / Overdue
+    [✓ Mark Paid]— Sent / Partially Paid (manual override)
+    [🗑 Delete]  — Draft only (Finance role)
+    [✕ Cancel]   — Paid / Overdue (Finance Manager)
+
+  Pagination: bottom right — [← Prev]  Page 1 of 7  [Next →]
+
+──────────────────────────────────────────────────
+INVOICE DETAIL SLIDE-OVER (740px, right edge, backdrop blur)
+──────────────────────────────────────────────────
+
+Header bar (white, border-b):
+  Left: [← Close X]
+  Center: "Invoice INV-2026-042" bold | Status badge
+  Right: [Download PDF] [Send ✉] [Cancel ✕]
+
+Section 1 — Invoice Header (2-column):
+  Left: Company logo (64x64) + name + address + GSTIN + PAN + bank details
+  Right: "TAX INVOICE" (large, indigo, right-aligned)
+         Invoice No: INV-2026-042
+         Date: 01 Sep 2026
+         Due: 30 Sep 2026
+
+Section 2 — Bill To:
+  Gray-50 box: Client name bold | Address | GSTIN | PAN
+
+Section 3 — Line Items Table:
+  # | Description | HSN/SAC | Qty | Rate | GST% | Taxable | CGST | SGST | IGST | Total
+
+Section 4 — Tax Summary + Totals:
+  Right-aligned totals block:
+    Taxable Amount:  ₹X
+    CGST (9%):       ₹Y
+    SGST (9%):       ₹Z
+    Grand Total:     ₹W  (large, indigo, bold)
+  Amount in words: "Indian Rupees Twenty Two Thousand Only"
+
+Section 5 — Payment History (if payments exist):
+  Table: Date | Amount | Method | Reference | Recorded By
+  [+ Record Payment] button (indigo, right-aligned)
+  Outstanding Balance: ₹{balance_due} (red, large, right-aligned)
+
+Footer: [Download GST Invoice PDF] [Send Invoice ✉] [Cancel Invoice]
+
+──────────────────────────────────────────────────
+EMAIL PREVIEW MODAL (460px wide, centered over slide-over)
+──────────────────────────────────────────────────
+
+Header: "Preview Email to {client.email}" | [X close]
+Subject field (editable, outlined): "Invoice INV-2026-042 from Acme Corp for ₹22,000"
+Email preview card (white, border-gray-200, rounded-lg, p-4):
+  [Company Logo] header
+  "Dear {client.name},"
+  Body text (editable textarea, collapsed, [✏ Edit Body] button)
+  ─── Invoice Summary ───
+  Description | Qty | Rate | Amount table
+  ─────────────────────
+  Subtotal | CGST | SGST | Total
+  "Regards, {company_name}"
+Action row (right-aligned):
+  [← Edit] gray outline | [Send Now ✉] green solid
+
+──────────────────────────────────────────────────
+ANALYTICS TAB
+──────────────────────────────────────────────────
+
+Date Range filter row (top):
+  [Last 30 Days ▾] — chips: 30d | 90d | This FY | Custom Range
+
+KPI tile row (4 tiles):
+  Total Invoiced | Total Collected | Outstanding | Overdue (red)
+
+Charts (2-column grid):
+  Revenue trend (line chart, monthly, indigo line)
+  Invoice status breakdown (donut chart)
+  Top 5 Clients by Revenue (horizontal bar)
+  Overdue Aging (stacked bar: 0-30d | 31-60d | 61-90d | 90d+)
+
+
+════════════════════════════════════════════════════════════════════════════════
+APP 8 — PAYROLL MANAGEMENT
+════════════════════════════════════════════════════════════════════════════════
+
+Current file : PayrollManagementEnhanced.tsx
+Current DB   : payroll_records, salary_structures
+Current tabs : My Payslips | Processing | Summary | Salary Structure |
+               Salary Revision | Payslip Viewer | Compliance
+
+--------------------------------------------------------------------------------
+SECTION 1 — FIX PLAN (Gap Resolutions)
+--------------------------------------------------------------------------------
+
+G1 — ENABLE MONTHLY TREND CHART
+  Problem: Chart wrapped in {false && ...} block, making it permanently hidden.
+  Fix: Remove the {false && ...} wrapper. Chart is already implemented.
+  Data source: payroll_records grouped by month (year_month field or derived
+    from pay_period_start).
+  Query:
+    SELECT DATE_TRUNC('month', pay_period_start) as month,
+           SUM(gross_salary) as gross, SUM(net_salary) as net,
+           SUM(pf_employee) as pf, SUM(tds) as tds
+    FROM payroll_records
+    WHERE status = 'approved'
+    GROUP BY 1 ORDER BY 1;
+  Chart: Line chart with 3 series (Gross/Net/TDS), last 12 months,
+  rendered in Summary tab.
+
+G2 — PF CAP AT ₹1,800/MONTH
+  Problem: PF calculated on full basic salary with no ceiling.
+  Fix (in payroll processing function):
+
+    const PF_WAGE_CEILING = 15000;    // statutory ceiling per EPFO
+    const PF_RATE = 0.12;             // 12% employee contribution
+    const EMPLOYER_PF_RATE = 0.12;    // 12% employer contribution
+
+    const pfBase = Math.min(employee.basicSalary, PF_WAGE_CEILING);
+    const pfEmployee = Math.round(pfBase * PF_RATE);     // max ₹1,800
+    const pfEmployer = Math.round(pfBase * EMPLOYER_PF_RATE); // max ₹1,800
+
+    // ESI: 0.75% employee, 3.25% employer on gross <= ₹21,000
+    const ESI_GROSS_LIMIT = 21000;
+    const ESI_EMPLOYEE_RATE = 0.0075;
+    const ESI_EMPLOYER_RATE = 0.0325;
+    const esiEmployee = employee.grossSalary <= ESI_GROSS_LIMIT
+      ? Math.round(employee.grossSalary * ESI_EMPLOYEE_RATE)
+      : 0;
+    const esiEmployer = employee.grossSalary <= ESI_GROSS_LIMIT
+      ? Math.round(employee.grossSalary * ESI_EMPLOYER_RATE)
+      : 0;
+
+  Both ceiling values configurable in PAYROLL_POLICIES Master Data.
+
+G4 — TDS PROPER CALCULATION
+  Problem: Flat 10% TDS applied; no standard deduction, HRA, or slab-based
+  computation.
+
+  Full TDS calculation (new tax regime, FY 2025-26):
+
+    Step 1: Annual gross = salary_structure.monthly_ctc × 12
+    Step 2: Standard deduction = ₹75,000 (new regime) OR ₹50,000 (old regime)
+            Read from PAYROLL_POLICIES.standard_deduction
+    Step 3: HRA Exemption (OLD REGIME ONLY):
+              min of:
+                a) Actual HRA received (from salary component)
+                b) 50% of basic salary (metro city) or 40% (non-metro)
+                c) Actual rent paid − 10% of basic salary
+              (Requires rent_paid_monthly from employee HRA declaration)
+    Step 4: Other declared investments (80C, 80D, NPS etc.) — old regime only
+              = salary_structure.declared_other_investments (sum JSONB)
+    Step 5: Taxable income = gross − standard_deduction
+              (old regime: also subtract HRA exemption + other investments)
+    Step 6: Apply tax slabs (new regime FY 2025-26):
+              ₹0 – ₹3,00,000         →  0%
+              ₹3,00,001 – ₹7,00,000  →  5%
+              ₹7,00,001 – ₹10,00,000 →  10%
+              ₹10,00,001 – ₹12,00,000 → 15%
+              ₹12,00,001 – ₹15,00,000 → 20%
+              > ₹15,00,000            →  30%
+    Step 7: Add 4% Health & Education Cess on tax amount
+    Step 8: Subtract rebate under 87A (if taxable income <= ₹7,00,000
+              and new regime: full tax rebate, annual tax = 0)
+    Step 9: Monthly TDS = annual_tax / 12 (integer, rounded up)
+    Step 10: December adjustment — recalculate full-year TDS; adjust
+               December deduction to reconcile any rounding drift.
+    Store tds_calculation_details JSONB on payroll_record:
+    {
+      "regime": "new",
+      "annual_gross": 1200000,
+      "standard_deduction": 75000,
+      "hra_exemption": 0,
+      "other_deductions": 0,
+      "taxable_income": 1125000,
+      "slab_breakdowns": [
+        {"from":0,"to":300000,"rate":0,"tax":0},
+        {"from":300001,"to":700000,"rate":5,"tax":20000},
+        ...
+      ],
+      "base_tax": 82500,
+      "cess": 3300,
+      "rebate_87a": 0,
+      "annual_tds": 85800,
+      "monthly_tds": 7150
+    }
+
+G5 — PAYROLL LOCK
+  Problem: Re-processing overwrites approved records.
+  Fix:
+
+  DB: payroll_locks table (see Section 3).
+
+  Processing flow:
+    1. Before running process-payroll:
+         IF EXISTS (SELECT 1 FROM payroll_locks
+                    WHERE month = :month AND year = :year
+                      AND unlocked_at IS NULL)
+         THEN: display red banner (see Figma section) and block processing.
+    2. [Unlock Payroll] button:
+         Requires Finance Manager role (checked via Permissions App RPC).
+         Opens <UnlockPayrollModal>:
+           "Unlocking payroll for {month} {year}. All approved records will
+            become editable. Provide unlock reason:"
+           [Reason textarea — required]
+           [Cancel] [Unlock Payroll] red button
+         On confirm: UPDATE payroll_locks SET unlocked_at=now(),
+           unlocked_by=auth.uid(), unlock_reason=:reason
+           WHERE month=:month AND year=:year.
+         Audit log event: payroll_unlocked.
+    3. On [Approve All]:
+         After all records set to 'approved':
+         INSERT INTO payroll_locks (month, year, locked_by, locked_at)
+           VALUES (:month, :year, auth.uid(), now());
+         Toast: "Payroll for {month} {year} locked."
+         Sends push notification: payroll_locked.
+
+G8 — LOP DEDUCTION INTEGRATION
+  Problem: Loss of Pay not factored into payroll.
+  Fix:
+
+  Fetch at processing time:
+    SELECT employee_id, COUNT(*) as lop_days
+    FROM leaves
+    WHERE leave_type = 'LOP'
+      AND status = 'approved'
+      AND leave_date >= :period_start
+      AND leave_date <= :period_end
+    GROUP BY employee_id;
+
+  Calculation:
+    const WORKING_DAYS_PER_MONTH = 30; // configurable in PAYROLL_POLICIES
+    const lopDeduction = Math.round(
+      (employee.grossSalary / WORKING_DAYS_PER_MONTH) * lopDays
+    );
+
+  Store: payroll_records.lop_days = lopDays,
+         payroll_records.lop_deduction = lopDeduction.
+
+  Payslip display: "LOP Deduction ({lopDays} days): −₹{lopDeduction}"
+    shown as a separate line in Deductions section.
+
+G6 — SERVER-SIDE SALARY REVISION AUDIT TRAIL
+  Problem: Revision history derived client-side from salary_structures changes.
+  Fix: See Section 2.4 Salary Revision Audit Trail.
+
+G7 — NEFT EXPORT BANK-SPECIFIC FORMATS
+  Problem: Generic CSV only.
+  Fix: See Section 2.5 NEFT/Bank Transfer Export.
+
+G3 — PROFESSIONAL TAX STATE CONFIGURATION
+  Problem: Hardcoded PT value, not configurable per state.
+  Fix: See Section 2.1 Professional Tax State Configuration.
+
+--------------------------------------------------------------------------------
+SECTION 2 — FEATURE ENHANCEMENTS
+--------------------------------------------------------------------------------
+
+2.1 PROFESSIONAL TAX STATE CONFIGURATION (fix G3)
+───────────────────────────────────────────────────
+
+Master Data Group: PROFESSIONAL_TAX_SLABS
+  Each entry: state_name | state_code | income_from | income_to | monthly_pt
+
+Seeded default values:
+
+  Maharashtra:
+    income <= ₹10,000  → ₹0 / month
+    income > ₹10,000   → ₹200 / month
+    (February: ₹300 to make up ₹2,500 annual statutory max)
+
+  Karnataka:
+    income ₹15,001 – ₹25,000  → ₹25 / month
+    income ₹25,001 – ₹30,000  → ₹150 / month
+    income > ₹30,000           → ₹200 / month
+
+  Tamil Nadu:
+    income ₹21,001 – ₹30,000  → ₹135 / month
+    income > ₹30,000           → ₹208.33 / month (₹2,500 / 12)
+
+  West Bengal:
+    income ₹10,001 – ₹15,000  → ₹110 / month
+    income ₹15,001 – ₹25,000  → ₹130 / month
+    income ₹25,001 – ₹40,000  → ₹150 / month
+    income > ₹40,000           → ₹200 / month
+
+  Delhi:
+    No Professional Tax (₹0 for all bands)
+
+  Telangana:
+    income ₹15,001 – ₹20,000  → ₹150 / month
+    income > ₹20,000           → ₹200 / month
+
+  Andhra Pradesh (same as Telangana):
+    income ₹15,001 – ₹20,000  → ₹150 / month
+    income > ₹20,000           → ₹200 / month
+
+Processing logic:
+  state_code = employee.state_code (from Employee Directory location field)
+    OR salary_structures.state_code (override if employee works in different state)
+  Query: SELECT monthly_pt FROM professional_tax_slabs
+         WHERE state_code = :state_code
+           AND :gross_salary BETWEEN income_from AND income_to
+           AND effective_from <= CURRENT_DATE
+         ORDER BY effective_from DESC LIMIT 1;
+  If no match: pt = 0 (no professional tax applicable).
+  February adjustment: if state has annual_pt = 2500 and running total < 2500:
+    February PT = 2500 − (11 × monthly_pt).
+
+2.2 TDS CALCULATION (full spec — fix G4)
+─────────────────────────────────────────
+  See Section 1 G4 fix for complete algorithm.
+
+  Employee-level settings (on salary_structures):
+    tax_regime          TEXT  CHECK IN ('new','old')  DEFAULT 'new'
+    hra_declaration     NUMERIC(12,2)  -- monthly rent paid
+    declared_other_investments JSONB  -- { "80C": 150000, "80D": 25000, ... }
+
+  Employees can declare regime and investments via a [Tax Declaration] form
+    in their Salary Structure view (read-only for self; Finance edits).
+
+  Admin override: Finance Manager can override computed TDS for a specific
+    month with a note (stored in payroll_records.tds_override + override_reason).
+
+2.3 PAYROLL LOCK / UNLOCK (fix G5)
+────────────────────────────────────
+  Full spec in Section 1 G5.
+
+  payroll_locks table: see Section 3.
+
+  Compliance view also shows lock history:
+    Table: Month | Year | Locked By | Locked At | Unlocked By | Unlock Reason.
+
+2.4 SALARY REVISION AUDIT TRAIL (fix G6)
+──────────────────────────────────────────
+
+DB Table: salary_revision_history
+  id                UUID          PK DEFAULT gen_random_uuid()
+  employee_id       UUID          REFERENCES employees(id) NOT NULL
+  old_basic         NUMERIC(12,2)
+  new_basic         NUMERIC(12,2)
+  old_ctc           NUMERIC(12,2)
+  new_ctc           NUMERIC(12,2)
+  change_components JSONB         -- { "hra": {old: X, new: Y}, ... }
+  effective_from    DATE          NOT NULL
+  reason            TEXT          NOT NULL
+  revision_type     TEXT          NOT NULL
+                                  CHECK IN ('increment','promotion','correction',
+                                            'joining','other')
+  approved_by       UUID          REFERENCES auth.users(id)
+  approval_status   TEXT          DEFAULT 'pending'
+                                  CHECK IN ('pending','approved','rejected')
+  approval_notes    TEXT
+  created_by        UUID          REFERENCES auth.users(id)
+  created_at        TIMESTAMPTZ   DEFAULT now()
+
+DB Trigger on salary_structures UPDATE:
+  Before updating salary_structures, insert a revision history record
+    capturing old vs new values.
+
+Salary Revision Tab UI:
+  Reads from salary_revision_history (not derived from salary_structures).
+  Table: Employee | Old CTC | New CTC | % Change | Type | Effective From |
+         Reason | Status | Approved By | Date.
+  Filter: by employee, by type, by date range, by status.
+  [+ New Salary Revision] button:
+    Opens <SalaryRevisionModal>:
+      Employee picker | Revision Type | Effective From | New Basic | New CTC |
+      Component breakdown (expandable) | Reason (required).
+      Submits with status = 'pending'.
+      Triggers Workflow Automation approval flow.
+  Pending revisions show [Approve] [Reject] actions for HR Manager /
+    Finance Manager.
+
+2.5 NEFT / BANK TRANSFER EXPORT (fix G7)
+──────────────────────────────────────────
+
+Master Data Group: BANK_TEMPLATES
+  Each entry:
+    bank_name        TEXT    e.g. 'HDFC NEFT'
+    column_mapping   JSONB   e.g. {"1":"employee_name","2":"account_number",...}
+    date_format      TEXT    e.g. 'DD/MM/YYYY' or 'YYYYMMDD'
+    file_extension   TEXT    e.g. 'csv' or 'txt'
+    delimiter        TEXT    e.g. ',' or '|'
+    header_row       BOOL
+    sample_note      TEXT
+
+Seeded templates:
+
+  Generic CSV:
+    employee_name, bank_name, account_number, ifsc, amount, remarks
+    date format: DD/MM/YYYY, comma-separated, header row included
+
+  HDFC NEFT:
+    Sr No | Beneficiary Name | Account No | IFSC | Amount | Remarks
+    Pipe-separated, no header row, date: DD/MM/YYYY
+
+  ICICI NEFT:
+    BeneficiaryName | AccountNo | IFSCCode | Amount | TransactionMode | Remarks
+    Comma-separated, header row, date: DDMMYYYY
+
+  SBI Net Banking:
+    AccountNo | IFSCCode | BeneficiaryName | Amount | PaymentMode | Remarks
+    Comma-separated, header row
+
+  AXIS Bank:
+    BeneName | BeneAccountNumber | BeneIFSCCode | Amount | PaymentMode
+    Pipe-separated, no header
+
+  Kotak:
+    Bene_AccountNo | Bene_Name | Bene_IFSC | Amount | Narration
+    Comma-separated, header row
+
+Export flow:
+  In Processing tab: [Download NEFT ▾] button → dropdown of configured bank
+    templates.
+  On selection:
+    1. Validate all approved employees have bank_account_number + bank_ifsc set.
+    2. If missing: show error list "The following employees are missing bank
+       details: [names]. Please update Salary Structure before exporting."
+    3. If all valid: generate file per template column_mapping, trigger download.
+
+2.6 PAYSLIP ENHANCEMENTS
+─────────────────────────
+
+Payslip Components (Master Data: PAYROLL_COMPONENTS):
+  component_id          TEXT    (unique key)
+  name                  TEXT
+  type                  TEXT    CHECK IN ('earning','deduction')
+  calculation_type      TEXT    CHECK IN ('fixed','percent_of_basic','formula')
+  formula               TEXT    -- e.g. "basic * 0.40" for HRA
+  is_taxable            BOOL
+  display_on_payslip    BOOL
+  sort_order            INTEGER
+
+Seeded components:
+  Earnings:
+    basic              | fixed           | taxable
+    hra                | percent_of_basic (40%)  | non-taxable
+    special_allowance  | formula (ctc - basic - hra - pf_employer) | taxable
+    bonus              | fixed (0 default) | taxable
+    variable_pay       | fixed (0 default) | taxable
+
+  Deductions:
+    pf_employee        | formula (min(basic,15000)*0.12) | non-taxable
+    esi_employee       | formula (gross<=21000?gross*0.0075:0) | non-taxable
+    professional_tax   | formula (lookup PT slab) | non-taxable
+    tds                | formula (annual_tax/12) | n/a
+    lop_deduction      | formula (gross/30*lop_days) | n/a
+
+Email Payslip on Processing:
+  Configurable toggle: PAYROLL_POLICIES.email_payslip (bool, default true).
+  When payroll approved for an employee: trigger Edge Function email-payslip.
+  Attaches PDF payslip (generated server-side).
+  If PAYROLL_POLICIES.payslip_password_protect = true:
+    PDF password = employee's date of birth (DDMMYYYY format).
+    Email body states: "Your payslip is password protected. Password is your
+    date of birth in DDMMYYYY format."
+
+Payslip PDF structure:
+  Header: Company logo | Company name | Address | GSTIN
+  Employee section: Name | Employee ID | Designation | Department | PAN | UAN
+  Pay period: Month Year | Working days | LOP days | Present days
+  Earnings table:
+    Component | Monthly | YTD
+    Basic Salary | ₹X | ₹Y
+    HRA | |
+    Special Allowance | |
+    Bonus | |
+    ─────────────────
+    Total Gross | ₹X | ₹Y
+  Deductions table:
+    Component | Monthly | YTD
+    PF (Employee) | |
+    ESI (Employee) | |
+    Professional Tax | |
+    TDS | |
+    LOP Deduction | |
+    ─────────────────
+    Total Deductions | ₹X | ₹Y
+  Net Pay (large, bold): ₹X
+  Net Pay in words
+  CTC Breakdown (collapsed, expandable): Employee Cost + Employer PF + ESI = CTC
+  Company seal / authorised signatory line.
+
+--------------------------------------------------------------------------------
+SECTION 3 — DATA MODEL ADDITIONS
+--------------------------------------------------------------------------------
+
+3.1  payroll_locks:
+  id               UUID          PK DEFAULT gen_random_uuid()
+  month            INTEGER       NOT NULL CHECK (month BETWEEN 1 AND 12)
+  year             INTEGER       NOT NULL CHECK (year > 2000)
+  locked_by        UUID          REFERENCES auth.users(id)
+  locked_at        TIMESTAMPTZ   DEFAULT now()
+  unlock_reason    TEXT
+  unlocked_by      UUID          REFERENCES auth.users(id)
+  unlocked_at      TIMESTAMPTZ
+  UNIQUE (month, year)  -- only one lock record per pay period
+
+3.2  salary_revision_history:
+  (Full schema in Section 2.4)
+
+3.3  payroll_records — additional columns:
+  tds_calculation_details  JSONB   -- full TDS breakdown (see G4 fix)
+  lop_days                 INTEGER DEFAULT 0
+  lop_deduction            NUMERIC(12,2) DEFAULT 0
+  tax_regime               TEXT    CHECK IN ('new','old') DEFAULT 'new'
+  gross_ytd                NUMERIC(12,2)  -- cumulative for financial year
+  tds_ytd                  NUMERIC(12,2)  -- cumulative TDS for financial year
+  tds_override             NUMERIC(12,2)  -- manual override amount
+  tds_override_reason      TEXT
+
+3.4  salary_structures — additional columns:
+  tax_regime               TEXT    CHECK IN ('new','old') DEFAULT 'new'
+  hra_declaration          NUMERIC(12,2)  -- monthly rent paid (for old regime)
+  declared_other_investments JSONB  -- { "80C":150000, "80D":25000, "NPS":50000 }
+  state_code               TEXT    -- 2-char state for PT lookup
+  bank_name                TEXT
+  bank_account_number      TEXT
+  bank_ifsc                TEXT
+
+3.5  professional_tax_slabs (new table):
+  id               UUID          PK DEFAULT gen_random_uuid()
+  state_name       TEXT          NOT NULL
+  state_code       TEXT          NOT NULL  -- 2-char ISO state code
+  income_from      NUMERIC(12,2) NOT NULL
+  income_to        NUMERIC(12,2) NOT NULL  -- 9999999 for "and above"
+  monthly_pt       NUMERIC(8,2)  NOT NULL
+  annual_pt        NUMERIC(8,2)  -- 0 if N/A
+  effective_from   DATE          NOT NULL DEFAULT '2024-04-01'
+
+3.6  tax_slabs (new table — for TDS):
+  id               UUID          PK DEFAULT gen_random_uuid()
+  regime           TEXT          CHECK IN ('new','old')
+  financial_year   TEXT          NOT NULL  -- e.g. '2025-26'
+  income_from      NUMERIC(14,2) NOT NULL
+  income_to        NUMERIC(14,2) NOT NULL
+  rate_percent     NUMERIC(5,2)  NOT NULL
+
+3.7  bank_templates (new table):
+  id               UUID          PK DEFAULT gen_random_uuid()
+  bank_name        TEXT          NOT NULL UNIQUE
+  column_mapping   JSONB         NOT NULL
+  date_format      TEXT          DEFAULT 'DD/MM/YYYY'
+  file_extension   TEXT          DEFAULT 'csv'
+  delimiter        TEXT          DEFAULT ','
+  header_row       BOOLEAN       DEFAULT true
+  sample_note      TEXT
+  is_active        BOOLEAN       DEFAULT true
+
+--------------------------------------------------------------------------------
+SECTION 4 — MASTER DATA CONFIG
+--------------------------------------------------------------------------------
+
+Group: PAYROLL_POLICIES
+  Key                          Type      Default / Notes
+  ─────────────────────────────────────────────────────
+  pf_wage_ceiling              INTEGER   15000
+  esi_gross_limit              INTEGER   21000
+  pf_employee_rate             NUMERIC   0.12
+  pf_employer_rate             NUMERIC   0.12
+  esi_employee_rate            NUMERIC   0.0075
+  esi_employer_rate            NUMERIC   0.0325
+  standard_deduction_new       INTEGER   75000  (FY 2024-25 budget)
+  standard_deduction_old       INTEGER   50000
+  processing_day               INTEGER   28  (payroll run on 28th each month)
+  lop_working_days_per_month   INTEGER   30
+  email_payslip                BOOL      true
+  payslip_password_protect     BOOL      true
+  payslip_password_format      TEXT      'DDMMYYYY'  (employee DOB)
+  default_tax_regime           TEXT      'new'
+
+Group: PROFESSIONAL_TAX_SLABS
+  (Seeded entries per Section 2.1 — configurable per state)
+
+Group: PAYROLL_COMPONENTS
+  (Seeded standard components per Section 2.6)
+
+Group: TAX_SLABS
+  Seeded for regime=new, financial_year=2025-26:
+    ₹0 – ₹3,00,000         → 0%
+    ₹3,00,001 – ₹7,00,000  → 5%
+    ₹7,00,001 – ₹10,00,000 → 10%
+    ₹10,00,001 – ₹12,00,000 → 15%
+    ₹12,00,001 – ₹15,00,000 → 20%
+    > ₹15,00,000            → 30%
+  Seeded for regime=old, financial_year=2025-26:
+    ₹0 – ₹2,50,000          → 0%
+    ₹2,50,001 – ₹5,00,000   → 5%
+    ₹5,00,001 – ₹10,00,000  → 20%
+    > ₹10,00,000             → 30%
+
+Group: BANK_TEMPLATES
+  (Seeded entries per Section 2.5)
+
+--------------------------------------------------------------------------------
+SECTION 5 — VALIDATION RULES
+--------------------------------------------------------------------------------
+
+Payroll Processing Lock:
+  Cannot run process-payroll if a non-nullified lock exists for the
+    target month/year.
+  Error message (UI banner): "Payroll for {Month} {Year} is locked.
+    Finance Manager can unlock to re-process."
+
+Individual Record Approval:
+  Cannot approve individual payroll records if the month's overall run
+    is not in 'processing' state (prevents approving records for a month
+    that hasn't been processed yet).
+
+Salary Structure:
+  Basic salary must be >= 40% of CTC.
+    (Statutory requirement; validation error on save if violated.)
+  basic_salary + allowances + employer_pf + employer_esi should reconcile
+    to CTC ± ₹100 rounding tolerance.
+
+HRA Declaration:
+  hra_declaration (rent paid) must be <= 12 × actual HRA component received.
+  For annual rent > ₹1,00,000: UI shows warning "Attach rent receipts for
+    amounts exceeding ₹1L/year" (non-blocking — advisory).
+
+TDS:
+  Monthly TDS cannot be negative.
+    If computed TDS < 0 (due to deduction declarations): set TDS = 0.
+    Payslip shows: "TDS: ₹0 (Income below taxable threshold)".
+  tds_override requires mandatory override_reason field.
+
+LOP Days:
+  lop_days for a given employee in a month cannot exceed the total number
+    of calendar working days in that month.
+  If lop_days > working_days: validation error "LOP days ({X}) cannot
+    exceed working days ({Y}) in {Month}."
+
+NEFT Export:
+  Can only export records with status = 'approved'.
+  All employees in the export must have non-null bank_account_number and
+    bank_ifsc in salary_structures.
+  Pre-export check lists employees with missing bank details.
+
+Salary Revision:
+  effective_from cannot be a date within a locked pay period (month locked
+    and not unlocked).
+  Error: "Effective date {date} falls in a locked payroll period ({Month}
+    {Year}). Unlock payroll first or choose a future date."
+  new_ctc and new_basic must both be > 0.
+  new_basic >= 40% of new_ctc (same statutory rule as salary structure).
+
+PF Voluntary:
+  If employee opts for higher voluntary PF (> 12% of basic):
+    employer share remains capped at statutory 12% of min(basic, 15000).
+    voluntary excess is employee-only and should be clearly labelled.
+
+--------------------------------------------------------------------------------
+SECTION 6 — CROSS-APP INTEGRATIONS
+--------------------------------------------------------------------------------
+
+Payroll ↔ Employee Directory:
+  salary_structures.employee_id FK to employees(id).
+  On employee deactivation (Employee Directory): trigger sets
+    salary_structures.is_active = false; future payroll runs skip the employee.
+  New employee onboarding flow prompts to create salary structure.
+
+Payroll ↔ Employee Dashboard:
+  Employee Dashboard Payslip tab:
+    SELECT * FROM payroll_records WHERE employee_id = auth.uid()
+      ORDER BY pay_period_start DESC;
+  Employee cannot see other employees' records (RLS: employee_id = auth.uid()).
+
+Payroll → Executive Dashboard:
+  View exec_dashboard_payroll_kpis:
+    - Monthly total payroll cost (gross + employer contributions)
+    - Headcount trend
+    - Average salary
+    - Salary cost as % of revenue (joined with Invoice data)
+  Exec Finance tab reads from this view.
+
+Payroll → Analytics:
+  Analytics Finance tab: payroll trend, department-wise cost breakdown,
+    PF/ESI contribution summary.
+
+Payroll ↔ Leave Management:
+  LOP deduction integration reads from leaves table (per G8 fix).
+  RPC function: get_lop_days(employee_id, period_start, period_end)
+    → returns count of approved LOP leave days.
+
+Payroll → Security (Audit Log):
+  Events logged to audit_events:
+    payroll_processed, payroll_approved, payroll_locked, payroll_unlocked,
+    salary_structure_updated, salary_revision_submitted,
+    salary_revision_approved, salary_revision_rejected,
+    tds_override_applied, neft_file_downloaded.
+
+Payroll → Workflow Automation:
+  salary_revision_submitted → triggers "Salary Revision Approval" workflow.
+  Workflow steps: notify approver → wait for approve/reject →
+    if approved: apply revision + notify employee + HR →
+    if rejected: notify submitter + reason.
+  payroll_lock/unlock events logged in workflow audit trail.
+
+Payroll → Invoice:
+  Contractor employees: payroll record can link to invoice_id.
+  Bidirectional: invoice.contractor_employee_id can reference employee.
+
+Payroll → Notifications Bell:
+  All SECTION 7 events also INSERT into notifications table.
+
+--------------------------------------------------------------------------------
+SECTION 7 — PUSH NOTIFICATIONS (Web Push API / VAPID)
+--------------------------------------------------------------------------------
+
+Event: payroll_processed
+  Recipients : Finance Manager role + HR role
+  Type       : info
+  Title      : "Payroll Processed"
+  Body       : "Payroll for {Month} {Year} processed: {N} employees,
+                Gross ₹{total_gross}, Net ₹{total_net}"
+  Action URL : /payroll/processing
+
+Event: payroll_approval_required
+  Recipients : Finance Manager role
+  Type       : action_required
+  Title      : "Payroll Awaiting Approval"
+  Body       : "Payroll for {Month} {Year} has been processed and awaits
+                your approval."
+  Action URL : /payroll/processing
+
+Event: payslip_ready
+  Recipients : each employee individually (user_id from employee record)
+  Type       : info
+  Title      : "Your Payslip is Ready"
+  Body       : "Your {Month} {Year} payslip is ready. View or download
+                in the Payroll app."
+  Action URL : /payroll/payslips
+
+Event: salary_revision_submitted
+  Recipients : designated approver (HR Manager + Finance Manager role)
+  Type       : action_required
+  Title      : "Salary Revision Pending Approval"
+  Body       : "Salary revision for {employee.name} ({revision_type})
+                submitted for approval. Effective: {effective_from}."
+  Action URL : /payroll/salary-revision/{id}
+
+Event: salary_revision_approved
+  Recipients : affected employee (user) + HR role
+  Type       : success
+  Title      : "Salary Revision Approved"
+  Body       : "{employee.name}'s {revision_type} approved. New CTC:
+                ₹{new_ctc}. Effective: {effective_from}."
+  Action URL : /payroll/salary-structure/{employee_id}
+
+Event: payroll_locked
+  Recipients : Finance Manager role + HR role
+  Type       : info
+  Title      : "Payroll Locked"
+  Body       : "Payroll for {Month} {Year} has been locked by {user.name}."
+  Action URL : /payroll/processing
+
+Event: payroll_unlocked
+  Recipients : Finance Manager role + HR role
+  Type       : warning
+  Title      : "Payroll Unlocked"
+  Body       : "Payroll for {Month} {Year} was unlocked by {user.name}.
+                Reason: {unlock_reason}"
+  Action URL : /payroll/processing
+
+Event: compliance_challan_due
+  Recipients : Finance Manager role
+  Type       : warning
+  Title      : "PF/ESI Challan Due"
+  Body       : "PF and ESI challans for {Month} {Year} are due by
+                {due_date}. Download from Compliance tab."
+  Action URL : /payroll/compliance
+  Scheduled  : sent 5 days before 15th of each month (statutory deadline)
+
+Push delivery: same Edge Function infrastructure as Invoice notifications.
+
+--------------------------------------------------------------------------------
+SECTION 8 — FIGMA PROMPT
+--------------------------------------------------------------------------------
+
+Design Payroll Management at 1440x900px, indigo (#6366F1) accent.
+Font: Inter. Background: gray-50. Cards: white, rounded-xl, shadow-sm.
+
+NAVIGATION:
+  Top tab bar (indigo underline active):
+  My Payslips | Processing | Summary | Salary Structure |
+  Salary Revision | Payslip Viewer | Compliance
+
+──────────────────────────────────────────────────
+PROCESSING TAB
+──────────────────────────────────────────────────
+
+Top control row:
+  Month picker: [April ▾] Year picker: [2026 ▾]
+  [Process Payroll ▶] — large indigo button, right-aligned
+    (disabled with lock icon if locked)
+
+LOCK BANNER (shows when locked, replaces normal state):
+  Full-width red-50 banner, 1px red-200 border, rounded-lg:
+  🔒 "April 2026 payroll is locked. Approved records are read-only."
+  Subtext: "Finance Manager can unlock to make changes."
+  [🔓 Unlock Payroll] button — red outline, right-aligned.
+
+Processing Summary Card (shows after processing run):
+  5 stat tiles in a row (gray-50 bg, rounded-lg, border):
+    42 Employees | Gross ₹18.4L | Net ₹14.2L | PF ₹1.8L | TDS ₹2.1L
+  6th tile: PT ₹8,400 (indigo accent)
+
+Bulk Actions row (below summary card):
+  [✓ Approve All] green button |
+  [Download NEFT ▾] with bank dropdown | [✉ Email Payslips]
+
+Processing DataTable (white card):
+  Columns:
+    Employee Name | 180px | avatar + name
+    Basic         | 90px  | right-aligned
+    Gross         | 100px | right-aligned, semi-bold
+    PF            | 80px  | right-aligned
+    ESI           | 80px  | right-aligned
+    PT            | 80px  | right-aligned
+    TDS           | 80px  | right-aligned
+    LOP Dedn      | 90px  | right-aligned, orange text if > 0
+    Net Pay       | 100px | right-aligned, bold, indigo
+    Status        | 110px | chip
+    Actions       | 100px | [Approve] [Reject] or status icons
+
+  Status chips:
+    Pending  : gray-100 text-gray-600
+    Approved : green-100 text-green-700
+    Rejected : red-100 text-red-700
+
+TDS Expandable Row (click chevron on any row):
+  Inline expansion below row (indigo-50 bg):
+    Annual Income: ₹X | Taxable Income: ₹Y | Regime: New
+    Slab breakdown mini-table:
+      0-3L: 0% = ₹0 | 3L-7L: 5% = ₹20,000 | 7L-10L: 10% = ₹15,000 ...
+      Total Annual TDS: ₹85,800 | Monthly TDS: ₹7,150
+
+──────────────────────────────────────────────────
+MY PAYSLIPS TAB (employee self-service view)
+──────────────────────────────────────────────────
+
+Year filter: [FY 2025-26 ▾]
+
+Month grid (3×4):
+  Each month card (white, rounded-lg, border, hover shadow):
+    Month name bold | Net Pay large (or "Not Processed" gray if absent)
+    [View Payslip] link (appears on hover)
+
+On [View Payslip] click → <DetailedPayslipModal> (full-screen overlay):
+
+  Modal header: "Payslip — April 2026" | [Print] [Download PDF] [X]
+
+  Section 1 — Header:
+    Left: Company logo + name + address + GSTIN
+    Right: "SALARY SLIP" heading | Pay Period | Employee ID
+
+  Section 2 — Employee Info (gray-50 box, 2-column):
+    Name | Employee ID | Designation | Department | PAN | UAN |
+    DOJ  | Bank Account | IFSC | Working Days | LOP Days | Present Days
+
+  Section 3 — Earnings (left half):
+    Component table:
+      Component | Monthly | YTD
+      Basic Salary | ₹X | ₹Y
+      House Rent Allowance | |
+      Special Allowance | |
+      Bonus | |
+      ─────────────────
+      Total Earnings | ₹X | ₹Y (indigo)
+
+  Section 4 — Deductions (right half):
+    Component | Monthly | YTD
+    PF (Employee 12%) | |
+    ESI (Employee 0.75%) | |
+    Professional Tax | |
+    TDS | |
+    LOP Deduction ({N} days) | |
+    ─────────────────
+    Total Deductions | ₹X | ₹Y (red)
+
+  Section 5 — Net Pay:
+    "NET PAY: ₹{net}" — large, bold, green, right-aligned
+    In words: "Fourteen Thousand Two Hundred Only"
+
+  Section 6 — CTC Breakdown (collapsed, expandable):
+    Employee Cost: ₹X | Employer PF: ₹Y | Employer ESI: ₹Z
+    Total CTC: ₹W
+
+  Footer: "Digitally generated — no signature required"
+
+──────────────────────────────────────────────────
+COMPLIANCE TAB
+──────────────────────────────────────────────────
+
+Month/Year picker: [April ▾] [2026 ▾]   [Generate Challans] indigo button
+
+Three section cards (vertical stack or tabs):
+
+PF CHALLAN CARD (white, rounded-xl):
+  Header: "Provident Fund — April 2026" | ECR format | Due: 15 May 2026
+  Summary tiles: Total Employees | Employee PF ₹X | Employer PF ₹Y | Total ₹Z
+  Table:
+    Employee | UAN | Basic (PF Wages) | EE PF (12%) | ER PF (12%) | Total
+  Footer: [Download PF ECR File (.txt)] indigo button
+
+ESI CHALLAN CARD:
+  Header: "ESI — April 2026" | Due: 15 May 2026
+  Summary tiles: ESI-covered employees (gross ≤ ₹21k) | EE ESI | ER ESI | Total
+  Table:
+    Employee | IP Number | Gross | EE ESI (0.75%) | ER ESI (3.25%) | Total
+  Footer: [Download ESI Challan (.xlsx)] indigo button
+
+TDS / FORM 24Q REFERENCE CARD:
+  Header: "TDS Summary — April 2026"
+  Note banner: "This is a reference summary. File Form 24Q quarterly via TRACES."
+  Table:
+    Employee | PAN | Annual Income | Taxable Income | Annual TDS | Monthly TDS |
+    Regime | YTD TDS
+  Footer: [Download TDS Summary (.csv)] | [Download Form 24Q reference (.xlsx)]
+
+Payroll Lock History (bottom of Compliance tab):
+  Table: Month | Year | Locked By | Locked At | Unlocked? | Unlock Reason
+
+──────────────────────────────────────────────────
+SALARY STRUCTURE TAB
+──────────────────────────────────────────────────
+
+Employee picker: [Search or select employee ▾]
+  (HR/Finance see all; employees see only their own — RLS enforced)
+
+Salary Breakdown card (white, 2-column):
+  Left — Earnings:
+    Basic: ₹X (% of CTC: 40%)
+    HRA: ₹X (% of basic: 40%)
+    Special Allowance: ₹X
+    [+ Add Component] text button (Finance role)
+  Right — Deductions:
+    PF Employee: ₹X (12% of min(basic, ₹15,000))
+    ESI Employee: ₹X (0.75% if gross ≤ ₹21,000)
+    Professional Tax: ₹X ({state} slab)
+    TDS: ₹X (computed)
+  Bottom strip (indigo-50):
+    CTC: ₹X/month | Gross: ₹X | Net (est.): ₹X
+
+Tax Declaration section (collapsible):
+  Tax Regime: [New ●] [Old ○] toggle
+  HRA Declaration: Monthly rent paid ₹[    ]
+  Investments (old regime): 80C [    ] | 80D [    ] | NPS [    ]
+  [Save Declaration] button
+
+Bank Details section:
+  Bank Name | Account Number (masked) | IFSC
+  [Edit Bank Details] (Finance role)
+
+[Save Salary Structure] button (Finance Manager role)
+
+──────────────────────────────────────────────────
+SALARY REVISION TAB
+──────────────────────────────────────────────────
+
+[+ New Salary Revision] button (top-right, indigo)
+
+Filter row:
+  [Search employee] | [Type: All/Increment/Promotion/...] |
+  [Status: All/Pending/Approved/Rejected] | [Date range]
+
+Revision History Table:
+  Employee | Revision Type badge | Old CTC | New CTC | Δ% (green if positive) |
+  Effective From | Status chip | Approved By | Date | [View Details]
+
+Status chips:
+  Pending  : yellow-100 text-yellow-700
+  Approved : green-100 text-green-700
+  Rejected : red-100 text-red-700
+
+[View Details] → slide-over showing full revision record + approval trail.
+
+================================================================================
+END OF SPECIFICATION — PART 4
+Apps: Invoice Generation (App 7) | Payroll Management (App 8)
+================================================================================

@@ -1,0 +1,1125 @@
+================================================================================
+HR PLATFORM SPECIFICATION — PART 6b: WORKFLOW AUTOMATION
+================================================================================
+Tech Stack : React + Supabase + Tailwind CSS v4
+Auth       : Supabase Auth
+App Accent : #6366F1 (Indigo)
+Date       : 2026-09-04
+================================================================================
+
+
+────────────────────────────────────────────────────────────────────────────────
+CURRENT STATE
+────────────────────────────────────────────────────────────────────────────────
+Files       : WorkflowDashboard.tsx (837 lines) + WorkflowBuilder.tsx (533 lines)
+DB          : workflow_definitions, workflow_instances, workflow_approvals via REST API
+Tabs        : Overview | Workflows | Templates | Instances | Analytics
+UI          : Pending Approvals banner at top of Overview
+Node Types  : approval | notification | condition | action
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 1 — FIX PLAN (GAP RESOLUTION)
+────────────────────────────────────────────────────────────────────────────────
+
+G1 — INSTANCE EXECUTION TRACE (Priority: HIGH)
+───────────────────────────────────────────────
+New table: workflow_instance_steps
+  id               UUID PK default gen_random_uuid()
+  instance_id      UUID FK → workflow_instances.id ON DELETE CASCADE
+  node_id          TEXT NOT NULL
+  node_type        TEXT NOT NULL
+  node_label       TEXT
+  status           TEXT CHECK IN ('pending','running','completed','failed','skipped')
+  started_at       TIMESTAMPTZ
+  completed_at     TIMESTAMPTZ
+  input_payload    JSONB
+  output_payload   JSONB
+  error_message    TEXT
+
+WorkflowDashboard changes — Instances tab:
+  - Each row in the instances table gets a [View Trace] button
+  - Clicking opens a full-screen Instance Detail view (slide-in panel or route)
+  - Detail view renders a vertical execution timeline:
+      - Each step row: status icon (check/spinner/x/gray circle) | node_label | timestamps | duration
+      - Duration computed as completed_at - started_at; show "< 1ms" if sub-millisecond
+      - Clicking a step row expands to show:
+          Input Payload  : JSON code block (collapsible, max 200px height with scroll)
+          Output Payload : JSON code block
+          Error Message  : red text block (only shown when status = 'failed')
+  - Running steps show an animated amber pulse indicator
+  - Admin-only footer action: [Re-run from Failed Step] — POST /workflow/instances/{id}/retry
+      - Endpoint resets all steps from the failed node onward to 'pending' and resumes execution
+      - Non-admin users see this button as hidden (check role from auth context)
+
+G2 — SCHEDULE TRIGGER UI (Priority: HIGH)
+──────────────────────────────────────────
+Add ScheduleTriggerConfig component; renders in WorkflowBuilder right panel when
+triggerType === 'schedule'.
+
+Preset dropdown options (each maps to a stored cron expression):
+  Label                           Cron Expression
+  ─────────────────────────────── ────────────────
+  Every day at 8 AM               0 8 * * *
+  Every Monday at 9 AM            0 9 * * 1
+  Every 1st of month at 9 AM      0 9 1 * *
+  Every quarter (1st Jan/Apr/Jul/Oct 9 AM)  0 9 1 1,4,7,10 *
+  Custom cron                     (user-defined)
+
+Custom cron mode renders 5 individual select dropdowns:
+  Minute (0-59 or *) | Hour (0-23 or *) | Day of Month (1-31 or *) |
+  Month (1-12 or *) | Day of Week (0-6, 0=Sun or *)
+  Each dropdown offers common values plus a "Custom value" free-text fallback.
+
+Human-readable preview renders below the cron fields using a cron-parser library:
+  Example: "This workflow will run: Every Monday and Wednesday at 09:00 AM"
+  Show next 3 scheduled run times as light gray helper text.
+
+Timezone selector:
+  Populated from LOCATIONS master data timezones list
+  Default: org default timezone (from org settings)
+  Stored in trigger_config.timezone
+
+Stored shape in trigger_config (JSONB):
+  { "cron": "0 9 * * 1", "timezone": "Asia/Kolkata", "preset": "Every Monday at 9 AM" }
+
+G4 — REMOVE SEED-DEFAULTS FROM PRODUCTION (Priority: MEDIUM)
+─────────────────────────────────────────────────────────────
+In WorkflowDashboard.tsx, wrap seed button render:
+  {process.env.NODE_ENV === 'development' && isSuperAdmin && <SeedDefaultsButton />}
+
+Move the button permanently to:
+  Settings → Developer Tools tab
+  Visibility gate: role === 'super_admin' AND process.env.NODE_ENV === 'development'
+  Add a warning banner above the button:
+    "This button is only visible in development mode and will not appear in production."
+
+G5 — EVENT-BASED TRIGGER UI (Priority: HIGH)
+─────────────────────────────────────────────
+Add EventTriggerConfig component; renders in WorkflowBuilder right panel when
+triggerType === 'event'.
+
+Three-step cascading dropdowns:
+
+  Step 1 — App (all 10 HR modules + IT Services + Projects):
+    Leave Management | Attendance | Recruitment | Performance | Training |
+    Payroll | Employee Directory | Employee Self Service | Onboarding |
+    Offboarding | IT Services | Projects
+
+  Step 2 — Entity (filtered by selected app):
+    Example for Leave Management: Leaves | Leave Balances
+    Example for Recruitment: Job Requisitions | Candidates | Offers
+    (Driven by WORKFLOW_TRIGGER_EVENTS master data grouping)
+
+  Step 3 — Event (filtered by entity, from WORKFLOW_TRIGGER_EVENTS):
+    Example for Leaves: leave_applied | leave_approved | leave_rejected | leave_cancelled
+
+Payload schema preview (below dropdowns):
+  Read-only info box showing: "Payload will include:"
+  Rendered as a list of field names with types:
+    { leave_id: UUID, employee_id: UUID, type: string, start_date: date,
+      end_date: date, days: number, status: string }
+  Source: WORKFLOW_TRIGGER_EVENTS[event_key].payload_schema
+
+Optional pre-filter (condition before workflow runs):
+  Label: "Only trigger when:"
+  Row: [{field} dropdown] [{operator} dropdown] [{value} input]
+  Operators: equals | not equals | greater than | less than | contains | is empty | is not empty
+  Fields: populated from payload schema of selected event
+  Stored in trigger_config.condition_filter (JSONB)
+
+Stored shape in trigger_config (JSONB):
+  {
+    "app": "leave_management",
+    "entity": "leaves",
+    "event_key": "leave_applied",
+    "condition_filter": { "field": "days", "operator": "greater_than", "value": 3 }
+  }
+
+G6 — CONDITION NODE AND/OR GROUPS (Priority: MEDIUM)
+─────────────────────────────────────────────────────
+Replace the existing single-condition input in the Condition node config panel
+with a full rule-builder component.
+
+Rule builder structure:
+  Root group:
+    AND / OR toggle (segmented control at top of group)
+    Condition rows: [{field} {operator} {value}] [× remove]
+    [+ Add Condition] button
+    [+ Add Group] button — creates a nested sub-group with its own AND/OR toggle
+
+Nested groups:
+  Indented visually (left border accent, gray-100 bg)
+  Each nested group has its own AND/OR toggle and its own [+ Add Condition]
+  Max nesting depth: 3 levels
+
+Operators:
+  equals | not equals | contains | does not contain |
+  greater than | less than | greater than or equal | less than or equal |
+  is empty | is not empty | in list | not in list
+
+Field dropdown:
+  Populated dynamically from the trigger entity payload schema (same as G5 preview)
+  If trigger is manual, show a free-text field name input
+
+Value input type adapts to field type:
+  string → text input
+  number → number input
+  date   → date picker
+  boolean → true/false toggle
+  list   → comma-separated text input
+
+Stored shape in nodes[x].config.condition (JSONB):
+  {
+    "operator": "AND",
+    "conditions": [
+      { "field": "days", "operator": "greater_than", "value": 5 },
+      {
+        "operator": "OR",
+        "conditions": [
+          { "field": "type", "operator": "equals", "value": "annual" },
+          { "field": "type", "operator": "equals", "value": "sick" }
+        ]
+      }
+    ]
+  }
+
+G7 — WORKFLOW VERSION HISTORY (Priority: LOW)
+──────────────────────────────────────────────
+See workflow_versions table in Section 4.
+UI: Workflows list → row action menu → "Version History"
+Opens a modal listing all versions: version number | changed_by | changed_at | change_summary
+[Restore this version] button (admin only) — creates a new version entry, sets is_current = true
+Current version highlighted with "Current" badge.
+
+G8 — CROSS-APP WORKFLOW TRIGGER MAPPING (Priority: HIGH)
+─────────────────────────────────────────────────────────
+New table: workflow_trigger_event_mappings (see Section 4)
+
+Runtime behavior:
+  When any HR app fires an event (e.g. leave_applied):
+    1. Query workflow_trigger_event_mappings WHERE event_key = 'leave_applied' AND is_active = true
+    2. For each mapping row: instantiate the mapped workflow with the event payload
+    3. Respect condition_filter if present — evaluate filter; skip if condition is false
+    4. Log workflow_instance row with trigger_type = 'event' and trigger_payload = event payload
+
+UI — Workflow Settings → "Event Mappings" tab:
+  Table: Event Key | App | Entity | Active mappings count | [Manage]
+  Manage modal: lists all workflows mapped to that event key
+    Each row: Workflow Name | Status chip | is_active toggle | [Remove mapping]
+  [+ Add Mapping] button: select event → select workflow → save
+
+G9 — SLA / DEADLINE ENFORCEMENT ON APPROVAL NODES (Priority: MEDIUM)
+──────────────────────────────────────────────────────────────────────
+Approval node config panel additions:
+  Response Deadline: [24] [hours ▾]  (min: 1 hour, enforced by validation)
+  On Timeout:
+    (●) Escalate to next level
+    ( ) Auto-Approve
+    ( ) Auto-Reject
+
+Escalation logic (Escalate to next level):
+  1. Look up current approver's employee record in Employee Directory
+  2. Follow reports_to chain upward to find next higher-authority user
+  3. Create new workflow_approvals row for that user; set escalation_level += 1
+  4. Send escalation push notification to new approver
+  5. Send info notification to original approver ("escalated due to no response")
+  Max escalation levels: 3; if exceeded and still no response, fall back to auto_reject
+
+Supabase CRON Edge Function: check-approval-deadlines
+  Schedule: every 60 minutes (cron: 0 * * * *)
+  Logic:
+    SELECT wa.* FROM workflow_approvals wa
+    JOIN workflow_instance_steps wis ON wis.id = wa.step_id
+    WHERE wa.status = 'pending'
+      AND wa.deadline < NOW()
+    For each row:
+      - Read approval node config for on_timeout value
+      - Execute on_timeout action (escalate | auto_approve | auto_reject)
+      - Update workflow_approvals.status accordingly
+      - Update workflow_instance_steps.status
+      - Fire appropriate push notification (see Section 7)
+      - If on_timeout = 'escalate': create new approval row for next-level approver
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 2 — FEATURE SPEC: NEW NODE TYPES
+────────────────────────────────────────────────────────────────────────────────
+
+All new nodes are added to the WorkflowBuilder node palette and to the
+workflow execution engine.
+
+NODE: delay_node
+─────────────────
+Display label : "Delay"
+Palette icon  : ⏱
+Canvas color  : Slate / #64748B
+Purpose       : Pause workflow execution for a specified duration before
+                proceeding to the next node.
+
+Config fields:
+  duration_value  number (required, min 1)
+  duration_unit   select: hours | days | weeks
+  (Computed display label: "Wait {N} {unit} then continue")
+
+Execution behavior:
+  On reaching this node, set step status = 'running', record resume_at timestamp
+  (NOW() + duration). The scheduler checks for delayed steps every 15 minutes.
+  On resume_at reached: set step status = 'completed', proceed to next node.
+
+────────────────────────────────────────────────────────────────────────────────
+
+NODE: parallel_node
+────────────────────
+Display label : "Parallel Split"
+Palette icon  : ↔
+Canvas color  : Violet / #7C3AED
+Purpose       : Split workflow into N simultaneous branches; all branches must
+                complete before flow continues to the next node after the merge.
+
+Config fields:
+  branch_count  number, 2–5 (default 2)
+  branch_labels array of strings (e.g. ["Branch A", "Branch B"])
+  Each branch contains its own ordered array of child nodes.
+
+Canvas rendering:
+  Fan out from the parallel_node into N vertical columns.
+  Each branch column has its own node sequence.
+  A merge node (implicit, gray diamond) closes all branches back to a single flow.
+
+Execution behavior:
+  All branches are instantiated concurrently as sub-steps.
+  Overall parallel_node step status = 'running' until ALL branch final steps = 'completed'.
+  If any branch fails: parallel_node status = 'failed'; sibling branches are cancelled.
+  Branch steps appear as indented rows in the Instance Execution Timeline.
+
+────────────────────────────────────────────────────────────────────────────────
+
+NODE: create_record_node
+────────────────────────
+Display label : "Create Record"
+Palette icon  : 📝
+Canvas color  : Emerald / #059669
+Purpose       : Create a new record in a target HR app or service.
+
+Config fields:
+  target_app    select: all 10 HR apps + IT Services + Training + Projects
+  entity        select: filtered by target_app (e.g. IT Services → it_tickets)
+  field_mapping array of { source_field: string, target_field: string }
+                source_field: from workflow payload or prior node output
+                (use dot notation, e.g. "trigger.employee_id")
+                target_field: field on the target entity
+
+Output:
+  created_record_id (UUID) — available as a variable in subsequent nodes via
+  syntax: {{nodes.create_record_1.output.created_record_id}}
+
+Example use cases:
+  Create IT provisioning ticket when a new hire is triggered
+  Create training enrollment when certification is expiring
+  Create onboarding record when candidate_hired event fires
+
+────────────────────────────────────────────────────────────────────────────────
+
+NODE: update_field_node
+───────────────────────
+Display label : "Update Field"
+Palette icon  : ✏️
+Canvas color  : Amber / #D97706
+Purpose       : Update a single field on an existing record in another app.
+
+Config fields:
+  target_app  select (same list as create_record_node)
+  entity      select (filtered by app)
+  record_id   string — from payload variable (e.g. {{trigger.leave_id}}) or
+              prior node output (e.g. {{nodes.create_record_1.output.created_record_id}})
+  field       select (field names for target entity)
+  new_value   string / dynamic (supports {{variable}} interpolation)
+
+Example use cases:
+  Set leave.status = 'approved' after approval node completes
+  Set employee.status = 'inactive' on exit workflow
+  Set job_posting.status = 'active' after recruitment approval
+
+────────────────────────────────────────────────────────────────────────────────
+
+NODE: email_node
+────────────────
+Display label : "Send Email"
+Palette icon  : 📧
+Canvas color  : Sky / #0284C7
+Purpose       : Send an email to one or more recipients using a template or
+                custom subject/body.
+
+Config fields:
+  to              string or array — fixed email address OR dynamic variable
+                  (e.g. {{trigger.employee_email}}, {{trigger.manager_email}})
+  template        select: from NOTIFICATION_TEMPLATES (optional)
+  custom_subject  string with {{variable}} interpolation (overrides template subject)
+  custom_body     rich text / markdown with {{variable}} interpolation
+  cc              string (optional, supports variables)
+
+Variable interpolation:
+  Use {{field_name}} syntax anywhere in subject/body.
+  Available variables: all fields from trigger payload + all prior node outputs.
+  Builder shows a variable picker panel (click {x} icon in toolbar).
+
+────────────────────────────────────────────────────────────────────────────────
+
+NODE: webhook_node
+──────────────────
+Display label : "Webhook"
+Palette icon  : 🌐
+Canvas color  : Rose / #E11D48
+Purpose       : Send an HTTP POST request to an external URL.
+
+Config fields:
+  url                 string (required, must be https://)
+  headers             array of { key: string, value: string }
+  body_template       JSON or text with {{variable}} interpolation
+  expected_status_code  number (default 200)
+
+Retry policy:
+  On failure (non-expected status or network error): retry 3 times
+  Retry intervals: 5 minutes | 5 minutes | 5 minutes
+  After 3 failures: mark step as 'failed'; trigger workflow_failed notification
+
+Output:
+  response_status (number) and response_body (JSONB) available to subsequent nodes.
+
+────────────────────────────────────────────────────────────────────────────────
+
+NODE: loop_node
+───────────────
+Display label : "Loop"
+Palette icon  : 🔄
+Canvas color  : Purple / #9333EA
+Purpose       : Repeat a sequence of child nodes until an exit condition is met.
+
+Config fields:
+  max_iterations  number (default 10, max 50)
+  exit_condition  rule-builder object (same format as condition node)
+                  evaluated after each loop iteration
+  child_nodes     ordered array of nodes to execute per iteration
+  loop_delay      number + unit (optional pause between iterations)
+
+Execution behavior:
+  Iteration count tracked in step output_payload.
+  If exit_condition is true after an iteration: exit loop, proceed to next node.
+  If max_iterations reached before condition is true: exit loop with status 'completed'
+  (not failed) and add a warning to step output: "Max iterations reached".
+  Current iteration number available as {{loop.current_iteration}} inside child nodes.
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 3 — PRE-BUILT WORKFLOW TEMPLATES
+────────────────────────────────────────────────────────────────────────────────
+
+All templates are installed via the Templates tab → [Install] button.
+Each installed template creates a workflow_definition with status = 'draft',
+requiring explicit activation. Installing a template that already exists creates
+a new version (workflow_versions entry) rather than overwriting.
+
+────────────────────────────────────────────────────────────────────────────────
+TEMPLATE 1: Leave Approval Workflow
+────────────────────────────────────────────────────────────────────────────────
+Trigger    : event — leave_applied
+Description: Routes leave requests through manager and optional HR approval
+             based on number of days requested.
+
+Nodes:
+  1. condition_node — "Check leave duration"
+       Condition: leave_days > 5
+       YES branch → node 3 (HR Approval added)
+       NO branch  → node 2 (Manager only)
+
+  2. approval_node — "Manager Approval" (on NO branch)
+       Approver role  : direct_manager
+       Deadline       : 24 hours
+       On timeout     : escalate_to_next_level
+
+  3. approval_node — "Manager Approval (extended)" (on YES branch)
+       Approver role  : direct_manager
+       Deadline       : 24 hours
+       On timeout     : escalate_to_next_level
+
+  4. approval_node — "HR Manager Approval" (after node 3, YES branch only)
+       Approver role  : hr_manager
+       Deadline       : 48 hours
+       On timeout     : auto_reject
+
+  5. update_field_node — "Update Leave Status"
+       target_app : leave_management
+       entity     : leaves
+       record_id  : {{trigger.leave_id}}
+       field      : status
+       new_value  : {{approval.final_status}} (approved | rejected)
+
+  6. notification_node — "Notify Employee"
+       to      : {{trigger.employee_id}}
+       message : "Your leave request from {{trigger.start_date}} to {{trigger.end_date}} has been {{approval.final_status}}."
+
+  7. notification_node — "Notify Manager"
+       to      : {{trigger.manager_id}}
+       message : "Leave for {{trigger.employee_name}} from {{trigger.start_date}} has been {{approval.final_status}}."
+
+────────────────────────────────────────────────────────────────────────────────
+TEMPLATE 2: Job Requisition Approval
+────────────────────────────────────────────────────────────────────────────────
+Trigger    : event — job_requisition_submitted
+Description: Two-level approval for new job requisitions; activates posting
+             upon full approval.
+
+Nodes:
+  1. approval_node — "Department Manager Approval"
+       Approver role  : department_manager
+       Deadline       : 48 hours
+       On timeout     : escalate_to_next_level
+
+  2. approval_node — "HR Manager Approval"
+       Approver role  : hr_manager
+       Deadline       : 48 hours
+       On timeout     : auto_reject
+
+  3. update_field_node — "Activate Job Posting"
+       target_app : recruitment
+       entity     : job_postings
+       record_id  : {{trigger.job_requisition_id}}
+       field      : status
+       new_value  : active
+
+  4. notification_node — "Notify Requester"
+       to      : {{trigger.requester_id}}
+       message : "Your job requisition for {{trigger.position_title}} has been approved and is now live."
+
+────────────────────────────────────────────────────────────────────────────────
+TEMPLATE 3: New Hire Onboarding
+────────────────────────────────────────────────────────────────────────────────
+Trigger    : event — candidate_hired
+Description: Automates parallel onboarding tasks upon hire confirmation,
+             then sends welcome communications on the joining date.
+
+Nodes:
+  1. create_record_node — "Create Onboarding Record"
+       target_app     : onboarding
+       entity         : onboarding_records
+       field_mapping  : [{ source: "trigger.employee_id", target: "employee_id" },
+                         { source: "trigger.joining_date", target: "joining_date" }]
+
+  2. parallel_node — "Parallel Onboarding Tasks" (3 branches)
+
+       Branch A — "IT Provisioning"
+         create_record_node — "Create IT Provisioning Ticket"
+           target_app    : it_services
+           entity        : it_tickets
+           field_mapping : [{ source: "trigger.employee_id", target: "employee_id" },
+                            { source: "trigger.joining_date", target: "due_date" }]
+
+       Branch B — "Welcome Email"
+         email_node — "Send Welcome Email"
+           to              : {{trigger.personal_email}}
+           template        : WELCOME_EMAIL_TEMPLATE
+           custom_subject  : "Welcome to the team, {{trigger.first_name}}!"
+
+       Branch C — "Mandatory Training"
+         create_record_node — "Create Training Enrollments"
+           target_app    : training
+           entity        : training_enrollments
+           field_mapping : [{ source: "trigger.employee_id", target: "employee_id" },
+                            { source: "trigger.role_id", target: "role_id" }]
+           (system will enroll in all mandatory courses for the role)
+
+  3. delay_node — "Wait Until Joining Date"
+       duration_value : {{trigger.joining_date}} (absolute date mode)
+       duration_unit  : until_date
+
+  4. notification_node — "Post Welcome Announcement"
+       target_app : communications_hub
+       channel    : company_announcements
+       message    : "Please welcome {{trigger.full_name}} who is joining us today as {{trigger.job_title}}!"
+
+  5. notification_node — "Notify Manager"
+       to      : {{trigger.manager_id}}
+       message : "Your new team member {{trigger.full_name}} starts today. Their onboarding tasks have been initiated."
+
+────────────────────────────────────────────────────────────────────────────────
+TEMPLATE 4: PIP Approval Workflow
+────────────────────────────────────────────────────────────────────────────────
+Trigger    : event — pip_created
+Description: HR approves the PIP document, notifies relevant parties, and
+             sets a 30-day check-in reminder.
+
+Nodes:
+  1. approval_node — "HR Manager Approval"
+       Approver role  : hr_manager
+       Deadline       : 24 hours
+       On timeout     : escalate_to_next_level
+
+  2a. (On Approve) notification_node — "Notify Employee of PIP"
+        to      : {{trigger.employee_id}}
+        message : "A Performance Improvement Plan has been initiated. Your manager will discuss the details with you."
+
+  2b. (On Approve) notification_node — "Confirm to Manager"
+        to      : {{trigger.manager_id}}
+        message : "The PIP for {{trigger.employee_name}} has been approved by HR. Please proceed with the discussion."
+
+  3. (On Reject) notification_node — "Notify PIP Creator of Rejection"
+       to      : {{trigger.created_by}}
+       message : "The PIP for {{trigger.employee_name}} was rejected by HR. Reason: {{approval.response_comment}}"
+
+  4. delay_node — "Wait 30 Days"
+       duration_value : 30
+       duration_unit  : days
+
+  5. notification_node — "30-Day Check-In Reminder"
+       to      : {{trigger.manager_id}}
+       message : "The PIP for {{trigger.employee_name}} is now one month in. Please schedule a check-in review."
+
+────────────────────────────────────────────────────────────────────────────────
+TEMPLATE 5: Performance Review Reminder
+────────────────────────────────────────────────────────────────────────────────
+Trigger    : schedule — cron "0 8 * * *" (daily at 8 AM)
+             Active only during the review window (managed via workflow active dates config)
+Description: Reminds employees who have not submitted their self-assessment as
+             the deadline approaches.
+
+Nodes:
+  1. condition_node — "Check Deadline and Submission Status"
+       Condition: review_deadline_in_days <= 3 AND self_assessment_submitted = false
+       YES branch → node 2
+       NO branch  → end (no action)
+
+  2. email_node — "Self-Assessment Deadline Reminder"
+       to             : {{employee.email}}
+       custom_subject : "Reminder: Your self-assessment is due in {{review_deadline_in_days}} days"
+       custom_body    : "Hi {{employee.first_name}}, please complete your self-assessment by {{review_deadline_date}}. Log in to the HR portal to submit."
+
+  3. notification_node — "In-App Reminder"
+       to      : {{employee.employee_id}}
+       message : "Your self-assessment is due in {{review_deadline_in_days}} days. Please submit it before {{review_deadline_date}}."
+
+────────────────────────────────────────────────────────────────────────────────
+TEMPLATE 6: Employee Exit Workflow
+────────────────────────────────────────────────────────────────────────────────
+Trigger    : event — employee_exit_initiated
+Description: Coordinates all offboarding tasks in parallel, then deactivates
+             the employee account on the last working day.
+
+Nodes:
+  1. parallel_node — "Initiate Offboarding Tasks" (4 branches)
+
+       Branch A — "IT Access Revocation"
+         notification_node — "Notify IT Department"
+           to      : it_operations_group
+           message : "Please schedule access revocation for {{trigger.employee_name}} ({{trigger.employee_id}}) by {{trigger.last_working_date}}."
+
+       Branch B — "Finance Notification"
+         notification_node — "Notify Finance for F&F Settlement"
+           to      : finance_team_group
+           message : "Please initiate Full & Final settlement for {{trigger.employee_name}} with last working date {{trigger.last_working_date}}."
+
+       Branch C — "Exit Interview"
+         create_record_node — "Create Exit Interview Record"
+           target_app    : offboarding
+           entity        : exit_interviews
+           field_mapping : [{ source: "trigger.employee_id", target: "employee_id" },
+                            { source: "trigger.last_working_date", target: "scheduled_date" }]
+
+       Branch D — "Farewell Email"
+         email_node — "Send Farewell Email to Employee"
+           to       : {{trigger.personal_email}}
+           template : FAREWELL_EMAIL_TEMPLATE
+
+  2. delay_node — "Wait Until Last Working Day"
+       duration_value : {{trigger.last_working_date}}
+       duration_unit  : until_date
+
+  3. update_field_node — "Set Employee Status to Inactive"
+       target_app : employee_directory
+       entity     : employees
+       record_id  : {{trigger.employee_id}}
+       field      : employment_status
+       new_value  : inactive
+
+  4. update_field_node — "Suspend User Account"
+       target_app : user_management
+       entity     : user_accounts
+       record_id  : {{trigger.user_account_id}}
+       field      : account_status
+       new_value  : suspended
+
+────────────────────────────────────────────────────────────────────────────────
+TEMPLATE 7: Certification Renewal Reminder
+────────────────────────────────────────────────────────────────────────────────
+Trigger    : schedule — cron "0 9 * * *" (daily at 9 AM)
+Description: Proactively assigns renewal training and escalates to manager if
+             employee does not act within 7 days.
+
+Nodes:
+  1. condition_node — "Check Expiry Window"
+       Condition: certification_expiry_in_days <= 30
+       YES branch → node 2
+       NO branch  → end
+
+  2. create_record_node — "Assign Renewal Course"
+       target_app    : training
+       entity        : training_enrollments
+       field_mapping : [{ source: "employee.id", target: "employee_id" },
+                        { source: "certification.renewal_course_id", target: "course_id" }]
+
+  3. notification_node — "Notify Employee"
+       to      : {{employee.employee_id}}
+       message : "Your {{certification.name}} expires in {{certification_expiry_in_days}} days. A renewal course has been assigned to you."
+
+  4. delay_node — "Wait 7 Days"
+       duration_value : 7
+       duration_unit  : days
+
+  5. condition_node — "Check If Still Not Renewed"
+       Condition: certification_renewed = false
+       YES branch → node 6
+       NO branch  → end
+
+  6. notification_node — "Escalate to Manager"
+       to      : {{employee.manager_id}}
+       message : "{{employee.full_name}}'s {{certification.name}} expires in {{certification_expiry_in_days}} days and has not yet been renewed. Please follow up."
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 4 — DATA MODEL
+────────────────────────────────────────────────────────────────────────────────
+
+TABLE: workflow_definitions
+  id              UUID         PK  default gen_random_uuid()
+  name            TEXT         NOT NULL (unique per org)
+  description     TEXT
+  trigger_type    TEXT         CHECK IN ('manual','schedule','event')
+  trigger_config  JSONB        -- cron/timezone for schedule; app/entity/event_key/condition_filter for event
+  nodes           JSONB        -- array of node config objects
+  edges           JSONB        -- array of { source_node_id, target_node_id, edge_label } connection objects
+  version         INTEGER      NOT NULL DEFAULT 1
+  status          TEXT         CHECK IN ('draft','active','paused','archived') DEFAULT 'draft'
+  created_by      UUID         FK → auth.users.id
+  created_at      TIMESTAMPTZ  DEFAULT NOW()
+  updated_at      TIMESTAMPTZ  DEFAULT NOW()
+  org_id          UUID         FK → organizations.id
+
+TABLE: workflow_versions
+  id              UUID         PK  default gen_random_uuid()
+  workflow_id     UUID         FK → workflow_definitions.id ON DELETE CASCADE
+  version_number  INTEGER      NOT NULL
+  nodes           JSONB        NOT NULL
+  edges           JSONB        NOT NULL
+  changed_by      UUID         FK → auth.users.id
+  changed_at      TIMESTAMPTZ  DEFAULT NOW()
+  change_summary  TEXT
+  is_current      BOOLEAN      DEFAULT FALSE
+  UNIQUE (workflow_id, version_number)
+
+TABLE: workflow_instances
+  id                UUID         PK  default gen_random_uuid()
+  workflow_id       UUID         FK → workflow_definitions.id
+  workflow_version  INTEGER      NOT NULL
+  trigger_type      TEXT         CHECK IN ('manual','schedule','event')
+  trigger_payload   JSONB
+  status            TEXT         CHECK IN ('running','completed','failed','cancelled') DEFAULT 'running'
+  started_at        TIMESTAMPTZ  DEFAULT NOW()
+  completed_at      TIMESTAMPTZ
+  triggered_by      UUID         FK → auth.users.id (NULL for scheduled/event triggers)
+  error_message     TEXT
+
+TABLE: workflow_instance_steps
+  id              UUID         PK  default gen_random_uuid()
+  instance_id     UUID         FK → workflow_instances.id ON DELETE CASCADE
+  node_id         TEXT         NOT NULL
+  node_type       TEXT         NOT NULL
+  node_label      TEXT
+  status          TEXT         CHECK IN ('pending','running','completed','failed','skipped') DEFAULT 'pending'
+  started_at      TIMESTAMPTZ
+  completed_at    TIMESTAMPTZ
+  input_payload   JSONB
+  output_payload  JSONB
+  error_message   TEXT
+  INDEX (instance_id, status)
+
+TABLE: workflow_approvals
+  id                UUID         PK  default gen_random_uuid()
+  instance_id       UUID         FK → workflow_instances.id
+  step_id           UUID         FK → workflow_instance_steps.id
+  approver_id       UUID         FK → auth.users.id
+  status            TEXT         CHECK IN ('pending','approved','rejected','escalated','auto_approved','auto_rejected') DEFAULT 'pending'
+  response_at       TIMESTAMPTZ
+  response_comment  TEXT
+  delegated_to      UUID         FK → auth.users.id (NULL if not delegated)
+  deadline          TIMESTAMPTZ  NOT NULL
+  escalation_level  INTEGER      DEFAULT 0
+
+TABLE: workflow_trigger_event_mappings
+  id               UUID         PK  default gen_random_uuid()
+  event_key        TEXT         NOT NULL FK → WORKFLOW_TRIGGER_EVENTS.event_key
+  workflow_id      UUID         FK → workflow_definitions.id ON DELETE CASCADE
+  is_active        BOOLEAN      DEFAULT TRUE
+  condition_filter JSONB        -- optional pre-filter (same format as G5 condition_filter)
+  created_by       UUID         FK → auth.users.id
+  created_at       TIMESTAMPTZ  DEFAULT NOW()
+  UNIQUE (event_key, workflow_id)
+
+Row-Level Security (all tables):
+  All reads/writes scoped to org_id.
+  workflow_approvals readable by the approver_id and any admin.
+  workflow_instance_steps readable by workflow creator, admins, and the original trigger initiator.
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 5 — VALIDATION RULES
+────────────────────────────────────────────────────────────────────────────────
+
+WORKFLOW DEFINITION
+  - name: required; 3–100 characters; unique per org_id
+  - Must have at least 1 trigger node and at least 1 approval or action node to activate
+  - Cannot activate a workflow containing disconnected (orphan) nodes — all nodes must be
+    reachable from the trigger node via edges
+  - Cannot delete a workflow that has instances with status = 'running'
+    (must deactivate or archive the workflow first; running instances must complete or be cancelled)
+  - Circular trigger guard: if workflow A has an event trigger mapped to workflow B's output,
+    and workflow B's trigger is mapped to trigger workflow A, reject the activation with error:
+    "Circular trigger detected between Workflow A and Workflow B"
+  - status transitions allowed:
+      draft → active (via Activate button)
+      active → paused (via Pause button)
+      paused → active (via Resume button)
+      active | paused → archived (via Archive; blocked if running instances exist)
+
+APPROVAL NODES
+  - response_deadline_hours: minimum 1, no maximum enforced in UI (business decision)
+  - on_timeout: must be one of escalate_to_next_level | auto_approve | auto_reject
+
+PARALLEL NODES
+  - branch_count: minimum 2, maximum 5
+  - Each branch must contain at least 1 node (cannot have an empty branch)
+
+SCHEDULE TRIGGER
+  - Must have a valid cron expression (validated against cron regex on save)
+  - Cron must not be more frequent than every 15 minutes
+    (first cron field: if numeric, must be divisible by 15 or be */15 or */30)
+  - Preset selection automatically fills valid cron; custom cron is validated on blur
+
+EVENT TRIGGER
+  - app, entity, and event_key are all required
+  - Selected event_key must exist in WORKFLOW_TRIGGER_EVENTS master data
+
+LOOP NODE
+  - max_iterations: minimum 1, maximum 50
+  - exit_condition is required (must define at least one condition)
+
+WEBHOOK NODE
+  - url must start with https:// (HTTP blocked)
+  - expected_status_code: 100–599
+
+WORKFLOW VERSION
+  - version_number auto-increments; cannot be manually set
+  - Only one version per workflow can have is_current = true
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 6 — CROSS-APP INTEGRATIONS
+────────────────────────────────────────────────────────────────────────────────
+
+ALL APPS → WORKFLOW AUTOMATION
+  Integration point: WORKFLOW_TRIGGER_EVENTS master data
+  Any event from any HR module, IT Services, or Projects can trigger a workflow.
+  Event firing pattern:
+    Each app publishes events via a shared service function: publishEvent(event_key, payload)
+    This function inserts into an event_queue table (or calls an Edge Function directly)
+    The workflow engine consumes the queue, matches active event mappings, and spawns instances.
+
+WORKFLOW → NOTIFICATION BELL
+  On creation of each approval step (workflow_approvals row, status = 'pending'):
+    POST to /api/notifications with type = 'action_required'
+    recipient_id = approver_id
+    message = "Approval required: {workflow_name} — {step_description}"
+  Notification Bell queries action_required notifications to populate Pending Approvals count.
+
+WORKFLOW → IT SERVICES
+  Via create_record_node with target_app = 'it_services', entity = 'it_tickets'
+  Creates a ticket in the IT Services app with mapped fields from workflow payload.
+  Returns ticket ID usable in subsequent nodes.
+
+WORKFLOW → TRAINING
+  Via create_record_node with target_app = 'training', entity = 'training_enrollments'
+  Enrolls an employee in one or more training courses.
+  Returns enrollment IDs.
+
+WORKFLOW → COMMUNICATIONS HUB
+  Via notification_node with channel_target = 'communications_hub'
+  Posts a message to a specified channel or as a general announcement.
+  Config: channel_id | message_text | post_as (system | workflow name)
+
+WORKFLOW → COLLABORATION HUB
+  Via webhook_node (if Collaboration Hub exposes a webhook endpoint) OR
+  via notification_node with channel_target = 'collaboration_hub'
+  Posts a message to a team channel.
+
+WORKFLOW → EMPLOYEE DIRECTORY
+  Via update_field_node with target_app = 'employee_directory', entity = 'employees'
+  Can update fields: employment_status | job_title | department_id | reports_to | location_id
+  Write access guarded by permission check: only admin or HR Manager role may update
+  employment_status via workflow.
+
+WORKFLOW → USER MANAGEMENT
+  Via update_field_node with target_app = 'user_management', entity = 'user_accounts'
+  Can update: account_status (active | suspended | deactivated) | roles
+  Requires admin-level workflow permission to configure this node type.
+  Deactivation is effective-dated (applies on last_working_date via delay_node).
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 7 — PUSH NOTIFICATIONS
+────────────────────────────────────────────────────────────────────────────────
+
+All notification events use the shared Notification Service.
+Types: web_push | in_app | email
+Priority levels: action_required | warning | info | success
+
+EVENT: approval_assigned
+  Recipient  : approver (the assigned approver_id)
+  Channel    : web push + in-app
+  Priority   : action_required
+  Message    : "Approval required: {workflow_name} — {step_description}"
+  Action link: deep link to Pending Approvals panel in Workflow Dashboard
+
+EVENT: approval_deadline_2h
+  Recipient  : approver
+  Channel    : web push
+  Priority   : warning
+  Message    : "Approval deadline in 2 hours: {workflow_name}"
+  Trigger    : Supabase CRON Edge Function checks 2h before each deadline
+  Action link: deep link to the specific approval
+
+EVENT: approval_escalated
+  Recipient  : new escalated approver
+  Channel    : web push + in-app
+  Priority   : action_required
+  Message    : "Escalated to you: {workflow_name} approval from {original_approver_name}"
+  Action link: deep link to Pending Approvals panel
+
+EVENT: approval_auto_actioned
+  Recipient  : original approver (the one who timed out)
+  Channel    : in-app
+  Priority   : info
+  Message    : "Your pending approval for {workflow_name} was auto-{approved|rejected} due to timeout"
+
+EVENT: workflow_completed
+  Recipient  : trigger initiator (triggered_by user, or the employee in event-triggered workflows)
+  Channel    : in-app
+  Priority   : success
+  Message    : "{workflow_name} completed successfully"
+
+EVENT: workflow_failed
+  Recipient  : trigger initiator + all users with role = 'workflow_admin' or 'super_admin'
+  Channel    : web push
+  Priority   : warning
+  Message    : "{workflow_name} failed at step '{step_name}': {error_message}"
+  Action link: deep link to Instance Detail (execution trace view)
+
+EVENT: instance_cancelled
+  Recipient  : trigger initiator
+  Channel    : in-app
+  Priority   : info
+  Message    : "{workflow_name} instance was cancelled"
+
+
+────────────────────────────────────────────────────────────────────────────────
+SECTION 8 — FIGMA DESIGN PROMPT (SELF-CONTAINED)
+────────────────────────────────────────────────────────────────────────────────
+
+Design the Workflow Automation module of an HR Platform at 1440 × 900 px.
+Accent color: #6366F1 (Indigo). Font: Inter. Tailwind CSS v4 scale.
+Dark mode not required for this screen; use white/gray-50 surface.
+
+TABS (under the HR Platform shell header):
+  Overview | Workflows | Templates | Instances | Analytics
+  Active tab: underline #6366F1, bold label.
+
+════════════════════════════════════════════════════════
+OVERVIEW TAB
+════════════════════════════════════════════════════════
+
+KPI ROW — 5 white cards, equal width, shadow-sm, rounded-lg, 16px gap:
+  Card 1: "Active Workflows"    value: 12        icon: play-circle (indigo)
+  Card 2: "Running Instances"   value: 4         icon: activity (blue-500)
+  Card 3: "Pending Approvals"   value: 7         icon: clock (red-600); badge on tab nav
+  Card 4: "Completed Today"     value: 23        icon: check-circle (green-600)
+  Card 5: "Failed"              value: 2         icon: x-circle (red-600)
+
+PENDING APPROVALS PANEL (full width below KPI row):
+  Show when pending_approvals > 0.
+  Background: amber-50; left border: 4px solid amber-400.
+  Header: clock icon amber-600 | "7 approvals awaiting your action" (bold, amber-800)
+  Table rows (one per pending approval):
+    Col 1: workflow icon (small, indigo) + workflow name "Leave Approval" bold
+    Col 2: employee name chip (gray-100 bg, rounded-full)
+    Col 3: "Requested Apr 8 · 14:00" (gray-500, small)
+    Col 4: "Deadline: 6h remaining" (amber-600, small)
+    Col 5: [✓ Approve] button (green-600 ghost with border)
+    Col 6: [✗ Reject] button (red-600 ghost with border)
+    Col 7: Comment input (small, inline, placeholder "Add comment…")
+  Row hover: amber-100 bg.
+  [View all approvals →] link bottom right.
+
+RECENT INSTANCES TABLE (white card, shadow-sm):
+  Title: "Recent Workflow Instances"
+  Columns:
+    Workflow (bold name + trigger type badge small)
+    Trigger (event name or "Manual" or "Scheduled")
+    Status chip:
+      Running  → blue-100 bg, blue-700 text, pulsing dot
+      Completed → green-100 bg, green-700 text
+      Failed   → red-100 bg, red-700 text
+      Cancelled → gray-100 bg, gray-600 text
+    Started (date/time)
+    Duration (e.g. "4h 20m" or "2m 3s")
+    Steps (e.g. "5 / 6")
+    Action: [View Trace →] indigo text button
+
+════════════════════════════════════════════════════════
+WORKFLOW BUILDER (full-screen modal, 95vw × 90vh)
+════════════════════════════════════════════════════════
+
+HEADER BAR (white, border-b, 56px height):
+  Left:  pencil icon | "New Workflow" text input (borderless, large, editable inline)
+  Center: status pill toggle — Draft (gray) / Active (green)
+  Right: [Save] secondary button | [Activate] indigo primary button | [×] close icon button
+
+LEFT PANEL (240px, gray-50 bg, border-r, overflow-y-auto):
+  Title: "Node Palette" (small caps, gray-500)
+
+  Section: TRIGGERS
+    [⚡ Manual Trigger]    draggable pill (purple-100 bg, purple-700 text)
+    [🕐 Schedule]         draggable pill
+    [📡 Event-Based]      draggable pill
+
+  Section: LOGIC
+    [? Condition]         draggable pill (orange-100, orange-700)
+    [↔ Parallel Split]    draggable pill
+    [🔄 Loop]             draggable pill
+    [⏱ Delay]             draggable pill
+
+  Section: ACTIONS
+    [✅ Approval]         draggable pill (blue-100, blue-700)
+    [🔔 Notification]     draggable pill (teal-100, teal-700)
+    [📧 Email]            draggable pill (sky-100, sky-700)
+    [📝 Create Record]    draggable pill (emerald-100, emerald-700)
+    [✏️ Update Field]     draggable pill (amber-100, amber-700)
+    [🌐 Webhook]          draggable pill (rose-100, rose-700)
+
+CANVAS (flex-1, background #1a1a2e, dot-grid overlay 20px spacing, overflow-scroll):
+  Trigger node (200px wide, rounded-lg):
+    Purple gradient bg (#7C3AED → #6366F1)
+    Header: ⚡ icon + "Leave Applied" bold white
+    Sub: "Event: leave_applied · Leave Management" gray-300 small
+
+  Arrow connector: white SVG curved line with arrowhead (#FFFFFF, 1.5px)
+
+  Condition node (diamond shape, 160px wide):
+    Orange bg (#F97316), white text
+    Center label: "leave_days > 5?"
+    YES branch label (green small) on right edge
+    NO branch label (gray small) on left edge
+
+  Approval node (rounded-lg card, 200px wide):
+    Blue bg (#3B82F6)
+    Header: ✅ "Manager Approval" white bold
+    Body: "Role: Direct Manager | Deadline: 24h | Escalate on timeout" white small
+
+  Email node (rounded-lg, 200px wide):
+    Sky bg (#0284C7)
+    Header: 📧 "Send Welcome Email"
+    Body: "To: {{employee_email}}" small
+
+  Notification node (rounded-lg, 200px wide):
+    Teal bg (#0D9488)
+    Header: 🔔 "Notify Employee"
+    Body: "In-app notification" small
+
+  Selected node: glowing indigo ring (box-shadow: 0 0 0 3px #6366F1, 0 0 20px #6366F140)
+
+  Canvas controls (floating, bottom-right, dark pill):
+    [+] [-] [⊞ Fit to screen] [Grid On/Off]
+
+RIGHT PANEL (300px, white, border-l, overflow-y-auto):
+  When no node selected:
+    Empty state: "Select a node to configure it" centered gray-400
+
+  When Approval node selected:
+    Header: "✅ Approval Node" bold gray-900 | [× Delete node] danger ghost link (right-aligned)
+    ── divider ──
+    Field: Approver Role
+      [Role: Direct Manager ▾] full-width select
+    Field: Response Deadline
+      [24] number input (80px) + [hours ▾] select (100px) inline
+    Field: On Timeout
+      Radio group:
+        (●) Escalate to next level
+        ( ) Auto-Approve
+        ( ) Auto-Reject
+    ── Section: Advanced ──
+    Toggle: "Require comment on rejection" (off by default)
+
+════════════════════════════════════════════════════════
+INSTANCES TAB
+════════════════════════════════════════════════════════
+
+FILTER BAR:
+  [Workflow: All ▾] [Status: All ▾ chips] [Date range picker] [Search instance ID]
+
+TABLE:
+  Columns: ID | Workflow | Trigger | Status | Started | Duration | Steps | Actions
+  Sticky header, striped rows, hover: gray-50.
+  Actions column: [View →] indigo text link.
+
+════════════════════════════════════════════════════════
+INSTANCE DETAIL VIEW (full-screen, replaces Instances tab content)
+════════════════════════════════════════════════════════
+
+HEADER:
+  [← Back to Instances] ghost link
+  "Leave Approval — Instance #1234" h2 bold
+  "Completed" green badge (rounded-full, green-100 bg, green-700 text)
+  "Started Apr 8 09:30 · Duration 4h 20m" gray-500 small
+
+ACTION BUTTONS (header right):
+  [Cancel Instance] ghost red button
+  [Re-run from Failed Step] indigo ghost button (admin only, visible when status = 'failed')
+
+EXECUTION TIMELINE (vertical, full width, white card):
+
+  Step 1 — Completed:
+    Left: green filled circle with checkmark (✓)
+    Content: "Trigger: Leave Applied" bold | "Apr 8 09:30:00" small gray | "< 1ms" badge gray
+    Right: [▾ Expand] toggle
+    Expanded: gray-50 inset block, monospace font, JSON preview:
+      { "leave_id": "uuid...", "employee_id": "uuid...", "days": 3, "type": "annual" }
+
+  Step 2 — Completed:
+    Green circle ✓ | "Condition: leave_days > 5?" | "took 2ms" | "Result: false → Manager path only"
+
+  Step 3 — Running (awaiting approval):
+    Amber pulsing circle ⏳ | "Approval: Direct Manager (Raj Kumar)" bold
+    "Started Apr 8 09:31 · Deadline Apr 9 09:31" amber-600 small
+    "Awaiting response" amber badge
+    [Send Reminder] ghost amber button (admin)
+
+  Step 4 — Pending:
+    Gray empty circle | "Notification: Notify Employee" gray-500 | "Pending"
+
+  Connecting vertical dashed line between all steps.
+
+════════════════════════════════════════════════════════
+END OF FIGMA PROMPT
+════════════════════════════════════════════════════════
+
+
+────────────────────────────────────────────────────────────────────────────────
+END OF SPECIFICATION — HR_Spec_Part6b_WorkflowAutomation
+────────────────────────────────────────────────────────────────────────────────

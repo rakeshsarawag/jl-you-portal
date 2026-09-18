@@ -1,0 +1,64 @@
+@import './fonts.css';
+@import './tailwind.css';
+@import './theme.css';
+
+:root {
+  --app-font-scale: 1;
+  --app-density-spacing: 1;
+}
+
+/* Font scale classes applied to :root */
+.font-scale-sm { --app-font-scale: 0.875; }
+.font-scale-md { --app-font-scale: 1; }
+.font-scale-lg { --app-font-scale: 1.125; }
+
+/* Density classes applied to :root */
+.density-compact { --app-density-spacing: 0.75; }
+.density-comfortable { --app-density-spacing: 1; }
+.density-spacious { --app-density-spacing: 1.25; }
+
+/* Font scale — override Tailwind's rem-based sizes so all text scales together */
+html {
+  font-size: calc(16px * var(--app-font-scale));
+}
+
+/* Density — shrink/expand padding and gap utilities via a multiplier on the root */
+.density-compact * {
+  --density-pad: 0.75;
+}
+.density-spacious * {
+  --density-pad: 1.25;
+}
+
+/* Compact: tighten padding on common layout containers */
+.density-compact .px-4 { padding-left: calc(1rem * 0.75) !important; padding-right: calc(1rem * 0.75) !important; }
+.density-compact .px-6 { padding-left: calc(1.5rem * 0.75) !important; padding-right: calc(1.5rem * 0.75) !important; }
+.density-compact .py-2 { padding-top: calc(0.5rem * 0.75) !important; padding-bottom: calc(0.5rem * 0.75) !important; }
+.density-compact .py-3 { padding-top: calc(0.75rem * 0.75) !important; padding-bottom: calc(0.75rem * 0.75) !important; }
+.density-compact .py-4 { padding-top: calc(1rem * 0.75) !important; padding-bottom: calc(1rem * 0.75) !important; }
+.density-compact .py-6 { padding-top: calc(1.5rem * 0.75) !important; padding-bottom: calc(1.5rem * 0.75) !important; }
+.density-compact .p-4  { padding: calc(1rem * 0.75) !important; }
+.density-compact .p-6  { padding: calc(1.5rem * 0.75) !important; }
+.density-compact .gap-4 { gap: calc(1rem * 0.75) !important; }
+.density-compact .gap-6 { gap: calc(1.5rem * 0.75) !important; }
+.density-compact .space-y-4 > * + * { margin-top: calc(1rem * 0.75) !important; }
+.density-compact .space-y-6 > * + * { margin-top: calc(1.5rem * 0.75) !important; }
+
+/* Spacious: expand padding on common layout containers */
+.density-spacious .px-4 { padding-left: calc(1rem * 1.25) !important; padding-right: calc(1rem * 1.25) !important; }
+.density-spacious .px-6 { padding-left: calc(1.5rem * 1.25) !important; padding-right: calc(1.5rem * 1.25) !important; }
+.density-spacious .py-2 { padding-top: calc(0.5rem * 1.25) !important; padding-bottom: calc(0.5rem * 1.25) !important; }
+.density-spacious .py-3 { padding-top: calc(0.75rem * 1.25) !important; padding-bottom: calc(0.75rem * 1.25) !important; }
+.density-spacious .py-4 { padding-top: calc(1rem * 1.25) !important; padding-bottom: calc(1rem * 1.25) !important; }
+.density-spacious .py-6 { padding-top: calc(1.5rem * 1.25) !important; padding-bottom: calc(1.5rem * 1.25) !important; }
+.density-spacious .p-4  { padding: calc(1rem * 1.25) !important; }
+.density-spacious .p-6  { padding: calc(1.5rem * 1.25) !important; }
+.density-spacious .gap-4 { gap: calc(1rem * 1.25) !important; }
+.density-spacious .gap-6 { gap: calc(1.5rem * 1.25) !important; }
+.density-spacious .space-y-4 > * + * { margin-top: calc(1rem * 1.25) !important; }
+.density-spacious .space-y-6 > * + * { margin-top: calc(1.5rem * 1.25) !important; }
+
+@media print {
+  .no-print { display: none !important; }
+  .print-break { page-break-before: always; }
+}

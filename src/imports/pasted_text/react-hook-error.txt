@@ -1,0 +1,55 @@
+Warning: Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
+1. You might have mismatching versions of React and the renderer (such as React DOM)
+2. You might be breaking the Rules of Hooks
+3. You might have more than one copy of React in the same app
+See https://reactjs.org/link/invalid-hook-call for tips about how to debug and fix this problem.
+❌ TypeError: Cannot read properties of null (reading 'useState')
+    at useState (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-IZZUN6UV.js?v=4dc1db35:1067:29)
+    at LocaleProvider (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/src/i18n/LocaleContext.tsx:26:36)
+    at renderWithHooks (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:11596:26)
+    at mountIndeterminateComponent (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:14974:21)
+    at beginWork (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:15962:22)
+    at HTMLUnknownElement.callCallback2 (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:3680:22)
+    at Object.invokeGuardedCallbackDev (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:3705:24)
+    at invokeGuardedCallback (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:3739:39)
+    at beginWork$1 (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:19818:15)
+    at performUnitOfWork (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:19251:20)
+2
+❌ Warning: Invalid hook call. Hooks can only be called inside of the body of a function component. This could happen for one of the following reasons:
+1. You might have mismatching versions of React and the renderer (such as React DOM)
+2. You might be breaking the Rules of Hooks
+3. You might have more than one copy of React in the same app
+See https://reactjs.org/link/invalid-hook-call for tips about how to debug and fix this problem.
+❌ TypeError: Cannot read properties of null (reading 'useState')
+    at useState (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-IZZUN6UV.js?v=4dc1db35:1067:29)
+    at LocaleProvider (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/src/i18n/LocaleContext.tsx:26:36)
+    at renderWithHooks (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:11596:26)
+    at mountIndeterminateComponent (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:14974:21)
+    at beginWork (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:15962:22)
+    at HTMLUnknownElement.callCallback2 (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:3680:22)
+    at Object.invokeGuardedCallbackDev (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:3705:24)
+    at invokeGuardedCallback (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:3739:39)
+    at beginWork$1 (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:19818:15)
+    at performUnitOfWork (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:19251:20)
+❌ The above error occurred in the <LocaleProvider> component:
+
+    at LocaleProvider (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/src/i18n/LocaleContext.tsx:24:34)
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://reactjs.org/link/error-boundaries to learn more about error boundaries.
+❌ TypeError: Cannot read properties of null (reading 'useState')
+    at useState (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-IZZUN6UV.js?v=4dc1db35:1067:29)
+    at LocaleProvider (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/src/i18n/LocaleContext.tsx:26:36)
+    at renderWithHooks (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:11596:26)
+    at mountIndeterminateComponent (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:14974:21)
+    at beginWork (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:15962:22)
+    at beginWork$1 (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:19806:22)
+    at performUnitOfWork (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:19251:20)
+    at workLoopSync (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:19190:13)
+    at renderRootSync (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:19169:15)
+    at recoverFromConcurrentError (https://app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-TPJYOTJD.js?v=ac811e91:18786:28)
+❌ [vite] failed to connect to websocket.
+your current setup:
+  (browser) app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site/ <--[HTTP]--> localhost:3000/ (server)
+  (browser) app-4zithwedhb52uurfzebzwwjcybqgblpvjrp5xe54gs72ycmdmz5q.makeproxy-c.figma.site:/ <--[WebSocket (failing)]--> localhost:3000/ (server)
+Check out your Vite / network configuration and https://vite.dev/config/server-options.html#server-hmr .

@@ -1,0 +1,952 @@
+================================================================================
+HR SUITE — PART 2b: EMPLOYEE DIRECTORY APP
+TECHNICAL SPECIFICATION
+================================================================================
+App:         Employee Directory
+File:        EmployeeDirectoryEnhanced.tsx
+Tech Stack:  React + Supabase + Tailwind CSS v4
+Storage:     Supabase Storage (bucket: employee-documents)
+Permissions: Permissions App (role-based)
+Master Data: Master Data App (DEPARTMENTS, DESIGNATIONS, LOCATIONS, SKILLS, SKILL_CATEGORIES)
+Push:        Web Push API
+Accent:      #6366F1 (Indigo)
+Date:        2026-09-04
+================================================================================
+
+CURRENT STATE
+-------------
+- Component:    EmployeeDirectoryEnhanced.tsx
+- DB Table:     employees
+- Views:        List | Card | OrgChart
+- Drawer Tabs:  Profile | Documents | Emergency
+- Features:     Add/Edit/Delete employee, CSV bulk import, search, filter,
+                org chart rendering, lifecycle badges, skills tags
+
+KNOWN GAPS
+----------
+  G1  Org chart read-only, no drag-to-reassign               [MEDIUM]
+  G2  Document upload stores metadata only — no actual file  [HIGH]
+  G3  No CSV export                                          [MEDIUM]
+  G4  No column picker                                       [LOW]
+  G5  No audit trail of profile changes                      [MEDIUM]
+  G6  No on-leave today badge on employee cards              [LOW]
+  G7  Birthday/anniversary reminder not surfaced             [LOW]
+
+================================================================================
+SECTION 1 — FIX PLAN
+================================================================================
+
+G1 — ORG CHART DRAG-TO-REASSIGN
+---------------------------------
+Library:
+  Use react-d3-tree (or reactflow as alternative). Enable drag events on
+  individual tree nodes via onNodeDragStop or equivalent drag-end handler.
+
+Drag Interaction:
+  - Only nodes where the logged-in user has permission can show a drag handle.
+  - On drag-start: highlight valid drop targets (other managers/nodes).
+  - On drag-drop over a target node: pause and show confirmation dialog:
+
+    Dialog: "Change {employeeName}'s manager?"
+    Body:   "Current manager:  {old_manager_name} ({old_manager_title})"
+            "New manager:      {new_manager_name} ({new_manager_title})"
+    Buttons: [Cancel] [Confirm Reassignment] (indigo)
+
+Circular Dependency Check (client-side before API call):
+  - Before showing the confirmation dialog, walk the in-memory employee
+    hierarchy downward from the employee being moved.
+  - If new_manager_id appears anywhere in that subtree → abort the drag,
+    show an error toast: "Cannot reassign — {new_manager_name} reports
+    (directly or indirectly) to {employeeName}."
+  - This check must also be enforced server-side in the PUT handler.
+
+API Call (on confirm):
+  PUT /directory/employees/{id}
+  Body: { reports_to: new_manager_id }
+  On success: re-fetch org tree; show success toast.
+  On error (409 circular): show error toast.
+
+Permission gate:
+  Permission key: can_drag_reassign_org
+  Roles granted: Department Manager | HR Admin | HR Manager | Super Admin
+  Nodes for users without this permission render without drag handles.
+
+--------------------------------------------------------------------------------
+
+G2 — ACTUAL FILE STORAGE IN SUPABASE STORAGE
+----------------------------------------------
+Bucket Setup:
+  Bucket name: employee-documents
+  Access type: Private (not public)
+  RLS policies:
+    - Employee can read own documents:
+        USING (auth.uid() = (SELECT user_id FROM employees WHERE id = employee_id))
+    - HR Admin / HR Manager / Super Admin can read all:
+        USING (has_role(auth.uid(), ARRAY['hr_admin','hr_manager','super_admin']))
+    - Uploader roles can insert:
+        WITH CHECK (has_role(auth.uid(), ARRAY['hr_admin','hr_manager','super_admin','employee']))
+
+Upload Flow (React):
+  const { data, error } = await supabase.storage
+    .from('employee-documents')
+    .upload(
+      `${employeeId}/${docType}_${Date.now()}.${ext}`,
+      file,
+      { upsert: false, contentType: file.type }
+    );
+
+  if (error) throw error;
+
+  const { data: urlData } = supabase.storage
+    .from('employee-documents')
+    .getPublicUrl(data.path);   // returns signed URL for private bucket
+
+  // Store in employee_documents table:
+  await supabase.from('employee_documents').insert({
+    employee_id:   employeeId,
+    doc_type:      docType,
+    file_name:     file.name,
+    file_url:      urlData.publicUrl,
+    file_size:     file.size,
+    uploaded_by:   currentUserId,
+    uploaded_at:   new Date().toISOString(),
+    expiry_date:   expiryDate ?? null
+  });
+
+Max file size: 10 MB per document (enforce client-side and via Supabase bucket policy).
+Allowed MIME types: application/pdf | image/jpeg | image/png | image/webp
+
+Preview behaviour:
+  - PDF:   embed in <iframe> inside a modal (height: 80vh)
+  - Image: display inline in <img> inside a modal (object-fit: contain)
+  - Other: show [Download] link — no inline preview
+
+Replace existing metadata-only approach: remove any placeholder file_url logic
+and always populate file_url from the storage upload response.
+
+--------------------------------------------------------------------------------
+
+G3 — CSV EXPORT
+----------------
+UI: Add [Export CSV] button in the page header (secondary/outline style).
+Permission key: can_export_directory
+Roles granted: HR Admin | HR Manager | Super Admin | Department Manager (own dept only)
+
+Export logic:
+  - Exports the currently filtered employee list (respects active search,
+    department, location, status filters).
+  - If G4 (column picker) is implemented, exports only selected columns;
+    otherwise exports all non-sensitive columns.
+
+Sensitive field exclusion:
+  Fields excluded for users without can_view_salary_band:
+    ctc_band | pan_number | aadhar_last4 | bank_account_last4 |
+    personal_phone | personal_email | pf_number | esi_number
+
+Date format: DD-MMM-YYYY (e.g., 04-Sep-2026)
+File name:   employees_{YYYYMMDD_HHmmss}.csv
+Method:      Client-side using a Blob + URL.createObjectURL() download trigger.
+Headers:     Humanised column names in row 1 (e.g., "Employee Code", "Full Name").
+
+--------------------------------------------------------------------------------
+
+G4 — COLUMN PICKER
+-------------------
+UI: [Columns ⚙] ghost button in header → opens a dropdown checklist panel.
+
+Available columns (in order):
+  Employee ID | Name | Department | Designation | Manager | Work Email |
+  Work Phone | Location | Status | Join Date | Shift | Employment Type |
+  Skills | Team Size (managers only) | Leave Status | WFH Status |
+  Date of Birth | Blood Group | LinkedIn
+
+Default visible columns:
+  Employee ID | Name | Department | Designation | Manager | Location |
+  Status | Leave Status | Actions
+
+Persistence: Save selected columns to localStorage under key:
+  directory_columns_{userId}
+
+Column picker state is also used by CSV export (G3) to determine exported columns.
+
+--------------------------------------------------------------------------------
+
+G5 — AUDIT TRAIL
+-----------------
+Server-side middleware (Supabase Edge Function or DB trigger):
+  On every UPDATE to the employees table (and related profile tables):
+    INSERT INTO employee_audit_log (
+      employee_id, changed_by, changed_at,
+      field_name, old_value, new_value, ip_address
+    );
+
+  Capture ip_address from the request context (x-forwarded-for header).
+
+DB Table: employee_audit_log
+  id            UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id   UUID NOT NULL REFERENCES employees(id)
+  changed_by    UUID NOT NULL REFERENCES auth.users(id)
+  changed_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  field_name    VARCHAR(100) NOT NULL
+  old_value     TEXT
+  new_value     TEXT
+  ip_address    VARCHAR(45)
+
+New Drawer Tab: "Audit Trail"
+  Layout: vertical timeline, newest first.
+  Each entry:
+    [timestamp] — {field_name} changed from "{old_value}" to "{new_value}"
+    by {changed_by_display_name}
+  Expandable rows show full old/new values if truncated.
+
+Filters in Audit Trail tab:
+  - By field name (dropdown from distinct values for this employee)
+  - By date range (date picker: from / to)
+  - By changed_by (user select)
+
+Permission key: can_view_audit_trail
+Roles granted: HR Admin | HR Manager | Super Admin
+
+Tab hidden from users without this permission.
+
+--------------------------------------------------------------------------------
+
+G6 — ON-LEAVE AND WFH BADGES
+------------------------------
+Data source: Cross-reference with the leaves table at list/card load time.
+
+Query logic:
+  SELECT employee_id FROM leaves
+  WHERE status = 'approved'
+    AND start_date <= CURRENT_DATE
+    AND end_date >= CURRENT_DATE
+    AND leave_type != 'WFH';
+
+  SELECT employee_id FROM leaves
+  WHERE status = 'approved'
+    AND start_date = CURRENT_DATE
+    AND leave_type = 'WFH';
+
+Rendering:
+  - On Leave: amber chip "On Leave" — shown on both card view and list row.
+  - WFH Today: blue chip "WFH Today" — shown on both card view and list row.
+  - Both chips can appear simultaneously (e.g., partial day).
+
+Update frequency: re-query on page load and once per hour (stale-while-revalidate).
+
+--------------------------------------------------------------------------------
+
+G7 — BIRTHDAY AND WORK ANNIVERSARY BADGES
+-------------------------------------------
+Birthday logic (client-side, computed from date_of_birth):
+  - Today: month === today.month && day === today.day
+    → Show pink chip: "Birthday Today!" on card and row
+  - This week: birthday falls within the next 7 calendar days
+    → Show muted pink chip: "Birthday This Week"
+
+Anniversary logic (computed from join_date):
+  - Today: month === today.month && day === today.day
+    → Compute years = today.year - join_date.year
+    → Show gold chip: "{N} Year{s} Today!" on card and row
+  - This week: anniversary falls within the next 7 calendar days
+    → Show muted gold chip: "Anniversary This Week"
+
+Rendering notes:
+  - Chips rendered after leave badges in visual stacking order.
+  - "Today" variants use filled chip; "This Week" variants use outline chip.
+  - Computed entirely client-side — no additional API call required.
+
+================================================================================
+SECTION 2 — FEATURE ENHANCEMENTS
+================================================================================
+
+2.1 EMPLOYEE PROFILE ENRICHMENT
+---------------------------------
+
+Personal Fields (add to employees table):
+  date_of_birth       DATE
+  blood_group         VARCHAR(5)         (A+, A-, B+, B-, O+, O-, AB+, AB-)
+  personal_email      VARCHAR(255)
+  personal_phone      VARCHAR(20)
+  present_address     JSONB              { line1, line2, city, state, country, pincode }
+  permanent_address   JSONB              { line1, line2, city, state, country, pincode }
+
+Emergency Contact: move from separate drawer tab into the Profile tab
+  (retain emergency_contact JSONB column as-is; surface in Profile tab).
+
+Professional Fields:
+  employee_code       VARCHAR(20) UNIQUE  auto-generated: EMP-{YYYY}-{0001}
+  pan_number          VARCHAR(10)         stored encrypted; format AAAAA9999A
+  aadhar_last4        CHAR(4)
+  bank_account_last4  CHAR(4)
+  pf_number           VARCHAR(22)
+  esi_number          VARCHAR(17)
+
+Digital Presence:
+  linkedin_url        VARCHAR(500)        optional
+  github_url          VARCHAR(500)        optional
+
+HR-only Fields (visible only to HR Admin / HR Manager / Super Admin):
+  probation_end_date  DATE
+  confirmation_date   DATE
+  last_promotion_date DATE
+  ctc_band            VARCHAR(50)         access restricted: can_view_salary_band
+
+Performance Fields (written by Performance App — read-only in Directory):
+  final_rating        DECIMAL(3,2)
+  competency_scores   JSONB
+  last_review_cycle_id UUID
+
+Skills: multi-select tags from SKILLS master data (skill_id references).
+
+--------------------------------------------------------------------------------
+
+2.2 NEW DB TABLES
+------------------
+
+employee_education:
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id     UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE
+  degree          VARCHAR(100)    (e.g., B.Tech, MBA, M.Sc)
+  field_of_study  VARCHAR(150)
+  institution     VARCHAR(200)
+  start_year      SMALLINT
+  end_year        SMALLINT
+  grade           VARCHAR(20)     (CGPA or percentage)
+  is_highest      BOOLEAN DEFAULT false
+  created_at      TIMESTAMPTZ DEFAULT now()
+
+employee_certifications:
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id     UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE
+  name            VARCHAR(200)    (e.g., AWS Solutions Architect)
+  issuer          VARCHAR(200)    (e.g., Amazon Web Services)
+  issue_date      DATE
+  expiry_date     DATE            nullable (some certs don't expire)
+  credential_id   VARCHAR(100)
+  file_url        VARCHAR(1000)   stored in Supabase Storage
+  created_at      TIMESTAMPTZ DEFAULT now()
+
+employee_previous_employers:
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id         UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE
+  company             VARCHAR(200)
+  designation         VARCHAR(150)
+  from_date           DATE
+  to_date             DATE
+  reason_for_leaving  VARCHAR(500)
+  reference_name      VARCHAR(150)
+  reference_contact   VARCHAR(100)
+  created_at          TIMESTAMPTZ DEFAULT now()
+
+employee_audit_log:
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id     UUID NOT NULL REFERENCES employees(id)
+  changed_by      UUID NOT NULL REFERENCES auth.users(id)
+  changed_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  field_name      VARCHAR(100) NOT NULL
+  old_value       TEXT
+  new_value       TEXT
+  ip_address      VARCHAR(45)
+
+employee_documents:
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id     UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE
+  doc_type        VARCHAR(50)     (see Document Vault types below)
+  file_name       VARCHAR(255)
+  file_url        VARCHAR(1000)   Supabase Storage path
+  file_size       INTEGER         bytes
+  uploaded_by     UUID NOT NULL REFERENCES auth.users(id)
+  uploaded_at     TIMESTAMPTZ DEFAULT now()
+  expiry_date     DATE            nullable
+  verified_by     UUID REFERENCES auth.users(id)
+  verified_at     TIMESTAMPTZ
+  notes           TEXT
+  is_active       BOOLEAN DEFAULT true   (false = superseded by newer version)
+  version         SMALLINT DEFAULT 1
+
+--------------------------------------------------------------------------------
+
+2.3 SKILL MATRIX VIEW
+----------------------
+Toggle: added as 4th option alongside [List] [Card] [OrgChart] [Skill Matrix].
+
+Layout:
+  - Y axis: employees (rows), sorted by name or department.
+  - X axis: skills (columns), grouped by skill category.
+  - Cell: filled indigo dot if employee has that skill; empty circle otherwise.
+  - Column header: skill name, rotated 45° if space is tight.
+  - Row header: employee avatar + name + designation.
+
+Filters:
+  - Skill Category: chips (All | Technical | Soft Skills | Domain | ...)
+  - Department: select dropdown
+
+Interaction:
+  - Click a cell: show tooltip "Raj Kumar — React (since {date_added})"
+  - Click employee name: open employee detail drawer.
+  - Click skill column header: highlight all employees who have that skill.
+
+Export:
+  - [Export CSV] in view toolbar: exports skill matrix as CSV
+    (rows = employees, columns = skills, values = Yes/No or 1/0)
+  - [Export Excel] if xlsx library available (optional enhancement)
+
+Use case surfacing (visible info text below matrix):
+  "Identify skill gaps across team. Use for hiring planning and L&D prioritisation."
+
+--------------------------------------------------------------------------------
+
+2.4 QUICK CONTACT PANEL (HOVER CARD)
+--------------------------------------
+Trigger: hover on any employee card or list row for ≥ 400ms.
+Dismiss: hover away from panel.
+
+Panel anatomy (floating card, shadow-lg, border, radius-12, white/dark bg):
+  Row 1: Avatar (48px) | Name (bold) | Designation (small gray)
+  Row 2: Department chip | Location text
+  Divider
+  Action row:
+    📧 [Email]           onClick: mailto:{work_email}
+    📱 [Call]            onClick: tel:{work_phone}  — shown to HR/Managers only
+    💬 [Message]         onClick: open DM in Collaboration Hub (deep link)
+    📅 [Schedule]        onClick: open calendar invite flow
+
+Visibility rules:
+  - Name, designation, department, work email: visible to all authenticated users.
+  - Phone number: visible only to HR Admin | HR Manager | Super Admin | Department Manager.
+  - [Message] button: shown only if Collaboration Hub integration is enabled.
+  - [Schedule] button: shown only if Calendar integration is enabled.
+
+Position logic: panel appears above the hovered row (or below if near viewport bottom).
+Z-index: above table/card grid, below modals.
+
+--------------------------------------------------------------------------------
+
+2.5 ORG CHART ENHANCEMENTS
+----------------------------
+Node card design (white card, border, radius-8, shadow-sm):
+  - Avatar (40px, initials fallback)
+  - Name (bold, 14px)
+  - Designation (gray, 12px)
+  - "N reports" badge (indigo pill, top-right corner)
+  - Expand/collapse button (chevron, bottom-center)
+  - Drag handle icon (show only for users with can_drag_reassign_org)
+
+Node click: opens employee detail drawer (same as list/card views).
+
+Zoom controls (fixed bottom-right corner):
+  [+] zoom in | [-] zoom out | [Fit] fit-to-screen
+  Mouse wheel zoom supported.
+
+Export buttons (header right):
+  [Export PNG]  uses html-to-image or dom-to-image library; downloads org_chart_{date}.png
+  [Export PDF]  wraps PNG in PDF via jsPDF; downloads org_chart_{date}.pdf
+
+Subtree collapse/expand:
+  Click expand button on a node: collapse/expand its direct and indirect reports.
+  Collapsed state shows a count chip: "+ N hidden".
+
+Department filter:
+  [Filter by Dept] select in org chart toolbar → rerenders tree showing only
+  the selected department's subtree, rooted at the department head.
+
+Drag-to-reassign: as specified in G1 fix plan above.
+
+--------------------------------------------------------------------------------
+
+2.6 DOCUMENT VAULT
+-------------------
+Document Types (from Master Data — DOCUMENT_TYPES lookup):
+  OFFER_LETTER | APPOINTMENT_LETTER | NDA | ID_PROOF | ADDRESS_PROOF |
+  EDUCATION_CERT | EXPERIENCE_LETTER | SALARY_SLIP | PAN_CARD | AADHAAR |
+  PASSPORT | VISA | INSURANCE | OTHER
+
+Document Status values (computed/stored):
+  Pending Upload | Uploaded | Verified | Expired | Not Required
+
+Expiry Tracking:
+  Documents with expiry_date set (VISA, PASSPORT, INSURANCE, certifications):
+    - 60 days before expiry: amber warning row, notification to HR.
+    - 30 days before expiry: orange alert row, notification to HR.
+    - On/after expiry date: red row, status = Expired, urgent notification.
+
+Verification workflow:
+  HR Admin / HR Manager / Super Admin can mark a document as Verified:
+    PATCH /directory/employee-documents/{doc_id}
+    Body: { verified_by: userId, verified_at: now() }
+  Once verified, document row shows green "Verified" badge + verifier name + date.
+
+Version history:
+  Multiple uploads of the same doc_type are retained.
+  Latest version (highest version number) is the active one.
+  Older versions accessible via "Show history" expand within that doc_type row.
+  version field auto-incremented on each new upload for same employee + doc_type.
+
+Upload modal fields:
+  Document Type (select, required)
+  File (file input, max 10MB, PDF/JPG/PNG/WEBP)
+  Expiry Date (date picker, shown/required for: PASSPORT, VISA, INSURANCE)
+  Notes (textarea, optional)
+
+================================================================================
+SECTION 3 — DATA MODEL
+================================================================================
+
+ADDITIONS TO employees TABLE
+------------------------------
+-- Identity / HR
+ALTER TABLE employees ADD COLUMN employee_code        VARCHAR(20) UNIQUE;
+ALTER TABLE employees ADD COLUMN date_of_birth        DATE;
+ALTER TABLE employees ADD COLUMN blood_group          VARCHAR(5);
+
+-- Contact
+ALTER TABLE employees ADD COLUMN personal_email       VARCHAR(255);
+ALTER TABLE employees ADD COLUMN personal_phone       VARCHAR(20);
+ALTER TABLE employees ADD COLUMN present_address      JSONB;
+  -- { line1, line2, city, state, country, pincode }
+ALTER TABLE employees ADD COLUMN permanent_address    JSONB;
+  -- { line1, line2, city, state, country, pincode }
+
+-- Digital presence
+ALTER TABLE employees ADD COLUMN linkedin_url         VARCHAR(500);
+ALTER TABLE employees ADD COLUMN github_url           VARCHAR(500);
+
+-- Compliance (access-restricted)
+ALTER TABLE employees ADD COLUMN pan_number           VARCHAR(10);  -- encrypted
+ALTER TABLE employees ADD COLUMN aadhar_last4         CHAR(4);
+ALTER TABLE employees ADD COLUMN bank_account_last4   CHAR(4);
+ALTER TABLE employees ADD COLUMN pf_number            VARCHAR(22);
+ALTER TABLE employees ADD COLUMN esi_number           VARCHAR(17);
+
+-- Employment milestones
+ALTER TABLE employees ADD COLUMN probation_end_date   DATE;
+ALTER TABLE employees ADD COLUMN confirmation_date    DATE;
+ALTER TABLE employees ADD COLUMN last_promotion_date  DATE;
+
+-- HR restricted
+ALTER TABLE employees ADD COLUMN ctc_band             VARCHAR(50);
+  -- RLS: visible only to roles with can_view_salary_band
+
+-- Performance (written by Performance App)
+ALTER TABLE employees ADD COLUMN final_rating         DECIMAL(3,2);
+ALTER TABLE employees ADD COLUMN competency_scores    JSONB;
+ALTER TABLE employees ADD COLUMN last_review_cycle_id UUID;
+
+AUTO-GENERATION of employee_code:
+  CREATE OR REPLACE FUNCTION generate_employee_code()
+  RETURNS TRIGGER AS $$
+  DECLARE
+    seq INT;
+  BEGIN
+    SELECT COUNT(*) + 1 INTO seq
+    FROM employees
+    WHERE EXTRACT(YEAR FROM created_at) = EXTRACT(YEAR FROM now());
+
+    NEW.employee_code := 'EMP-' || TO_CHAR(now(), 'YYYY') || '-' ||
+                         LPAD(seq::TEXT, 4, '0');
+    RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql;
+
+  CREATE TRIGGER trg_employee_code
+  BEFORE INSERT ON employees
+  FOR EACH ROW
+  WHEN (NEW.employee_code IS NULL)
+  EXECUTE FUNCTION generate_employee_code();
+
+INDEXES TO ADD:
+  CREATE INDEX idx_emp_dept   ON employees(department_id);
+  CREATE INDEX idx_emp_status ON employees(status);
+  CREATE INDEX idx_emp_mgr    ON employees(reports_to);
+  CREATE INDEX idx_emp_code   ON employees(employee_code);
+  CREATE INDEX idx_audit_emp  ON employee_audit_log(employee_id, changed_at DESC);
+
+================================================================================
+SECTION 4 — VALIDATION RULES
+================================================================================
+
+Employee Code:
+  - Auto-generated on INSERT via DB trigger; format EMP-{YYYY}-{0001}.
+  - Immutable after creation (UI hides field; API rejects updates to this field).
+  - Uniqueness enforced at DB level (UNIQUE constraint).
+
+Work Email:
+  - Unique constraint in DB.
+  - Must match corporate domain (configurable regex in Master Data config).
+  - Cannot be the same as personal_email for the same employee.
+  - Client-side validation + DB unique constraint.
+
+Date of Birth:
+  - Age must be >= 18 years and <= 75 years at time of entry.
+  - Validation: age = today - date_of_birth; reject if outside range.
+  - Client-side + server-side (Edge Function or CHECK constraint).
+
+Join Date:
+  - Cannot be more than 90 days in the future from today.
+  - Cannot be before 1970-01-01 (sanity check).
+
+Reports To (Manager field):
+  - Circular hierarchy check (client-side pre-validation + server-side):
+      Walk upward from new_manager_id; if employee.id appears → reject.
+  - Employee cannot be their own manager (reports_to != id).
+  - DB: no FK circular check built-in; enforce via server-side logic.
+
+PAN Number:
+  - Regex: /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/
+  - Stored encrypted (AES-256 or Supabase Vault).
+  - Displayed as masked: "ABCDE****F" (last char visible, middle digits hidden).
+
+Document Expiry Alerts:
+  - 60-day warning:  auto-flagged in compliance view; notification queued.
+  - 30-day warning:  alert-level flag; web push notification sent to HR Admin.
+  - On expiry date:  status = Expired; urgent web push; critical flag in UI.
+  - Implemented via a scheduled Supabase Edge Function (daily cron at 08:00 local).
+
+Bulk CSV Import:
+  - Max 500 rows per upload.
+  - Mandatory fields validated row by row:
+      first_name | last_name | work_email | department | designation | join_date
+  - Duplicate email detection: skip row, record as skipped (show which rows).
+  - Date columns: accept DD-MMM-YYYY, DD/MM/YYYY, YYYY-MM-DD; normalise to ISO.
+  - Show preview modal (first 10 rows) before final import.
+  - Import result summary: "{N} created | {M} skipped (duplicates) | {E} errors"
+  - Errors shown per row with specific field-level messages.
+  - Progress bar for uploads > 50 rows.
+
+Profile Deactivation/Delete:
+  - Hard delete blocked if employee has:
+      - Active leaves (approved, start_date >= today)
+      - Open tasks or projects (cross-check via Project Management module)
+      - Pending expense claims
+  - Show blocking reasons dialog; offer [Deactivate Instead] as safe alternative.
+  - Deactivation: sets status = 'Inactive', records deactivated_at timestamp.
+  - Soft-delete only: add deleted_at TIMESTAMPTZ; filter deleted_at IS NULL everywhere.
+
+================================================================================
+SECTION 5 — CROSS-APP INTEGRATIONS
+================================================================================
+
+RECRUITMENT / ONBOARDING → DIRECTORY
+  Trigger:  Onboarding checklist marked complete for a new hire.
+  Action:   POST /directory/employees with pre-filled data from offer/onboarding.
+  Result:   Employee record created automatically; no manual HR entry needed.
+  Fields:   first_name, last_name, work_email, department, designation,
+            join_date, reports_to populated from onboarding record.
+
+PERFORMANCE → DIRECTORY
+  Trigger:  Performance review cycle finalized (status = 'closed').
+  Action:   PATCH /directory/employees/{id}
+            Body: { final_rating, competency_scores, last_review_cycle_id }
+  Result:   Directory displays latest rating; read-only in Directory UI.
+
+TRAINING → DIRECTORY
+  Trigger:  Employee completes a training course and earns a certificate.
+  Action:   POST /directory/employee-certifications
+            Body: { employee_id, name, issuer, issue_date, expiry_date,
+                    credential_id, file_url }
+  Result:   Certificate appears in employee's Certifications section in drawer.
+
+DIRECTORY → USER MANAGEMENT
+  Trigger:  Employee status changed to 'Inactive' or 'Exit Process'.
+  Action:   PATCH /user-management/users/{user_id}
+            Body: { status: 'suspended', suspended_at: now(), suspended_reason: 'Employment ended' }
+  Result:   User loses login access immediately; IT notified via push notification.
+
+  Trigger:  Employee name / department / designation updated.
+  Action:   PUT /user-management/users/{user_id}
+            Body: { display_name, department, designation }
+  Result:   User profile in all apps stays in sync.
+
+DIRECTORY → COLLABORATION HUB
+  Trigger:  New employee record created.
+  Action:   POST /collaboration/channel-members
+            Body: { channel: 'general', user_id }
+            POST /collaboration/channel-members
+            Body: { channel: department_channel_id, user_id }
+  Result:   New employee auto-added to General + their department channel.
+
+DIRECTORY → EMPLOYEE DASHBOARD
+  Direction: Dashboard reads from Directory.
+  Data:     On-leave status, WFH status for the logged-in employee.
+  Method:   Shared Supabase query (leaves table cross-ref); no separate API call.
+
+DIRECTORY → ALL APPS (name/dept sync)
+  Mechanism: Supabase DB trigger on employees table UPDATE watches:
+               first_name, last_name, department_id, designation_id
+             On change: calls User Management sync endpoint (as above).
+  Ensures:  Display names and department info consistent across all modules.
+
+================================================================================
+SECTION 6 — PUSH NOTIFICATION EVENTS
+================================================================================
+
+birthday_today
+  Recipient:  Employee's direct manager + HR Admin users
+  Message:    "Today is {firstName} {lastName}'s birthday!"
+  Type:       info
+  Channel:    In-app notification only (no web push)
+  Trigger:    Daily cron at 08:00; query employees where
+              DATE_PART('month', date_of_birth) = current month AND
+              DATE_PART('day',   date_of_birth) = current day
+
+work_anniversary
+  Recipient:  Employee's direct manager
+  Message:    "{firstName} {lastName} is completing {N} year(s) with us today!"
+  Type:       info
+  Channel:    In-app notification only
+  Trigger:    Daily cron at 08:00; compute years from join_date
+
+document_expiry_30d
+  Recipient:  All HR Admin users
+  Message:    "{firstName} {lastName}'s {doc_type_label} expires on
+               {expiry_date_formatted} — please arrange renewal."
+  Type:       warning
+  Channel:    Web Push + In-app
+  Trigger:    Daily cron; query employee_documents where
+              expiry_date = today + 30 AND is_active = true
+
+document_expired
+  Recipient:  All HR Admin users
+  Message:    "{firstName} {lastName}'s {doc_type_label} has expired as of {date}."
+  Type:       urgent_warning
+  Channel:    Web Push + In-app
+  Trigger:    Daily cron; query employee_documents where
+              expiry_date < today AND status != 'Expired' AND is_active = true
+
+profile_updated_by_hr
+  Recipient:  The employee whose profile was changed
+  Message:    "Your profile was updated by {changer_name} on {date}."
+  Type:       info
+  Channel:    In-app only
+  Trigger:    Fired on each write to employee_audit_log where
+              changed_by != employee.user_id (i.e., HR/Admin changed it)
+
+bulk_import_completed
+  Recipient:  The admin user who initiated the import
+  Message:    "CSV import complete: {success} employees created,
+               {skipped} skipped (duplicates), {errors} errors."
+  Type:       info
+  Channel:    In-app only
+  Trigger:    On completion of bulk import Edge Function
+
+employee_deactivated
+  Recipient:  IT Admin role users
+  Message:    "{firstName} {lastName}'s account has been deactivated.
+               Please revoke system access and collect physical assets."
+  Type:       action_required
+  Channel:    Web Push + In-app
+  Trigger:    On UPDATE employees SET status = 'Inactive' or 'Exit Process'
+
+Notification Payload Structure (Web Push API):
+  {
+    "title":   "{notification_title}",
+    "body":    "{message}",
+    "icon":    "/icons/hr-suite-192.png",
+    "badge":   "/icons/badge-72.png",
+    "tag":     "{event_type}_{entity_id}",
+    "data": {
+      "url":   "/{app_path}?employee={employee_id}",
+      "type":  "{info|warning|urgent_warning|action_required}"
+    }
+  }
+
+================================================================================
+SECTION 7 — FIGMA PROMPT
+================================================================================
+
+Design Employee Directory screen at 1440 x 900px desktop breakpoint.
+Primary accent: #6366F1 (Indigo). Font: Inter. Radius: 12px cards, 8px inputs.
+Light mode. Tailwind CSS v4 design language.
+
+----- PAGE HEADER -----
+Left:  "Employee Directory" — H1, 28px, font-weight 700
+Center (flex grow): Search input 240px, placeholder "Search employees…",
+       leading search icon, border gray-200, radius-8, height 40px
+Right: View toggle group: [List] [Card] [OrgChart] [Skill Matrix]
+         — segmented button, active = indigo filled, inactive = gray outline
+       [+ Add Employee] — indigo solid button, height 40px
+       [Export CSV] — gray outline button
+       [Columns ⚙] — ghost button, gray text
+
+----- FILTER BAR (white card, border-b gray-100) -----
+Row 1: Department chips: [All] [IT] [HR] [Engineering] [Finance] [Ops] [...]
+         — active chip: indigo bg white text; inactive: gray-100 bg gray-700 text
+       | Location dropdown select (140px) | Status chips: [Active] [Inactive]
+         [Probation] [On Leave] | [More Filters ▾] ghost button
+Row 2 (conditional, when active filters): active filter chips with × dismiss button
+  e.g., "Dept: Engineering ×" "Status: Active ×"
+
+----- LIST VIEW (white card, border gray-200, radius-12, full width) -----
+Table header row (bg gray-50, sticky):
+  ☐ | Avatar | Emp ID (80px) | Name (150px) | Department (120px) |
+  Designation (140px) | Manager (130px) | Location (100px) |
+  Status (100px) | Leave/WFH (120px) | Actions (40px)
+  All sortable columns have ↕ icon on hover.
+
+Sample data rows (show 3):
+  Row 1: [avatar initials "RK"] EMP-2024-0012 | Raj Kumar | [Engineering chip indigo]
+          | Senior Developer | Priya Nair | Hyderabad | [Active green badge] |
+          [On Leave amber chip] | [⋮]
+  Row 2: [avatar] EMP-2023-0087 | Sunita Mehta | [HR chip pink] | HR Manager |
+          Arjun Das | Mumbai | [Active green badge] | [WFH Today blue chip] |
+          [🎂 pink chip] | [⋮]
+  Row 3: [avatar] EMP-2025-0003 | Kiran Patel | [IT chip teal] | DevOps Engineer |
+          Raj Kumar | Bengaluru | [Probation orange badge] | — | [⋮]
+
+Status badges: Active = green filled pill | Inactive = gray pill |
+               Probation = orange pill | Exit Process = red pill
+
+Row hover state: subtle bg gray-50; quick contact card floats upper-right of row:
+  [Avatar 32px] Name | Designation
+  [📧 Email] [📱 Phone] [💬 Message] [📅 Schedule]
+  — white card, shadow-lg, border, radius-10
+
+3-dot actions menu items: Edit | View Profile | Manage Documents | Deactivate | Delete
+
+----- CARD VIEW (3-column grid, gap-4) -----
+EmployeeCard (white, border gray-200, radius-12, shadow-sm):
+  Top bar (8px height): department color strip (Engineering=indigo, HR=pink, IT=teal, etc.)
+  Body padding 16px:
+    Status dot (absolute top-right 12px): green/gray/orange/red circle 10px
+    Avatar circle 64px: indigo bg, white initials 24px bold — centered
+    Name: 16px bold, center aligned
+    Designation: 13px gray-500, center
+    Department chip: small, center
+    Location: 12px gray-400, pin icon, center
+  Status chips row (center, flex-wrap, gap-4px):
+    [On Leave amber] [WFH Today blue] [🎂 Birthday pink] [🎉 Anniversary gold]
+    (only relevant chips shown)
+  Footer (border-t gray-100, pt-10px):
+    [View Profile] indigo text link, center
+
+----- ORG CHART VIEW -----
+Background: gray-50
+Top of chart: CEO/MD node centered
+Connecting lines: gray-300, 1px stroke, right-angle elbow connectors
+
+Node card (white, border gray-200, radius-8, shadow-sm, width 200px):
+  Left side: Avatar 40px (initials, indigo bg)
+  Right side:
+    Name 13px bold | Designation 11px gray-500
+    "4 reports" indigo pill badge (bottom-right corner)
+  Drag handle icon (⠿) appears on hover for permitted users (gray-400)
+  Expand/collapse chevron (bottom-center, below card)
+
+Zoom controls (fixed bottom-right, white card radius-8 shadow):
+  [+] [−] [⊞ Fit] buttons, 32px each, border
+
+Export buttons in org chart toolbar (header right): [Export PNG] [Export PDF]
+Department filter: [Filter by Dept ▾] select, 160px
+
+----- EMPLOYEE DETAIL DRAWER (right slide-over, 740px, full height) -----
+Overlay: bg black/40 blur-sm
+
+Drawer header:
+  Avatar 80px (indigo circle, white initials 32px) — left
+  Name: H2 20px bold | Designation 14px gray-500 | [Engineering chip] | [Active green badge]
+  [Edit] indigo outline button (top right) | [Deactivate] red ghost button
+
+Drawer tabs (sticky below header):
+  [Profile] [Documents] [Education] [Skills] [Audit Trail]
+  Active tab: indigo underline 2px + indigo text; inactive: gray-500
+
+-- PROFILE TAB --
+Read-only mode (default), two-column layout, 16px gap:
+  Col 1:
+    Employee Code:    EMP-2024-0012
+    Join Date:        04-Sep-2022
+    Department:       Engineering [chip]
+    Designation:      Senior Developer
+    Manager:          Priya Nair [link]
+    Location:         Hyderabad
+    Shift:            General (9:00–18:00)
+    Employment Type:  Full-time Permanent
+    Probation End:    04-Mar-2023
+  Col 2:
+    Work Email:       raj.kumar@company.com
+    Personal Email:   raj.k.personal@gmail.com
+    Work Phone:       +91 98765 XXXXX
+    Personal Phone:   +91 87654 XXXXX (HR only)
+    Blood Group:      B+
+    Date of Birth:    15-Aug-1992
+    LinkedIn:         linkedin.com/in/rajkumar [link icon]
+    GitHub:           github.com/rajkumar [link icon]
+
+  HR-Only section (indigo-tinted bg-indigo-50 card, visible to HR/Admin):
+    Probation End | Confirmation Date | Last Promotion Date | CTC Band
+    [🔒 HR Restricted] label top-right
+
+  Emergency Contact subsection (collapsible):
+    Contact Name | Relationship | Phone | Email
+
+-- DOCUMENTS TAB --
+Summary chips row: "3 Verified ✓ (green)" "2 Pending ⏳ (amber)" "1 Expired ✗ (red)"
+
+Document table:
+  Columns: Doc Type | File Name | Uploaded | Expiry | Status | Actions
+  Row styles:
+    Verified:  normal
+    30d warn:  amber bg tint (bg-amber-50)
+    Expired:   red bg tint (bg-red-50) + "Expired" red badge
+
+  Actions per row: [👁 Preview] [↓ Download] [🗑 Delete]
+  Version history expand: "2 older versions ▾"
+
+[+ Upload Document] indigo button — opens upload modal
+
+Upload modal (white, radius-12, shadow-xl, 480px wide):
+  Title: "Upload Document"
+  Doc Type: select dropdown (OFFER_LETTER, PASSPORT, etc.)
+  File: drag-and-drop zone or click (PDF/JPG/PNG, max 10MB)
+  Expiry Date: date picker (shown for PASSPORT/VISA/INSURANCE)
+  Notes: textarea 3 rows
+  [Cancel] [Upload] buttons
+
+-- SKILLS TAB --
+Skill groups by category:
+  Technical Skills:
+    [React] [TypeScript] [Node.js] [AWS] [PostgreSQL] — indigo filled tags
+  Soft Skills:
+    [Leadership] [Communication] [Problem Solving] — violet filled tags
+  Domain:
+    [HR Tech] [Payroll] — teal filled tags
+
+[Edit Skills] indigo outline button → opens tag picker panel with SKILLS master data
+
+-- AUDIT TRAIL TAB (HR/Admin only) --
+Filter row: [All Fields ▾] [Date Range] [Changed By ▾]
+
+Timeline (newest first, left border indigo-200, dot indigo-500):
+  •  Apr 8, 2026, 09:32
+     Department changed: 'IT' → 'Engineering'
+     by Neha Sharma (HR Admin)   [Expand ▾]
+
+  •  Apr 5, 2026, 14:15
+     Mobile number updated
+     by employee (self-service)  [Expand ▾]
+
+Expanded row shows full old_value and new_value in two gray code boxes.
+
+----- SKILL MATRIX VIEW -----
+Y-axis (row headers, sticky left):
+  Employee avatar 32px + Name 13px + Designation 11px gray
+
+X-axis (column headers, rotated 45°, sticky top):
+  Skill names grouped by category (category separator = gray band)
+
+Cell states:
+  Has skill:    filled indigo circle 14px
+  No skill:     empty gray circle 14px, border gray-200
+  Category band cells: gray-100 bg (separator)
+
+Hover tooltip: "{EmployeeName} — {SkillName}"
+
+Toolbar: [Category: All ▾] [Department: All ▾] | [Export CSV] [Export Excel]
+
+Info text below matrix: "Identify skill gaps across teams.
+Use for hiring planning and L&D prioritisation."
+
+================================================================================
+END OF SPECIFICATION — HR_Spec_Part2b_EmployeeDirectory.txt
+================================================================================

@@ -1,0 +1,1184 @@
+================================================================================
+PORTAL SPECIFICATION — PART 1
+Apps: OKR Management | Executive Dashboard
+Tech Stack: React + Supabase + Tailwind CSS v4
+Accent Color: #6366F1 (Indigo)
+Push Notifications: Web Push API (VAPID)
+Date: 2026-09-04
+================================================================================
+
+CONTEXT
+-------
+This portal already contains: Employee Dashboard, Directory, Recruitment,
+Onboarding, User Management, Performance, Training, Communications,
+Collaboration, Workflow Automation.
+
+OKR Management is the PRIMARY OKR interface. OKRs are also referenced in the
+Performance app spec — these two apps are bidirectionally linked. The
+Executive Dashboard is a read-only aggregation layer that draws data from
+all apps including OKR Management.
+
+Permissions are managed via the Permissions App (role-based access).
+Master data (cycles, templates, thresholds) is configured via the Master
+Data App.
+
+================================================================================
+APP 1: OKR MANAGEMENT
+================================================================================
+
+Current File    : OKRManagementEnhanced.tsx
+Current DB      : okrs, key_results, okr_progress
+Current Views   : list, history, cascade (manager-only)
+Current Features: OKR cards with progress, key result management, check-ins,
+                  grading (A-F), undo delete
+
+--------------------------------------------------------------------------------
+SECTION 1 — FIX PLAN (KNOWN GAPS)
+--------------------------------------------------------------------------------
+
+G1 — Cascade View: Drag-to-Reparent (Priority: Medium)
+  Problem : Cascade view is display-only; parent-child relationships cannot
+            be changed from the UI.
+  Solution:
+    - Enable drag-and-drop on OKR nodes in cascade view using a dnd library
+      (e.g. @dnd-kit/core or react-beautiful-dnd).
+    - On drag of an OKR node onto another OKR node:
+        Show confirmation dialog:
+          "Set '{dragged_okr_title}' as a child of '{target_okr_title}'?"
+          [Confirm] [Cancel]
+    - On confirm: PUT /okr/okrs/{id}  body: { aligned_to_okr_id: newParentId }
+    - Circular parent guard (client + server):
+        Before sending request, walk the ancestor chain of newParentId.
+        If the dragged OKR appears anywhere in that chain, reject with:
+          "Cannot set parent — this would create a circular alignment."
+        Server must also enforce this check.
+    - Visual feedback: ghost image while dragging; drop target highlights green
+      on valid drop, red on invalid (circular / same node).
+
+G4 — Undo Delete: Restore Key Results and Progress History (Priority: Medium)
+  Problem : Undo delete restores the OKR row only; key results and check-in
+            history are lost permanently.
+  Solution:
+    - On delete, before calling DELETE API, capture full OKR snapshot:
+        {
+          okr: { ...all fields },
+          key_results: [ ...all KR rows for this OKR ],
+          checkins: [ ...all okr_checkins rows for this OKR ]
+        }
+    - Store snapshot in React state (undo stack, max 5 items).
+    - Show undo toast: "OKR deleted. [Undo] (10 s)"
+    - On Undo:
+        1. POST /okr/okrs  — re-create the OKR (new id or restore original id
+           depending on DB soft-delete strategy)
+        2. For each key result: POST /okr/key_results
+        3. For each check-in snapshot: POST /okr/checkins
+        4. Refresh list view.
+    - If server uses soft-delete (deleted_at column), undo = PATCH with
+      deleted_at: null — simpler and preferred.
+
+G2 — Timeline Tab: Gantt-Style View (Priority: Low)
+  Problem : No visual timeline showing OKR durations and overlap.
+  Solution:
+    - Add "Timeline" tab to the OKR app side nav.
+    - Horizontal Gantt chart:
+        Y-axis : OKRs grouped by owner (owner name as section header).
+        X-axis : months spanning the active cycle's start_date to end_date.
+        Bars   : each OKR rendered as a horizontal bar from start_date to
+                 end_date. Bar color by level:
+                   company    = purple  (#7C3AED)
+                   department = blue    (#2563EB)
+                   team       = teal    (#0D9488)
+                   individual = gray    (#6B7280)
+        KR milestones: diamond markers on the bar at the KR's expected
+                       completion date (if set).
+        Today line: vertical red dashed line at today's date.
+    - Zoom controls: [Month] [Quarter] [Year]
+    - Hover tooltip on bar: OKR title | owner | score | start-end dates.
+    - Clicking a bar navigates to that OKR's detail/card in List view.
+
+G3 — Confidence Chart in Check-In History (Priority: Low)
+  Problem : Check-in confidence levels are recorded but never visualised.
+  Solution:
+    - In the OKR detail drawer / check-in history section, add a line chart
+      below the check-in table.
+    - X-axis : check-in dates (chronological).
+    - Y-axis : confidence_level 1–5.
+    - One line per Key Result (different color per KR).
+    - Dot markers on each check-in point; hover shows date, KR title,
+      confidence value, and notes.
+    - Library: Recharts (LineChart) — consistent with rest of portal.
+
+G5 — History View: Date-Range Filter (Priority: Low)
+  Solution:
+    - Add date range picker (from / to) to History view filter row.
+    - Pass as query params: GET /okr/okrs?history=true&from={from}&to={to}
+    - Default: current cycle start → today.
+
+G6 — Bulk Grade / Bulk Close for End-of-Quarter (Priority: Low)
+  Solution: Covered in full under "Bulk End-of-Quarter Actions" in Section 2.
+
+--------------------------------------------------------------------------------
+SECTION 2 — FEATURE ENHANCEMENTS (INDUSTRY STANDARD)
+--------------------------------------------------------------------------------
+
+2.1 OKR HIERARCHY
+  Levels: company | department | team | individual
+  Stored in: okrs.level (enum)
+
+  Visibility rules:
+    company OKRs    : visible to everyone; non-admin/non-manager = read-only.
+    department OKRs : visible to members of that department.
+    team OKRs       : visible to members of that team.
+    individual OKRs : employee sees own only; manager/HR/admin sees all.
+
+  Alignment ("aligned_to_okr_id"):
+    An individual OKR can be aligned to any parent OKR at any level above it.
+    This replaces the prior "parentId" concept — same mechanism, renamed for
+    clarity. The aligned_to_okr_id is a self-referential FK on the okrs table.
+    Alignment is optional; unaligned OKRs are still valid.
+
+  UI: alignment selector on OKR create/edit form — searchable dropdown showing
+  OKRs at higher levels. Cascade view renders the full alignment tree.
+
+2.2 OKR CYCLES (CONFIGURABLE)
+  Master Data table: OKR_CYCLES
+    cycle_id    | UUID PK
+    name        | text (e.g. "Q2 2026", "Annual 2026")
+    type        | enum: Annual | Semi-Annual | Quarterly
+    start_date  | date
+    end_date    | date
+    status      | enum: Planning | Active | Review | Closed
+    fiscal_year | integer (e.g. 2026)
+
+  Default seed cycles for 2026:
+    Q1 2026  — Jan 1 – Mar 31   — Quarterly — Closed
+    Q2 2026  — Apr 1 – Jun 30   — Quarterly — Active
+    Q3 2026  — Jul 1 – Sep 30   — Quarterly — Planning
+    Q4 2026  — Oct 1 – Dec 31   — Quarterly — Planning
+    Annual 2026 — Jan 1 – Dec 31 — Annual  — Active
+
+  Cycle status rules:
+    Planning : OKRs can be drafted (draft status) but not checked in.
+    Active   : OKRs can be created, updated, and checked in.
+    Review   : No new OKRs; grading and closing allowed.
+    Closed   : Read-only. No create, update, check-in, or grade changes
+               (unless admin override with reason).
+
+  OKR form: cycle selector (dropdown of non-Closed cycles).
+  Cycle selector (top of List view): filters displayed OKRs by cycle.
+
+  Cycle Analytics (visible in Cycles tab and Executive Dashboard OKR tab):
+    - Completion %: count(is_closed=true) / count(total) per cycle.
+    - Avg score: average of okrs.score for the cycle.
+    - Top performers: top 5 employees by avg_score in okr_cycle_scores.
+
+2.3 SCORING METHODOLOGY
+  Key Result score (decimal 0.0 – 1.0, stored in key_results.score):
+    score = (current_value - start_value) / (target_value - start_value)
+    Capped at 1.0 (100% achievement cap for scoring; actual value can reach
+    120% per validation rule).
+    For boolean KRs: 0.0 or 1.0.
+
+  OKR score (decimal 0.0 – 1.0, stored in okrs.score):
+    score = average of all key_results.score values for that OKR.
+    Recomputed on every check-in update.
+
+  Color bands (stored in OKR_SCORING_THRESHOLDS master data):
+    0.0 – 0.39 : Behind      | red    | grade F / D
+    0.4 – 0.59 : Progressing | amber  | grade C
+    0.6 – 0.69 : On Track    | yellow-green | grade B-
+    0.7 – 1.0  : Achieved    | green  | grade A / B
+
+  Grade auto-suggestion (manager can override):
+    A  : score >= 0.80
+    B  : score >= 0.60 and < 0.80
+    C  : score >= 0.40 and < 0.60
+    D  : score >= 0.20 and < 0.40
+    F  : score < 0.20
+
+  Grade display: badge on OKR card (A=green, B=blue, C=yellow, D=orange, F=red)
+
+2.4 CHECK-IN CADENCE
+  Push notification reminders: configurable per employee (weekly / biweekly).
+  Default: weekly, sent on Monday 9:00 AM local time.
+
+  Check-in form (per OKR):
+    - For each Key Result:
+        currentValue  : number input (unit shown as label)
+        confidence    : 1–5 star/dot selector
+    - Notes          : textarea (optional)
+    - has_blocker    : checkbox "Flag a blocker"
+    - If has_blocker: blocker_description textarea (required if flagged)
+    - [Submit Check-In] button
+
+  Blocker notification:
+    If has_blocker = true on submit:
+      → Push notification to OKR owner's direct manager:
+        type: okr_blocker_flagged
+        message: "{employee_name} flagged a blocker on '{okr_title}'"
+
+  Check-in history (in OKR detail view):
+    - Table: date | KR | value at check-in | confidence | notes | blocker?
+    - Line chart of confidence_level over time per KR (see G3 fix).
+    - Value progression bar: shows current_value moving toward target_value
+      over time.
+
+2.5 BULK END-OF-QUARTER ACTIONS
+  Available to: manager (for their team), HR, admin.
+
+  Location: Cycles tab → click [Manage] on any cycle in Review or Active status.
+
+  Bulk Grade screen:
+    Shows table: OKR Title | Owner | Score | Auto-Suggested Grade | Override Grade
+    All rows show auto-suggested grade pre-filled.
+    Manager can override grade inline (dropdown A/B/C/D/F).
+    [Grade All] button: saves all overridden/auto grades in one POST.
+    [Close All] button: grades all ungraded OKRs (auto-grade), sets
+      all okrs.is_closed = true for this cycle, sets cycle.status = Closed.
+    [Export Scorecard] button: exports Excel/CSV with all OKRs, scores,
+      grades for the cycle.
+
+  Closing cycle:
+    1. All OKRs in cycle with no manual grade: auto-grade applied based on score.
+    2. All OKRs: is_closed = true.
+    3. Cycle: status = Closed.
+    4. okr_cycle_scores rows created/updated per employee.
+    5. Sync scores to performance_reviews (see cross-app integrations).
+    6. Push notification: okr_cycle_closed → all employees with OKRs in cycle.
+
+2.6 OKR TEMPLATES
+  Master Data table: OKR_TEMPLATES
+    template_id     | UUID PK
+    name            | text
+    type            | enum: personal | team | company
+    level           | enum: company | department | team | individual
+    objective_text  | text
+    key_results     | JSONB array of { title, unit, target_value, start_value }
+    is_active       | boolean (default true)
+
+  Seed templates:
+    1. "Increase Product Quality"
+       Level: team | Type: team
+       KRs: Reduce bug count from 50 to 10 (unit: bugs)
+            Increase test coverage from 60% to 90% (unit: %)
+            Achieve NPS score of 45 (unit: NPS)
+
+    2. "Improve Customer Satisfaction"
+       Level: department | Type: team
+       KRs: Increase CSAT from 3.5 to 4.5 (unit: score)
+            Reduce support response time from 24h to 4h (unit: hours)
+            Resolve 95% of tickets within SLA (unit: %)
+
+    3. "Grow Team Capabilities"
+       Level: team | Type: team
+       KRs: Complete 3 training certifications per person (unit: certifications)
+            Achieve 100% completion of mandatory training (unit: %)
+            Conduct 4 knowledge sharing sessions (unit: sessions)
+
+    4. "Revenue Growth"
+       Level: company | Type: company
+       KRs: Increase MRR from ₹50L to ₹75L (unit: ₹ Lakhs)
+            Acquire 50 new enterprise customers (unit: customers)
+            Reduce churn from 8% to 4% (unit: %)
+
+  Quick-create flow:
+    [+ New OKR] → dialog shows [From Template] tab + [From Scratch] tab.
+    From Template: searchable list of active templates.
+    Select → pre-fills objective, KRs (editable before saving).
+
+2.7 REPORTS AND ANALYTICS
+  Accessible from Analytics tab in OKR app sidebar.
+
+  Department OKR Health:
+    Horizontal bar chart: one bar per department showing avg OKR score.
+    Color-coded by band (red/amber/yellow-green/green).
+    Filter by cycle.
+
+  Individual Performance:
+    Table: employee name | total OKRs | on-track count | avg score | grade.
+    Sortable. Export to Excel.
+
+  Alignment Coverage:
+    KPI card: "% of individual OKRs aligned to company or dept OKR."
+    Donut chart: aligned vs unaligned.
+    Target: > 80% alignment.
+
+  Exports:
+    PDF Scorecard per employee: uses window.print() with print-specific CSS.
+      Shows: employee name, cycle, OKR list, KR details, scores, grades.
+    Excel export of all OKRs: uses SheetJS (xlsx library).
+      Columns: OKR Title | Level | Owner | Dept | Cycle | Score | Grade |
+               Start | End | Key Results (concatenated) | Is Closed.
+
+--------------------------------------------------------------------------------
+SECTION 3 — DATA MODEL ADDITIONS
+--------------------------------------------------------------------------------
+
+3.1 okrs TABLE — added columns:
+  level             | enum('company','department','team','individual')  NOT NULL DEFAULT 'individual'
+  cycle_id          | UUID FK -> okr_cycles.cycle_id  NOT NULL
+  score             | DECIMAL(3,2)  DEFAULT 0.00  -- computed, range 0.00-1.00
+  aligned_to_okr_id | UUID FK -> okrs.id  NULLABLE  -- self-referential
+  start_date        | DATE NOT NULL
+  end_date          | DATE NOT NULL
+  is_closed         | BOOLEAN DEFAULT false
+  department_id     | UUID FK -> departments.id  NULLABLE  -- for dept-level OKRs
+  team_id           | UUID FK -> teams.id  NULLABLE         -- for team-level OKRs
+
+3.2 key_results TABLE — added columns:
+  start_value       | DECIMAL(12,4)  DEFAULT 0
+  current_value     | DECIMAL(12,4)  DEFAULT 0
+  target_value      | DECIMAL(12,4)  NOT NULL
+  unit              | VARCHAR(50)    -- e.g. "%", "units", "₹ Lakhs", "score"
+  score             | DECIMAL(3,2)   DEFAULT 0.00  -- computed
+  confidence_level  | SMALLINT       -- 1-5, latest check-in value (denormalised)
+  is_boolean        | BOOLEAN        DEFAULT false  -- boolean KR (done/not done)
+
+3.3 NEW TABLE: okr_checkins
+  id                  | UUID PK DEFAULT gen_random_uuid()
+  okr_id              | UUID FK -> okrs.id  NOT NULL
+  kr_id               | UUID FK -> key_results.id  NULLABLE  -- null = OKR-level note
+  checked_by          | UUID FK -> employees.id  NOT NULL
+  check_date          | DATE NOT NULL DEFAULT CURRENT_DATE
+  current_value       | DECIMAL(12,4)
+  confidence_level    | SMALLINT  CHECK (confidence_level BETWEEN 1 AND 5)
+  notes               | TEXT
+  has_blocker         | BOOLEAN DEFAULT false
+  blocker_description | TEXT  -- required if has_blocker=true
+  created_at          | TIMESTAMPTZ DEFAULT NOW()
+  INDEX: (okr_id, check_date)
+  INDEX: (kr_id, check_date)
+
+3.4 NEW TABLE: okr_cycles
+  cycle_id    | UUID PK DEFAULT gen_random_uuid()
+  name        | VARCHAR(100) NOT NULL
+  type        | enum('Annual','Semi-Annual','Quarterly')  NOT NULL
+  start_date  | DATE NOT NULL
+  end_date    | DATE NOT NULL
+  status      | enum('Planning','Active','Review','Closed')  DEFAULT 'Planning'
+  fiscal_year | SMALLINT NOT NULL
+  created_at  | TIMESTAMPTZ DEFAULT NOW()
+  UNIQUE(name, fiscal_year)
+
+3.5 NEW TABLE: okr_cycle_scores
+  id            | UUID PK DEFAULT gen_random_uuid()
+  cycle_id      | UUID FK -> okr_cycles.cycle_id  NOT NULL
+  employee_id   | UUID FK -> employees.id  NOT NULL
+  avg_score     | DECIMAL(3,2)
+  grade         | CHAR(1)  CHECK (grade IN ('A','B','C','D','F'))
+  total_okrs    | SMALLINT DEFAULT 0
+  completed_okrs| SMALLINT DEFAULT 0
+  scored_at     | TIMESTAMPTZ DEFAULT NOW()
+  UNIQUE(cycle_id, employee_id)
+
+3.6 NEW TABLE: okr_templates  (also managed via Master Data app)
+  template_id    | UUID PK DEFAULT gen_random_uuid()
+  name           | VARCHAR(200) NOT NULL
+  type           | enum('personal','team','company')
+  level          | enum('company','department','team','individual')
+  objective_text | TEXT NOT NULL
+  key_results    | JSONB NOT NULL  -- array of {title, unit, target_value, start_value}
+  is_active      | BOOLEAN DEFAULT true
+  created_at     | TIMESTAMPTZ DEFAULT NOW()
+
+3.7 NEW TABLE: okr_scoring_thresholds  (managed via Master Data app)
+  threshold_id     | UUID PK DEFAULT gen_random_uuid()
+  label            | VARCHAR(50)  -- "Behind", "Progressing", "On Track", "Achieved"
+  min_score        | DECIMAL(3,2)
+  max_score        | DECIMAL(3,2)
+  color            | VARCHAR(20)  -- Tailwind color class or hex
+  grade_equivalent | VARCHAR(5)   -- e.g. "F/D", "C", "B", "A"
+
+--------------------------------------------------------------------------------
+SECTION 4 — MASTER DATA CONFIG (via Master Data App)
+--------------------------------------------------------------------------------
+
+OKR_CYCLES:
+  Fields  : cycle_id | name | type | start_date | end_date | status | fiscal_year
+  Managed : HR Admin, Admin
+  Actions : Create, Edit (name/dates/status), Soft-delete (only if no OKRs)
+  Rules   : Cannot delete cycle with existing OKRs; can archive (status=Closed)
+
+OKR_TEMPLATES:
+  Fields  : template_id | name | type | level | objective_text | key_results (JSONB) | is_active
+  Managed : HR Admin, Admin
+  Actions : Create, Edit, Deactivate (is_active=false), Clone template
+  Display : Templates list with preview of KRs
+
+OKR_SCORING_THRESHOLDS:
+  Fields  : threshold_id | label | min_score | max_score | color | grade_equivalent
+  Managed : Admin only
+  Actions : Edit existing thresholds (min/max/color); cannot add new rows
+            (fixed 4 bands: Behind/Progressing/On Track/Achieved)
+  Validation: bands must be contiguous and cover 0.0 – 1.0 without overlap
+
+CHECK_IN_REMINDER_SCHEDULE:
+  Managed per-employee (in employee profile) + org default in Master Data
+  Fields  : frequency (weekly/biweekly) | day_of_week | send_time
+  Default : Weekly | Monday | 09:00
+
+--------------------------------------------------------------------------------
+SECTION 5 — VALIDATION RULES
+--------------------------------------------------------------------------------
+
+OKR Title         : required | min 10 chars | max 200 chars
+Key Results       : min 1 per OKR | max 5 per OKR
+Target Value      : target_value > start_value (for numeric KRs)
+Check-in Value    : current_value cannot exceed target_value × 1.2
+                    (cap at 120%; score is capped at 1.0 separately)
+Closed OKR        : cannot check in; cannot edit; cannot add KRs
+Closed Cycle      : cannot create new OKRs; cannot check in; cannot change grades
+                    Admin override: allowed with mandatory reason field
+Circular Alignment: cannot set aligned_to_okr_id if it creates a cycle in the
+                    ancestor chain (check recursively up to depth 10)
+Grading           : only manager of OKR owner, HR Admin, or Admin can grade
+                    cannot grade own OKR as an employee
+Reopen Closed OKR : not allowed for non-admin; admin must provide reason
+                    (stored in okrs.reopen_reason)
+Boolean KR score  : 0.0 if current_value = 0 | 1.0 if current_value >= 1
+Cycle dates       : start_date < end_date; cycles of same type cannot overlap
+                    in the same fiscal_year
+
+--------------------------------------------------------------------------------
+SECTION 6 — CROSS-APP INTEGRATIONS
+--------------------------------------------------------------------------------
+
+OKR <-> Performance App (bidirectional):
+  - performance_reviews table: add column okr_cycle_score DECIMAL(3,2),
+    add column okr_cycle_id UUID FK -> okr_cycles.
+  - On OKR cycle finalization (status -> Closed):
+      UPSERT okr_cycle_scores for each employee.
+      UPDATE performance_reviews SET okr_cycle_score = avg_score
+        WHERE employee_id = X AND review_period matches cycle fiscal_year.
+  - Performance review form: read-only OKR summary panel showing the
+    employee's OKRs for the cycle, scores, and grades.
+    Fetched via: GET /okr/cycle-scores?employee_id={id}&cycle_id={id}
+
+OKR -> Executive Dashboard (one-way read):
+  - Executive Dashboard OKR Tab reads:
+      Company OKR progress: okrs WHERE level='company' AND cycle_id=activeCycle
+      Dept breakdown: aggregate by department_id
+      At-risk OKRs: okrs WHERE score < 0.4 AND is_closed=false
+  - API endpoint: GET /okr/exec-summary?cycle_id={id}
+    Returns: { company_avg_score, dept_breakdown[], top_aligned[], at_risk[] }
+
+OKR -> Analytics App:
+  - OKR health metrics available as a data source in Advanced Analytics:
+      department_okr_health view | individual_okr_performance view
+  - Exposed via: GET /analytics/okr-health?cycle_id={id}&dept_id={id}
+
+OKR -> Notifications Bell (portal-wide):
+  - okr_checkin_due, okr_behind, okr_blocker_flagged, okr_graded,
+    okr_cycle_closing_7d, okr_cycle_closed, okr_aligned_to_updated
+    all appear in the portal-wide notification bell (read from
+    notifications table filtered by recipient user_id)
+
+OKR -> Workflow Automation:
+  - OKR blocker flag = trigger for approval/escalation workflow.
+  - Trigger event: okr_blocker_created
+  - Workflow: notify manager (step 1) → if not resolved in 48h, escalate
+    to department head (step 2)
+  - Configured as a workflow template in the Workflow Automation app:
+    "OKR Blocker Escalation" template
+
+--------------------------------------------------------------------------------
+SECTION 7 — PUSH NOTIFICATIONS (Web Push API / VAPID)
+--------------------------------------------------------------------------------
+
+All notifications stored in notifications table:
+  id | user_id | type | title | body | link | is_read | created_at
+
+Notification types and routing:
+
+okr_checkin_due
+  Trigger    : Scheduled job (weekly/biweekly per employee setting)
+  Recipients : OKR owner (all employees with active OKRs in active cycle)
+  Priority   : warning
+  Title      : "Check-in reminder"
+  Body       : "Weekly check-in due for your OKRs in Q{N} {year}"
+  Link       : /okr-management?cycle={id}&action=checkin
+
+okr_behind
+  Trigger    : Scheduled job at cycle midpoint; recheck weekly
+  Condition  : okrs.score < 0.4 AND is_closed=false AND cycle at midpoint
+  Recipients : OKR owner + OKR owner's direct manager
+  Priority   : warning
+  Title      : "OKR falling behind"
+  Body       : "'{okr_title}' is Behind — current score {score}"
+  Link       : /okr-management?okr_id={id}
+
+okr_blocker_flagged
+  Trigger    : On check-in submit with has_blocker=true
+  Recipients : OKR owner's direct manager
+  Priority   : action_required
+  Title      : "Blocker flagged on OKR"
+  Body       : "{employee_name} flagged a blocker on '{okr_title}': {blocker_description_truncated}"
+  Link       : /okr-management?okr_id={id}
+
+okr_graded
+  Trigger    : On grade saved (individual or bulk)
+  Recipients : OKR owner
+  Priority   : info
+  Title      : "Your OKR has been graded"
+  Body       : "'{okr_title}' received grade {grade} from {manager_name}"
+  Link       : /okr-management?okr_id={id}
+
+okr_cycle_closing_7d
+  Trigger    : Scheduled job 7 days before cycle end_date
+  Recipients : All employees with active (is_closed=false) OKRs in the cycle
+  Priority   : warning
+  Title      : "OKR cycle closing in 7 days"
+  Body       : "Q{N} OKR cycle closes on {end_date} — complete your check-ins"
+  Link       : /okr-management?cycle={id}
+
+okr_cycle_closed
+  Trigger    : On cycle status change to Closed
+  Recipients : All employees with OKRs in the cycle
+  Priority   : info
+  Title      : "OKR cycle closed"
+  Body       : "Q{N} {year} OKR cycle is now closed — view your scorecard"
+  Link       : /okr-management?cycle={id}&tab=history
+
+okr_aligned_to_updated
+  Trigger    : On parent OKR title or description update
+  Recipients : Owner(s) of child OKRs aligned to the updated parent
+  Priority   : info
+  Title      : "Parent OKR updated"
+  Body       : "Parent OKR '{parent_title}' was updated by {updater_name}"
+  Link       : /okr-management?okr_id={parent_id}
+
+--------------------------------------------------------------------------------
+SECTION 8 — FIGMA DESIGN PROMPT (OKR MANAGEMENT)
+--------------------------------------------------------------------------------
+
+Design OKR Management at 1440x900px. Background: gray-50 (#F9FAFB).
+Accent: #6366F1 (indigo). Font: Inter.
+
+LAYOUT:
+  Left sidebar (240px): Portal logo | SideNav items:
+    OKRs (active, indigo bg pill) | History | Timeline | Analytics | Cycles
+  Main content area (flex-1, padding 32px)
+
+LIST VIEW:
+
+  Header row:
+    H1 bold "My OKRs — Q2 2026"  (24px, gray-900)
+    Cycle selector dropdown (right-aligned): shows cycle name + status badge
+    [+ New OKR]  indigo filled button  (right)
+    [Cascade View] icon toggle button (tree icon, manager only, right of New OKR)
+
+  Filter row (below header, gap-3 flex):
+    [Level: All ▾]      dropdown: All / Company / Department / Team / Individual
+    [Type: All ▾]       dropdown: All / Personal / Team / Company
+    [Status: Active ▾]  dropdown: Active / Behind / On Track / Completed / All
+    [Owner: All ▾]      avatar picker (manager+ only; hidden for employee)
+    [Clear filters]     ghost link (only shown when filters active)
+
+  OKR Card Grid (2 columns, gap-6):
+
+    OKR Card (white, border border-gray-200, border-radius 12px, padding 20px,
+              hover: shadow-md transition):
+
+      TOP ROW (flex, justify-between, align-center):
+        Left: Level chip  (company=purple bg, dept=blue bg, team=teal bg,
+                            individual=gray bg — all light pastel bg, dark text,
+                            rounded-full, 10px text, px-2 py-0.5)
+              Type badge  (personal/team/company, outlined, same row)
+        Right: Cycle chip "Q2 2026" (gray-100, gray-600 text, rounded-full)
+
+      TITLE ROW (mt-3):
+        H3 bold 16px gray-900: objective title (2-line clamp)
+
+      OWNER ROW (mt-1, flex items-center gap-2):
+        Avatar circle (28px, initials) + owner name (14px gray-500)
+        | Aligned to: "{parent_okr_title}" (indigo text, 12px, if set)
+
+      SCORE + PROGRESS SECTION (mt-4, flex items-center gap-4):
+        Left: SVG donut progress ring (64px diameter):
+              Background ring: gray-200; Filled arc: indigo (#6366F1)
+              Fill % = okr.score × 100
+              Center text: "{score_percent}%" (14px bold gray-900)
+        Right (flex-col):
+          Score text: "0.72 / 1.0"  (score large 24px bold indigo + "/1.0" 14px gray-400)
+          Color band chip: "On Track" (green bg) / "Behind" (red) / etc.
+
+      KEY RESULTS LIST (mt-4, space-y-2, max 3 KRs then "+N more" link):
+        Each KR row:
+          Title (13px gray-700, 1-line clamp, flex-1)
+          Progress bar (full width, h-1.5, gray-100 bg, indigo fill, rounded)
+          Right: "{current}/{target} {unit}"  12px gray-500
+          Confidence dots (5 dots: filled=indigo, empty=gray-200, 6px each)
+
+      FOOTER (mt-4, border-t border-gray-100, pt-3, flex justify-between):
+        Left:  Grade badge (A=green/B=blue/C=yellow/D=orange/F=red, bold, 14px)
+               + "Score {score}" label 12px gray-500
+        Right: [Check In] teal filled button 32px height
+               [View]    ghost button
+               [Grade]   gray outlined (manager only; active only in Review cycle)
+
+  EMPTY STATE (if no OKRs):
+    Centered illustration + "No OKRs for this cycle" + [Create your first OKR]
+
+TIMELINE VIEW (Gantt):
+  White card, full width, h=400px, overflow-x scroll.
+  Y-axis (left 180px): grouped by owner — owner name as gray-700 bold header row,
+    then OKR title rows (14px gray-600).
+  X-axis (top): months Jan–Dec or cycle months, each column proportional.
+  Bars: rounded-full height 20px, colored by level (purple/blue/teal/gray).
+  Diamond markers: SVG diamonds at KR milestone dates (12px, same color as bar).
+  Today line: 2px dashed red vertical, with "Today" label at top.
+  Hover tooltip: white rounded-8 shadow: title | owner | score | {start}–{end}.
+
+CYCLES TAB:
+  Section header: "OKR Cycles" H2 + [+ New Cycle] (admin only)
+  Cycle cards (list, full-width white cards):
+    Left: cycle name bold | type badge | dates gray-500
+    Center: status badge (Planning=gray/Active=green/Review=amber/Closed=gray)
+            OKR count (N OKRs) | avg score chip (color banded)
+    Right: [Manage] indigo outlined button
+
+  CYCLE MANAGEMENT MODAL (full-screen overlay):
+    Header: "Close Q2 2026 — Bulk Grade & Close"
+    Table: OKR Title | Owner | Dept | Score | Band | Suggested Grade | Override
+    Override: dropdown A/B/C/D/F (pre-filled with suggested grade)
+    Footer: [Cancel] | [Grade All] | [Close Cycle] (red/destructive, confirm dialog)
+
+================================================================================
+APP 2: EXECUTIVE DASHBOARD
+================================================================================
+
+Current File : ExecutiveDashboardEnhanced.tsx
+Current DB   : none directly (aggregated from all apps)
+Current Tabs : Overview, People, Finance, Operations, OKR
+Role Gate    : admin | manager | finance | hr only
+
+--------------------------------------------------------------------------------
+SECTION 1 — FIX PLAN (KNOWN GAPS)
+--------------------------------------------------------------------------------
+
+G1 — KPI Cards Not Clickable (Priority: Medium)
+  Problem : Cards show metrics but clicking does nothing.
+  Solution:
+    - Wrap each KPI card in a <button> or <a> with cursor-pointer.
+    - onClick: navigate to source app with pre-applied filter using
+      React Router navigate() or window.location.
+    - Drill-through map:
+        Headcount card         -> /directory?status=active
+        Payroll Cost card      -> /payroll?period={dateRange}
+        Active Candidates card -> /recruitment?status=active
+        Training Completion    -> /training?metric=completion
+        Open IT Tickets        -> /it-services?status=open
+        Outstanding Invoices   -> /invoices?status=outstanding
+    - Visual affordance: hover state shows subtle shadow + [→] arrow appears
+      in top-right of card.
+
+G2 — No PDF / Image Export (Priority: Medium)
+  Problem : No way for executives to export the dashboard.
+  Solution:
+    [Export PDF]:
+      - Apply @media print CSS: hide sidebar, topbar, tabs, show only active
+        tab content. Page break between sections.
+      - Call window.print().
+      - Print CSS: white bg, black text, no box shadows, full-width charts.
+    [Export PNG]:
+      - Use html2canvas library (import dynamically to avoid bundle bloat).
+      - Capture: document.getElementById('exec-dashboard-content')
+      - Download as PNG: filename = "exec-dashboard-{date}.png"
+      - Show loading spinner during capture.
+    Rate limit: max 5 exports per day per user (tracked in
+      user_export_log table or localStorage with date key reset daily).
+
+G3 — Date Range Not Honoured by Backend (Priority: HIGH)
+  Problem : Date range picker exists in UI but backend ignores it for some
+            domains, breaking period comparisons.
+  Solution:
+    - All domain API calls MUST accept from and to query parameters:
+        GET /payroll?from={ISO_date}&to={ISO_date}
+        GET /invoices?from={ISO_date}&to={ISO_date}
+        GET /recruitment/stats?from={ISO_date}&to={ISO_date}
+        GET /training/stats?from={ISO_date}&to={ISO_date}
+        GET /it-services/stats?from={ISO_date}&to={ISO_date}
+        GET /directory/stats?from={ISO_date}&to={ISO_date}
+    - Frontend: on date range change, invalidate and refetch all queries with
+      updated params (React Query: queryKey includes [from, to]).
+    - Loading state: show skeleton on each card section during refetch.
+    - "Last updated {N} min ago" label in topbar updates after each fetch.
+
+G4 — Widget Layout Hardcoded (Priority: Low)
+  Solution: Covered in "Configurable Widget Layout" enhancement below.
+
+G5 — Hardcoded Stage Labels (Priority: Low)
+  Solution: Stage labels (onboarding funnel stages, pipeline stages) read from
+    Master Data at runtime. GET /master-data/stages?type=onboarding_funnel
+    Fallback to hardcoded defaults if Master Data endpoint unavailable.
+
+--------------------------------------------------------------------------------
+SECTION 2 — FEATURE ENHANCEMENTS (INDUSTRY STANDARD)
+--------------------------------------------------------------------------------
+
+2.1 CONFIGURABLE WIDGET LAYOUT
+  Library: react-grid-layout (or @dnd-kit/core for drag-only without resize).
+  Behavior:
+    - [Customize Dashboard] toggle in topbar: enables drag mode.
+      - In drag mode: each widget card shows a grab handle (6-dot icon top-left)
+        and resize handles at corners.
+      - Drag to reorder within the grid; resize to expand/collapse.
+    - Widget visibility panel (slide-out from right):
+      - List of all widgets with toggle switch (show/hide).
+      - Hiding a widget removes it from the grid (recoverable).
+    - Layout saved to:
+        Primary: user_dashboard_layouts table (user_id + layout_config JSONB)
+        Fallback: localStorage key "exec_dashboard_layout_{user_id}"
+    - [Reset to Default] button in Customize panel: clears saved layout.
+    - Max 20 widgets in one layout; must include at least 4 KPI cards.
+
+2.2 REAL-TIME ALERTS PANEL
+  Position: Right sidebar (240px wide) on Overview tab.
+            On narrow screens: collapsible panel toggled by bell icon.
+  Data sources:
+    - S1 defects open:     GET /it-services/critical-tickets?severity=S1&status=open
+    - SLA breaches today:  GET /it-services/sla-breaches?date=today
+    - Budget overruns:     GET /payroll/budget-alerts
+    - Compliance failures: GET /security/compliance-failures?status=open
+    - Pending approvals:   GET /approvals/pending?reviewer={current_user_id}
+
+  Alert row structure:
+    Colored dot (red=critical, amber=warning, blue=info)
+    Description text (2-line clamp)
+    Timestamp (relative: "2 min ago")
+    [View →] link to source app
+
+  Refresh:
+    - Auto-refresh every 5 minutes (setInterval with cleanup on unmount).
+    - OR Supabase Realtime subscription on a materialized alerts_view.
+    - Refresh indicator: spinner shown during fetch; "last refreshed {time}" below panel.
+  Badge: "Alerts (N)" in panel header; N = total open alerts count (red if > 0).
+
+2.3 SCHEDULED EMAIL REPORTS
+  [Schedule Report] button in topbar → opens configuration modal.
+
+  Modal: Create / Edit Scheduled Report:
+    Name          : text input (required)
+    Frequency     : radio: Daily | Weekly | Monthly
+    Next run at   : date-time picker
+    Recipients    : tag input (email addresses; min 1 required)
+    Sections      : checkboxes: Overview KPIs | People | Finance | Operations | OKR
+    [Save] [Cancel]
+
+  Reports list page (tab: "Scheduled Reports"):
+    Table: Name | Frequency | Next Run | Last Run | Recipients | Status | Actions
+    Actions: [Run Now] [Edit] [Delete]
+
+  Email delivery:
+    - Triggered by Supabase Edge Function on scheduled_reports.next_run_at.
+    - Template: HTML email with:
+        Header: company logo + report name + date range
+        KPI summary table (metric | value | vs last period)
+        Charts as embedded base64 PNG (captured server-side or sent as links)
+        Footer: "View live dashboard" button
+
+2.4 COMPARATIVE PERIOD ANALYSIS
+  "vs last period" delta on all KPI cards:
+    - Compute: (current_value - previous_value) / previous_value × 100
+    - Display: "↑ +5.2%" (green) or "↓ -3.1%" (red) below metric value.
+    - "Last period" = same duration immediately before the selected date range.
+    - "Same period last year" toggle: compare current period to same period -1 year.
+
+  Sparkline mini-chart inside each KPI card:
+    - Shows the metric's trend over the selected period.
+    - 60×30px inline SVG line chart; no axes; uses accent color fill.
+    - Data: GET /exec-dashboard/sparkline?metric={metric_key}&from={from}&to={to}
+      Returns array of { date, value } points (max 30 points, sampled if longer).
+
+2.5 OVERVIEW TAB ENHANCEMENTS
+  New KPI cards (add to second or third row):
+    - OKR Completion %    (source: OKR Management)
+    - Project Health      (source: Projects app — if present; else hide)
+    - Security Events     (source: Security app — event count this period)
+
+  Organization Timeline (full-width card at bottom of Overview):
+    - Horizontal scrolling timeline showing key events this period.
+    - Event types (fetched from multiple apps):
+        New joiners / exits (HR / Directory)
+        Cycle closed / opened (OKR)
+        Major invoice paid (Finance)
+        Training completion milestone (Training)
+        Policy change published (Communications)
+    - Events rendered as pill chips on a horizontal line, grouped by date.
+    - Clicking a chip navigates to the relevant app/record.
+
+  Quick Actions panel (top-right of Overview, executive shortcut):
+    - Pending Leave Approvals   N → [Review] -> /leave?status=pending
+    - Pending Invoices          N → [Approve] -> /invoices?status=pending_approval
+    - Pending PIPs              N → [View] -> /performance?tab=pip&status=pending
+
+--------------------------------------------------------------------------------
+SECTION 3 — DATA MODEL
+--------------------------------------------------------------------------------
+
+3.1 NEW TABLE: user_dashboard_layouts
+  id            | UUID PK DEFAULT gen_random_uuid()
+  user_id       | UUID FK -> employees.id  NOT NULL
+  layout_config | JSONB NOT NULL  -- react-grid-layout serialized layout
+  updated_at    | TIMESTAMPTZ DEFAULT NOW()
+  UNIQUE(user_id)
+
+  layout_config JSONB structure:
+  {
+    "widgets": [
+      { "id": "kpi_headcount",   "x": 0, "y": 0, "w": 4, "h": 2, "visible": true },
+      { "id": "kpi_payroll",     "x": 4, "y": 0, "w": 4, "h": 2, "visible": true },
+      ...
+    ],
+    "version": 1
+  }
+
+3.2 NEW TABLE: scheduled_reports
+  id          | UUID PK DEFAULT gen_random_uuid()
+  name        | VARCHAR(200) NOT NULL
+  created_by  | UUID FK -> employees.id  NOT NULL
+  frequency   | enum('daily','weekly','monthly')  NOT NULL
+  next_run_at | TIMESTAMPTZ NOT NULL
+  recipients  | TEXT[]  NOT NULL  -- array of email strings
+  sections    | TEXT[]  NOT NULL  -- e.g. ['overview','people','finance']
+  last_run_at | TIMESTAMPTZ
+  is_active   | BOOLEAN DEFAULT true
+  created_at  | TIMESTAMPTZ DEFAULT NOW()
+
+3.3 NEW TABLE: user_export_log  (for rate limiting exports)
+  id          | UUID PK DEFAULT gen_random_uuid()
+  user_id     | UUID FK -> employees.id  NOT NULL
+  export_type | VARCHAR(20)  -- 'pdf' or 'png'
+  exported_at | TIMESTAMPTZ DEFAULT NOW()
+  INDEX(user_id, exported_at)
+
+--------------------------------------------------------------------------------
+SECTION 4 — TABS FULL SPEC
+--------------------------------------------------------------------------------
+
+4.1 OVERVIEW TAB
+  KPI Row — 3 columns × 2 rows (6 cards total), white cards, clickable:
+
+  Row 1:
+    Headcount (total active employees)
+      Value: 312 | Delta: "↑ +5 this month" | Sparkline | Link: /directory?status=active
+    Payroll Cost (current period total)
+      Value: ₹24.8L | Delta: "↑ +2.1% vs last month" | Sparkline | Link: /payroll
+    Active Candidates (open recruitment pipeline)
+      Value: 47 | Delta: "↓ -3 vs last week" | Sparkline | Link: /recruitment?status=active
+
+  Row 2:
+    Training Completion (% employees completed mandatory training)
+      Value: 78% | Delta: "↑ +4% vs last period" | Sparkline | Link: /training
+    Open IT Tickets
+      Value: 14 | Delta: "↑ +6 (red — worse)" | Sparkline | Link: /it-services?status=open
+    Outstanding Invoices (total amount)
+      Value: ₹3.2L | Delta: "↓ -₹0.8L vs last month" | Sparkline | Link: /invoices?status=outstanding
+
+  Card component structure (reusable ExecKPICard):
+    <card onClick={navigate(drillUrl)} cursor-pointer hover:shadow-md>
+      <label gray-500 text-sm>{label}</label>
+      <value gray-900 text-3xl font-bold>{value}</value>
+      <delta chip (green/red based on direction)>{deltaText}</delta>
+      <sparkline SVG 60×30px />
+      <arrow icon (→) opacity-0 group-hover:opacity-100 top-right absolute />
+    </card>
+
+  Real-Time Alerts Sidebar (right, 240px):
+    Background: gray-100; Border-left: 1px gray-200
+    Header: "Alerts (3)" red badge
+    Alert rows (each):
+      Colored dot (red/amber/blue) + description text + [View →] link
+    [View All →] footer link -> /alerts
+    Auto-refresh: 5 min interval
+
+  Organization Timeline (full-width white card, bottom):
+    Horizontal scroll, events as date-stamped pill chips on a line
+    Chip colors: new_joiner=green / exit=red / okr_event=indigo / invoice=blue / other=gray
+
+  Quick Actions panel (top-right, above alerts sidebar, white card):
+    Title: "Quick Actions"
+    3 rows: metric + count badge + [Review] link
+
+4.2 PEOPLE TAB
+  Layout: 2-column grid (50/50), then 2-column 40/60
+
+  Row 1:
+    Headcount by Department: horizontal bar chart (Recharts BarChart horizontal)
+      Bars sorted descending; dept name left label; count right label
+    Attrition Rate: gauge chart (Recharts RadialBarChart or custom SVG gauge)
+      Target marker at 5%; current value as arc; color: green if <5%, red if >5%
+      Headline: "Attrition Rate: 3.2%" + "Target: <5%"
+
+  Row 2:
+    Onboarding Funnel (40%): funnel chart showing stages (Applied / Screening /
+      Offer / Joined); each stage = count + conversion % from previous
+    Training Compliance by Dept (60%): table
+      Cols: Department | Employees | Completed | % Compliance | Status bar
+
+4.3 FINANCE TAB
+  Layout: full-width, then 2-col, then full-width
+
+  Row 1 (full width):
+    Payroll Cost Trend: line chart (Recharts LineChart)
+      X: last 12 months; Y: ₹ amount; Line: indigo; Area fill: indigo 10% opacity
+      Tooltip: month + amount + vs prior year delta
+
+  Row 2 (50/50):
+    Invoice Revenue vs Target: grouped bar chart (Recharts BarChart)
+      X: months; Bars: Revenue (indigo) + Target (gray-300); monthly last 6 months
+    Outstanding & Overdue: donut chart (Recharts PieChart)
+      Segments: Paid (green) | Due (amber) | Overdue >30d (red) | Overdue >60d (dark red)
+      Center total outstanding amount
+
+  Row 3 (full width):
+    Cost Center Breakdown: table (cost center | budget | actual | variance | % used)
+    Variance column: red if actual > budget, green otherwise
+
+4.4 OPERATIONS TAB
+  Layout: 2×2 grid
+
+  Top-Left:
+    IT Ticket SLA Compliance: radial progress ring (large, 120px)
+      % tickets resolved within SLA this period
+      Target line at 95%; current value; color: green/amber/red by threshold
+
+  Top-Right:
+    Asset Utilization: donut chart
+      Segments: Assigned | Available | In Maintenance | Retired
+      Legend below with counts
+
+  Bottom-Left:
+    Project Health Matrix: color-coded table
+      Rows: Project Name | RAG Status | % Complete | Owner | Due Date
+      RAG: Red / Amber / Green colored chip
+      Source: Projects app (if present); fallback: hidden section
+
+  Bottom-Right:
+    Recruitment Fill Rate:
+      KPI: "68% of open positions filled this quarter"
+      Bar per department: open | filled | in-pipeline
+      Source: Recruitment app
+
+4.5 OKR TAB
+  Layout: large ring (center-top) + table (left-bottom) + list (right-bottom)
+
+  Company OKR Progress Ring (centered, top):
+    Large SVG donut (160px), indigo fill, gray-200 background ring
+    Center text: "{avg_score_percent}% Average" bold + "Q2 2026" subtext
+    Below ring: color band label chip (e.g. "On Track")
+    Source: GET /okr/exec-summary?cycle_id={activeId}&level=company
+
+  Department Breakdown Table (bottom-left, 50%):
+    Cols: Department | OKR Count | Avg Score | Band | Trend (sparkline)
+    Color-coded Band cell:
+      Engineering 0.78 — green chip
+      HR          0.65 — yellow chip
+      Sales       0.42 — red chip
+    Sorted by score ascending (worst first for visibility)
+
+  At-Risk OKRs List (bottom-right, 50%):
+    Header: "At Risk OKRs (score < 0.4)" red text
+    List rows (max 10): OKR title | Owner avatar + name | Score chip (red) | [View →]
+    [View All →] link to /okr-management?filter=behind
+
+  Top Aligned Individual OKRs (below dept table):
+    Top 5 individual OKRs with highest score, aligned to a company/dept OKR
+    Cols: Employee | OKR title | Aligned to | Score | Grade
+
+--------------------------------------------------------------------------------
+SECTION 5 — VALIDATION RULES
+--------------------------------------------------------------------------------
+
+Scheduled Report  : recipients array must contain min 1 valid email (regex)
+                    frequency required; next_run_at must be in the future
+Date Range        : from < to; max range = 365 days
+                    If range > 365 days: show warning and clamp to 365
+Dashboard Layout  : max 20 widgets total in one layout config
+                    min 4 KPI cards must be visible (cannot hide all KPIs)
+Export Rate Limit : max 5 exports (PDF + PNG combined) per user per calendar day
+                    On 6th attempt: show toast "Daily export limit reached"
+                    Tracked via user_export_log or localStorage date-keyed counter
+Role Access       : users without role admin/manager/finance/hr:
+                    render full-page "Access Restricted" card (centered, gray-100 bg)
+                    "You don't have permission to view the Executive Dashboard.
+                     Contact your administrator."
+                    No data fetched if role check fails (guard at component mount)
+Widget Visibility : hiding a widget does not delete data; toggling back restores it
+Comparative Delta : if no prior period data exists: show "—" instead of delta chip
+
+--------------------------------------------------------------------------------
+SECTION 6 — CROSS-APP INTEGRATIONS
+--------------------------------------------------------------------------------
+
+Executive Dashboard is READ-ONLY aggregation from all apps.
+
+Data sources per tab:
+  Overview  : /directory, /payroll, /recruitment, /training, /it-services,
+              /invoices, /security, /approvals
+  People    : /directory/stats, /recruitment/funnel, /training/compliance,
+              /performance/ratings
+  Finance   : /payroll/trend, /invoices/breakdown, /cost-centers
+  Operations: /it-services/sla, /assets/utilization, /projects/health,
+              /recruitment/fill-rate
+  OKR       : /okr/exec-summary (see OKR cross-app section above)
+
+Drill-through links:
+  Each KPI card navigates to the source app with pre-applied filters
+  via React Router navigate() — no full page reload (SPA routing).
+  Filter state passed as URL query params; each app reads params on mount.
+
+Alerts Panel data sources:
+  S1 tickets      : GET /it-services/critical-tickets?severity=S1&status=open
+  SLA breaches    : GET /it-services/sla-breaches?date=today
+  Budget alerts   : GET /payroll/budget-alerts
+  Compliance fails: GET /security/compliance-failures?status=open
+  Pending items   : GET /approvals/pending?reviewer_id={current_user_id}
+
+Scheduled Reports:
+  Email sent by Supabase Edge Function (cron-triggered).
+  HTML email body includes KPI summary; charts sent as linked images or
+  base64-embedded PNGs rendered server-side.
+
+--------------------------------------------------------------------------------
+SECTION 7 — PUSH NOTIFICATIONS (Web Push API / VAPID)
+--------------------------------------------------------------------------------
+
+critical_metric_threshold
+  Trigger    : Scheduled job comparing current period metric to configured threshold
+               (threshold % stored in Master Data: EXEC_ALERT_THRESHOLDS)
+  Recipients : admin + finance role + hr role
+  Priority   : warning
+  Title      : "Metric threshold exceeded"
+  Body       : "Monthly payroll cost exceeded target by {pct}%"
+  Link       : /executive-dashboard?tab=finance
+
+sla_breach_spike
+  Trigger    : Scheduled job; condition: SLA breach count this week > last week × 1.4
+  Recipients : admin
+  Priority   : warning
+  Title      : "SLA breach spike detected"
+  Body       : "IT SLA breaches up 40% vs last week ({this_week} vs {last_week})"
+  Link       : /it-services?filter=sla_breach
+
+outstanding_invoice_overdue
+  Trigger    : Daily scheduled job; condition: overdue invoices > 0
+  Recipients : finance role
+  Priority   : action_required
+  Title      : "Overdue invoices require attention"
+  Body       : "{N} invoices overdue — total ₹{amount}"
+  Link       : /invoices?status=overdue
+
+okr_cycle_at_risk
+  Trigger    : Scheduled job at cycle midpoint; condition: company/dept OKRs with score < 0.4
+  Recipients : admin + hr role
+  Priority   : warning
+  Title      : "Company OKRs at risk"
+  Body       : "{N} company-level OKRs are Behind at cycle midpoint"
+  Link       : /executive-dashboard?tab=okr
+
+scheduled_report_ready
+  Trigger    : After scheduled report email is sent (Edge Function callback)
+  Recipients : recipients array of the scheduled_report record
+  Priority   : info
+  Title      : "Scheduled report ready"
+  Body       : "'{report_name}' report for {period} is ready — view now"
+  Link       : /executive-dashboard (or email link)
+
+--------------------------------------------------------------------------------
+SECTION 8 — FIGMA DESIGN PROMPT (EXECUTIVE DASHBOARD)
+--------------------------------------------------------------------------------
+
+Design Executive Dashboard at 1440x900px.
+Background: gray-50 (#F9FAFB). Cards: white. Accent: #6366F1 (indigo).
+Font: Inter. Professional / data-dense aesthetic.
+
+ROLE GATE (shown if not admin/manager/finance/hr):
+  Full viewport centered card (white, max-w 400px, rounded-16, shadow-lg):
+    Lock icon (gray-400, 48px)
+    H2 "Access Restricted"
+    P "You don't have permission to view the Executive Dashboard."
+    [Contact Administrator] indigo ghost button
+
+LAYOUT:
+  Top bar (full width, white, border-b, h=64px, px-32):
+    Left:  H1 bold 20px "Executive Dashboard"
+    Center: [Last 30 days ▾]  date range picker (shows selected range)
+    Right: [↻ Refresh] gray ghost — "last updated 2 min ago" 12px gray-400
+           [Export PDF] gray outlined
+           [Export PNG] gray outlined
+           [Schedule Report] gray outlined
+           [Customize ⚙] gray outlined (toggles drag mode)
+
+  Tab bar (full width, border-b, px-32):
+    Overview (active, indigo underline) | People | Finance | Operations | OKR
+
+  OVERVIEW TAB LAYOUT:
+    Left main area (flex-1 minus sidebar width):
+      KPI grid (3 cols × 2 rows, gap-4, white cards, border, radius-12, p-5,
+                cursor-pointer, group hover:shadow-md transition):
+        Each card:
+          Row 1: metric label (gray-500 text-sm)
+                 [→] arrow icon (opacity-0 group-hover:opacity-100, indigo, absolute top-right)
+          Row 2: value (gray-900 text-3xl font-bold)
+          Row 3: delta chip ("↑ +5%" green bg / "↓ -2%" red bg, rounded-full, text-xs px-2 py-0.5)
+          Row 4: sparkline SVG (60×30px, indigo line, subtle fill)
+
+        Card 1 (r1c1): Headcount     — "312"         — "↑ +5 this month" green
+        Card 2 (r1c2): Payroll Cost  — "₹24.8L"      — "↑ +2.1%" green
+        Card 3 (r1c3): Active Cands  — "47"           — "↓ -3 vs last wk" red
+        Card 4 (r2c1): Training %    — "78%"          — "↑ +4% vs last" green
+        Card 5 (r2c2): Open Tickets  — "14"           — "↑ +6" red (bad)
+        Card 6 (r2c3): Outstanding ₹ — "₹3.2L"        — "↓ -₹0.8L" green (paid down)
+
+      Quick Actions row (below KPI grid, white card, flex gap-6):
+        Pending Leave: "8 pending" [Review →]
+        Pending Invoices: "3 pending" [Approve →]
+        Pending PIPs: "2 pending" [View →]
+
+      Organization Timeline (full-width white card, h=100px, mt-4):
+        Horizontal scroll, events as pill chips on a line rule
+        Example chips (left to right):
+          "Ravi joined Eng" (green) | "Q1 OKR closed — avg 0.72" (indigo)
+          "INV-040 paid ₹1.2L" (blue) | "3 new hires onboarded" (teal)
+
+    Right sidebar (240px, bg gray-100, border-l border-gray-200, p-4):
+      Header: row: "Alerts" bold + red badge "3"
+      Alert rows (gap-2):
+        🔴 dot  "2 S1 Defects open"              "5 min ago"  [View →]
+        🟡 dot  "3 SLA breaches today"            "1 hr ago"   [View →]
+        🔴 dot  "INV-045 overdue by 12 days"      "2 hr ago"   [View →]
+      Divider
+      [View All Alerts →] indigo text link
+      Divider
+      "Last refreshed 2 min ago" 11px gray-400
+      [↻] icon refresh link
+
+  OKR TAB LAYOUT:
+    Top center (full width white card, p-6):
+      Large donut ring (SVG 160px):
+        Background: gray-200 ring; Fill: indigo arc
+        Fill = company avg score (e.g. 72% = 72/100 of full circle)
+        Center: "72%" text-4xl font-bold indigo + "/100" gray | "Average Score" gray-500 text-sm
+        Below ring: "On Track" green chip | "Q2 2026 Active Cycle"
+
+    Bottom row (2 cols, 50/50):
+      Left card — Dept Breakdown Table:
+        Header: "Department OKR Summary"
+        Table rows:
+          Engineering | 0.78 | 🟢 On Track    | [sparkline]
+          HR          | 0.65 | 🟡 Progressing | [sparkline]
+          Sales       | 0.42 | 🔴 Behind      | [sparkline]
+          Finance     | 0.55 | 🟡 Progressing | [sparkline]
+        Footer: [View Full OKR Report →]
+
+      Right card — At-Risk OKRs List:
+        Header: "At Risk OKRs" + red badge (count)
+        List rows (max 10):
+          [owner avatar] "{okr_title}" — {owner_name} — Score: 0.32 🔴 [View →]
+        Footer: [View All At-Risk OKRs →] -> /okr-management?filter=behind
+
+================================================================================
+END OF SPECIFICATION — PART 1
+Apps: OKR Management | Executive Dashboard
+================================================================================

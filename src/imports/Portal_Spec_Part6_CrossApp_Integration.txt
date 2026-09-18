@@ -1,0 +1,1408 @@
+================================================================================
+PORTAL SPECIFICATION — PART 6: CROSS-APP INTEGRATION
+================================================================================
+Document   : Portal_Spec_Part6_CrossApp_Integration.txt
+Version    : 1.0
+Date       : 2026-09-04
+Author     : Rakesh Sarawag
+Tech Stack : React + Supabase + Tailwind CSS v4
+================================================================================
+
+SCOPE
+-----
+This document defines ALL cross-app integrations for the portal, covering:
+  - Group 1 (HR Apps): Employee Dashboard, Employee Directory, Recruitment,
+    Onboarding, User Management, Performance (incl. OKRs), Training,
+    Communications, Collaboration, Workflow Automation, Notification Bell
+  - Group 2 (Business/Operations Apps): OKR Management (standalone), Executive
+    Dashboard, Advanced Analytics, Security & Compliance, Advanced Features
+    (incl. Documentation), Invoice Generation, Payroll Management
+
+Shared infrastructure across ALL apps:
+  - Supabase Auth (authentication + JWT)
+  - Permissions App (RBAC, role-based permission keys)
+  - Master Data App (configuration, lookup values)
+  - Notification Bell (push notification delivery)
+  - Workflow Automation (approval and trigger-based workflows)
+
+================================================================================
+SECTION A: COMPLETE CROSS-APP INTEGRATION MAP
+================================================================================
+
+Column legend:
+  Source App     — app that initiates or owns the data / event
+  Target App     — app that receives, displays, or acts on the event
+  Trigger        — what causes the integration to fire
+  Action         — what happens in the Target App
+  Data Passed    — fields / payload transferred
+  Sync Type      — realtime | event-driven | polling | scheduled | on-load
+  Bidirectional  — yes / no (if yes, reverse flow described separately)
+
+--------------------------------------------------------------------------------
+A1. PAYROLL ↔ EMPLOYEE DIRECTORY
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Payroll             Employee Directory  New salary structure created
+   Action              Employee record updated with salary_band and current_ctc
+   Data Passed         employee_id, salary_band, gross_salary, effective_date
+   Sync Type           Event-driven (Supabase realtime on salary_structures insert)
+   Bidirectional       Yes — see reverse below
+
+#  Source App          Target App          Trigger
+   Employee Directory  Payroll             Employee location set / changed
+   Action              Payroll resolves Professional Tax state slab for that employee
+   Data Passed         employee_id, location_id, state_code
+   Sync Type           Event-driven
+   Bidirectional       (above is the reverse)
+
+#  Source App          Target App          Trigger
+   Employee Directory  Payroll             Employee status set to "Inactive" / "Exited"
+   Action              Payroll sets payroll_status = "suspended" for that employee
+   Data Passed         employee_id, exit_date, exit_reason
+   Sync Type           Event-driven (on employees.status update)
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   Employee Directory  Payroll             New employee record created (status = Active)
+   Action              Payroll initialises payroll entry; payroll active from join month
+   Data Passed         employee_id, join_date, department_id, designation_id, location_id
+   Sync Type           Event-driven
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   Employee Directory  Payroll             Employee exit processed (offboarding complete)
+   Action              Final payroll run triggered; LOP days = remaining working days
+                       after last working day; full-and-final settlement flagged
+   Data Passed         employee_id, last_working_date, lop_days
+   Sync Type           Event-driven
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A2. PAYROLL ↔ EMPLOYEE DASHBOARD
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Payroll             Employee Dashboard  Monthly payroll processing completed
+   Action              Payslip record appears in Employee Dashboard → Payslip tab
+   Data Passed         employee_id, payslip_id, pay_period, gross, net, pdf_url
+                       (read-only; fetched from payroll_records table)
+   Sync Type           On-load (dashboard fetches from payroll_records on tab open)
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   Employee Dashboard  Payroll             Employee applies LOP-eligible leave
+   Action              Leave entry written to leave_balances; Payroll reads
+                       LOP leaves for current month before processing payroll
+   Data Passed         employee_id, leave_type = "LOP", leave_date, days_count
+   Sync Type           Polling / on-demand (Payroll reads leave_balances on run)
+   Bidirectional       Yes — Payroll deduction confirmation written back to
+                       payroll_records.lop_deduction; Dashboard reads that field
+                       in the payslip breakdown
+
+#  Source App          Target App          Trigger
+   Payroll             Employee Dashboard  Payroll run completed
+   Action              Dashboard's "My Salary" widget shows gross/net summary
+                       for latest pay period (read-only)
+   Data Passed         employee_id, gross_salary, net_salary, pay_period
+   Sync Type           On-load
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A3. PAYROLL → EXECUTIVE DASHBOARD
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Payroll             Executive Dashboard Payroll run completed (monthly)
+   Action              Finance tab KPI cards updated:
+                         - Total Payroll Cost (sum net pay, all employees)
+                         - Average Gross Salary
+                         - Headcount Processed (count of payroll_records for run)
+   Data Passed         run_id, total_net_payout, avg_gross_salary, headcount,
+                       pay_period, department_breakdown[]
+   Sync Type           Scheduled (post payroll-run event) + on-load aggregation
+   Bidirectional       No (Exec Dashboard is read-only)
+
+--------------------------------------------------------------------------------
+A4. PAYROLL → ADVANCED ANALYTICS
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Payroll             Advanced Analytics  On-load / date-range filter applied
+   Action              Analytics Finance tab renders:
+                         - Monthly payroll trend (line chart)
+                         - Salary distribution by department (bar/box chart)
+                         - Department-wise cost breakdown (treemap / table)
+   Data Passed         Exposed via /api/analytics/payroll endpoint:
+                       { period, department_id, total_cost, avg_salary,
+                         headcount, salary_band_distribution[] }
+   Sync Type           On-load (Analytics queries endpoint with date range filter)
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A5. PAYROLL → SECURITY & COMPLIANCE
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Payroll             Security            Any payroll processing event occurs
+   Action              Audit event written to audit_logs table via useAuditLogger
+   Data Passed         actor_id, action (see Section D for full event list),
+                       entity_type = "payroll_run" | "salary_structure" | "neft_export",
+                       entity_id, metadata, ip_address, timestamp
+   Sync Type           Event-driven (synchronous write before response returned)
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   Payroll             Security            Non-Finance role accesses salary data
+   Action              Sensitive-access audit event flagged with severity = "high"
+                       Security app surfaces this in Sensitive Data Access report
+   Data Passed         actor_id, role, entity_type = "salary_data",
+                       entity_id = employee_id, severity = "high", timestamp
+   Sync Type           Event-driven
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A6. INVOICE — CLIENT MANAGEMENT (WITHIN INVOICE APP)
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Invoice (Clients)   Invoice (Forms)     New client created
+   Action              Client appears in "Bill To" dropdown on invoice creation form
+   Data Passed         client_id, client_name, gst_number, billing_address,
+                       payment_terms, currency
+   Sync Type           Realtime (Supabase subscription on clients table)
+   Bidirectional       Yes — invoice form reads clients; client record shows
+                       invoice count and total billed amount (aggregated)
+
+#  Source App          Target App          Trigger
+   Invoice (Clients)   Invoice (existing   Client record updated (name / address / GST)
+                       invoice views)
+   Action              All existing invoice views reflect updated client info
+   Data Passed         client_id, updated_fields{}
+   Sync Type           On-load (invoices JOIN clients; no denormalisation)
+   Bidirectional       No (invoices do not write back to clients)
+
+#  Source App          Target App          Trigger
+   Invoice (Clients)   Invoice (creation)  Client deactivated (status = inactive)
+   Action              Client removed from "Bill To" dropdown; existing invoices
+                       remain accessible (historical data); toast warning shown
+                       if user attempts to create invoice for inactive client
+   Data Passed         client_id, status = "inactive"
+   Sync Type           Realtime
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A7. INVOICE → EXECUTIVE DASHBOARD
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Invoice             Executive Dashboard On-load / Finance tab opened
+   Action              Finance tab KPI cards:
+                         - Total Revenue (paid invoices, current month)
+                         - Outstanding (sent but unpaid)
+                         - Overdue (past due date, unpaid)
+                         - Monthly trend: invoices created vs paid per month (chart)
+   Data Passed         Exposed via /api/analytics/invoices endpoint:
+                       { period, total_paid, total_outstanding, total_overdue,
+                         monthly_trend[] }
+   Sync Type           On-load + Supabase realtime subscription on invoices table
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A8. INVOICE → ADVANCED ANALYTICS
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Invoice             Advanced Analytics  Analytics Finance tab opened
+   Action              Renders:
+                         - Revenue by Client (bar chart)
+                         - Payment Terms Analysis (avg days to payment per client)
+                         - Overdue Aging (bucket: 0–30, 31–60, 61–90, 90+ days)
+   Data Passed         /api/analytics/invoices with filters:
+                       { date_from, date_to, client_id?, status? }
+   Sync Type           On-load
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A9. INVOICE → SECURITY & COMPLIANCE
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Invoice             Security            Any invoice lifecycle event
+   Action              Audit event written to audit_logs via useAuditLogger
+   Data Passed         actor_id, action (invoice_created | invoice_sent | invoice_paid |
+                       invoice_deleted | invoice_cancelled | invoice_exported |
+                       payment_recorded | recurring_config_created |
+                       client_created | client_updated),
+                       entity_type = "invoice" | "client", entity_id, timestamp
+   Sync Type           Event-driven
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   Invoice             Security            Invoice PDF downloaded / exported
+   Action              Audit event: invoice_exported (data export category)
+                       flagged with data_sensitivity = "financial"
+   Data Passed         actor_id, invoice_id, export_format = "pdf" | "csv", timestamp
+   Sync Type           Event-driven
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A10. OKR MANAGEMENT ↔ PERFORMANCE (HR APP)
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   OKR Management      Performance         OKR cycle finalized (status = closed)
+   Action              performance_reviews.okr_cycle_score updated with
+                       employee's final OKR score for the cycle
+   Data Passed         employee_id, okr_cycle_id, final_score (0.0–1.0),
+                       key_result_summary[]
+   Sync Type           Event-driven (on okr_cycles.status = 'closed')
+   Bidirectional       Yes — see reverse below
+
+#  Source App          Target App          Trigger
+   Performance         OKR Management      Performance review cycle opened
+   Action              Employees prompted in OKR app to create OKRs aligned
+                       to the new performance cycle; OKR cycle created/linked
+                       if not already exists
+   Data Passed         review_cycle_id, cycle_name, start_date, end_date,
+                       eligible_employee_ids[]
+   Sync Type           Event-driven
+   Bidirectional       (above is the reverse)
+
+#  Source App          Target App          Trigger
+   OKR Management      Performance         Any time performance review form is opened
+   Action              Performance form shows employee's current OKR progress
+                       (live read from okrs table: status, score, key results)
+   Data Passed         employee_id, okr_cycle_id, objectives[], overall_progress
+   Sync Type           On-load (Performance reads okrs on review form open)
+   Bidirectional       (already covered above)
+
+#  Source App          Target App          Trigger
+   Performance         OKR Management      PIP (Performance Improvement Plan) created
+   Action              Improvement OKR automatically created in OKR app at
+                       individual level; linked to pip_id
+   Data Passed         employee_id, pip_id, pip_goal_text, pip_end_date,
+                       okr_type = "improvement", alignment_level = "individual"
+   Sync Type           Event-driven
+   Bidirectional       Yes — OKR check-in updates visible in PIP detail view
+                       in Performance; performance rating visible in OKR cascade
+                       view for managers
+
+--------------------------------------------------------------------------------
+A11. OKR MANAGEMENT → EXECUTIVE DASHBOARD
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   OKR Management      Executive Dashboard OKR tab opened in Exec Dashboard
+   Action              Shows:
+                         - Company OKR progress (overall score, trend)
+                         - Department-level OKR completion rates (heatmap/bar)
+                         - OKRs behind midpoint → surfaced in Alerts panel
+   Data Passed         /api/analytics/okrs:
+                       { cycle_id, company_score, dept_breakdown[],
+                         behind_midpoint_count, on_track_count, completed_count }
+   Sync Type           On-load
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A12. OKR MANAGEMENT → ADVANCED ANALYTICS
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   OKR Management      Advanced Analytics  Analytics Operations tab opened
+   Action              Renders:
+                         - OKR Health Metrics (on-track / behind / at-risk / completed)
+                         - Department-wise OKR completion rates
+                         - Individual OKR distribution (on-track / behind / completed)
+   Data Passed         /api/analytics/okrs with filters:
+                       { cycle_id, department_id?, employee_id?, date_from, date_to }
+   Sync Type           On-load
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A13. EXECUTIVE DASHBOARD → ALL APPS (READ-ONLY AGGREGATION)
+--------------------------------------------------------------------------------
+
+#  Source App          Target Apps         Trigger
+   All apps            Executive Dashboard On-load / tab change / date filter applied
+   Action              Executive Dashboard aggregates KPI data from:
+                         Employee Directory  → headcount, attrition, org structure
+                         Payroll             → payroll cost, avg salary, headcount
+                         Invoice             → revenue, outstanding, overdue
+                         Recruitment         → open positions, time-to-hire, offers
+                         Training            → completion rate, compliance training %
+                         OKR Management      → company/dept OKR scores
+   Data Passed         Each domain exposes /api/analytics/<domain> endpoint
+                       Exec Dashboard queries each with { period, department_id? }
+   Sync Type           On-load; individual KPI cards refresh on Supabase realtime
+                       subscription where applicable
+   Bidirectional       No — Executive Dashboard NEVER writes back to any source app
+
+   Drill-through:
+     KPI cards include a "View in [App]" link that navigates to the source app
+     with pre-applied filters (e.g. date range, department, status)
+     Examples:
+       "42 Open Positions" → /recruitment?status=open&period=current
+       "Payroll Cost ₹18L" → /payroll?period=2026-08
+       "3 Overdue Invoices" → /invoices?status=overdue
+
+--------------------------------------------------------------------------------
+A14. ADVANCED ANALYTICS → ALL APPS (READ-ONLY AGGREGATION)
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   All apps            Advanced Analytics  Report opened / filter changed
+   Action              Analytics reads domain data via API for each enabled module:
+                         HR module      → Employee Directory, Performance, Training
+                         Finance module → Payroll, Invoice
+                         Operations     → OKR, Recruitment, Workflow
+                         Security       → Security & Compliance (audit_logs)
+   Data Passed         Each domain API accepts: { date_from, date_to, department_id? }
+                       and returns domain-specific aggregated records
+   Sync Type           On-load; anomaly detection uses scheduled cron job reading
+                       historical data from all domains
+   Bidirectional       No
+
+   Anomaly detection:
+     Scheduled job (daily) compares current metrics to 90-day baseline per domain
+     Detected anomaly → writes to analytics_anomalies table →
+       triggers notification to admin (see A22)
+
+--------------------------------------------------------------------------------
+A15. SECURITY & COMPLIANCE ↔ ALL APPS (AUDIT LOGGING)
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Every app           Security            Any significant user action (see Section D)
+   Action              Audit event written to audit_logs table via shared
+                       useAuditLogger React hook (imported in every app)
+   Data Passed         { actor_id, action, entity_type, entity_id, old_value?,
+                         new_value?, ip_address, user_agent, timestamp,
+                         severity: 'low'|'medium'|'high'|'critical' }
+   Sync Type           Synchronous write (awaited before UI response)
+   Bidirectional       Yes — Security app reads audit_logs;
+                         Security alerts (critical events) push notifications to
+                         IT Admin / HR Admin / Super Admin;
+                         All apps' admin sections can query their own audit trail
+                         via /api/audit-logs?entity_type=<domain>
+
+   Security → Workflow:
+     Compliance deadline approaching → triggers Compliance Deadline Reminder workflow
+     Critical security event (severity = 'critical') → triggers Security Alert workflow
+     Privacy request created → triggers Privacy Request Processing workflow
+
+--------------------------------------------------------------------------------
+A16. ADVANCED FEATURES → ALL APPS
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Advanced Features   All apps            Smart Search query submitted
+   Action              Searches all entity types across all apps:
+                         employees, tasks, invoices, OKRs, job requisitions,
+                         training courses, communications, workflow instances,
+                         audit logs, documentation articles
+   Data Passed         search_query, entity_types[] (optional filter)
+                       Each domain exposes /api/search?q=&entity_type= endpoint
+   Sync Type           On-demand
+   Bidirectional       No (Smart Search is read-only)
+
+#  Source App          Target App          Trigger
+   Advanced Features   All apps            Report Builder report run
+   (Report Builder)
+   Action              Reads from all domain APIs using configured data source
+                       mappings; renders tabular / chart output
+   Data Passed         report_definition_id, date_from, date_to, filters{},
+                       columns[], group_by?
+   Sync Type           On-demand
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   Advanced Features   Workflow Automation Automation Studio template created/updated
+   (Automation Studio)
+   Action              Workflow template saved/updated in workflow_templates table;
+                       available in Workflow Automation app's template library
+   Data Passed         template_id, trigger_event, steps[], conditions[],
+                       notification_targets[]
+   Sync Type           Event-driven
+   Bidirectional       Yes — Workflow Automation instances visible in
+                         Advanced Features Automation Studio dashboard
+
+#  Source App          Target App          Trigger
+   Advanced Features   All apps            Integration (Slack/Teams/WhatsApp) configured
+   (Integrations)
+   Action              Notification events from all apps forwarded to configured
+                       external channel; integration config stored in integrations table
+   Data Passed         integration_id, channel_type, webhook_url, event_filters[],
+                       notification_payload { title, body, deep_link }
+   Sync Type           Event-driven (on notification_events insert)
+   Bidirectional       No (outbound only in current spec)
+
+--------------------------------------------------------------------------------
+A17. DOCUMENTATION ↔ ALL APPS
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Documentation       All apps            User clicks [? Help] button in any app TopNav
+   Action              Contextual documentation slide-over opens, pre-filtered
+                       to that app's help section (matched by app_context key)
+   Data Passed         app_context (e.g. "payroll", "okr", "invoices"),
+                       current_route (optional, for page-level help)
+   Sync Type           On-demand (Documentation API: GET /api/docs?context=<app>)
+   Bidirectional       Yes — Documentation Admin edits content in Documentation app;
+                         published articles appear contextually in ALL apps
+
+#  Source App          Target App          Trigger
+   Onboarding          Documentation       New user onboarded (status = active, first login)
+   Action              Welcome email includes Documentation link; first-login
+                       modal shows "Get Started" with Documentation quick-links
+   Data Passed         employee_id, email, portal_url, documentation_base_url
+   Sync Type           Event-driven (on employees.status = 'active' for new records)
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A18. PAYROLL ↔ INVOICE (CONTRACTOR BILLING)
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Payroll             Invoice             Contractor/freelancer payment processed
+   Action              Invoice record created or linked in Invoice app for the
+                       contractor's payment
+   Data Passed         contractor_employee_id, payment_amount, pay_period,
+                       invoice_id (if existing) | new invoice created with
+                       { client = contractor entity, amount, description }
+   Sync Type           Event-driven
+   Bidirectional       Yes — Invoice paid status syncs back to
+                         payroll_records.payment_status for contractor entries;
+                         payroll record shows linked invoice_id
+
+   Notes:
+     Freelancer payment = Invoice app entry (client = freelancer) +
+                           Payroll app entry (type = "contractor")
+     Both records carry cross_reference_id for traceability
+
+--------------------------------------------------------------------------------
+A19. COMMUNICATIONS ↔ OKR MANAGEMENT (RECOGNITION)
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Performance         Communications      Continuous Feedback submitted with
+                       (HR App)            type = "recognition"
+   Action              Recognition post published to Communications feed
+                       (type = "recognition", badge attached if applicable)
+   Data Passed         from_employee_id, to_employee_id, message, badge_type,
+                       visibility = "public" | "team"
+   Sync Type           Event-driven
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   OKR Management      Communications      OKR marked complete with score >= 0.7
+                                           (optional: user toggles "Celebrate this")
+   Action              Celebration post created in Communications feed
+   Data Passed         employee_id | team_id, okr_title, score,
+                       post_type = "okr_achievement"
+   Sync Type           User-triggered (optional checkbox on OKR completion form)
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   OKR Management      Communications      Company-level OKR finalized with score = 1.0
+   Action              Auto-post celebration announcement to all-company feed
+                       authored by system (or CEO if configured)
+   Data Passed         okr_title, cycle_name, score = 1.0,
+                       announcement_template from Master Data
+   Sync Type           Event-driven (automated, no user action required)
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A20. TRAINING → PAYROLL (INDIRECT — VIA PERFORMANCE)
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Training            Employee Profile    Certification earned / course completed
+   Action              Certification written to employee_certifications table;
+                       visible in Employee Directory profile
+   Data Passed         employee_id, certification_name, issue_date, expiry_date,
+                       course_id, provider
+   Sync Type           Event-driven
+   Bidirectional       No (Training writes; other apps read)
+
+#  Source App          Target App          Trigger
+   Employee Profile    Performance         Performance review opened
+   (via Training)
+   Action              Performance review form shows certifications earned in review
+                       period; reviewer may note certification as basis for rating
+   Data Passed         employee_id, certifications[]
+   Sync Type           On-load
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   Performance         Payroll             Performance review approved with
+                       (HR App)            salary_revision_recommended = true
+   Action              Salary Revision Approval Workflow triggered;
+                       on approval, Payroll updates salary structure
+   Data Passed         employee_id, review_id, recommended_new_ctc,
+                       effective_date, justification
+   Sync Type           Event-driven (via Workflow Automation)
+   Bidirectional       No (Payroll update confirmed back to performance_reviews
+                         via payroll.revision_applied = true)
+
+   Full chain: Training completion → Employee Profile → Performance Review →
+               Salary Revision Workflow → Payroll update
+
+--------------------------------------------------------------------------------
+A21. RECRUITMENT → INVOICE (AGENCY BILLING)
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Recruitment         Invoice             Agency-sourced candidate hired
+                                           (offer_status = 'accepted',
+                                            source_type = 'agency')
+   Action              Recruitment invoice created in Invoice app:
+                         client = recruitment agency,
+                         amount = agency_fee_pct * candidate_annual_ctc,
+                         linked to candidate record (placement_invoice_id)
+   Data Passed         candidate_id, agency_id, annual_ctc, agency_fee_pct
+                       (fee_pct read from Master Data > RECRUITMENT_AGENCY_CONFIG),
+                       job_requisition_id
+   Sync Type           Event-driven
+   Bidirectional       Yes — recruitment_candidates.placement_invoice_id stores
+                         the created invoice_id; Invoice app shows
+                         "Placement for: [Candidate Name]" reference link
+
+--------------------------------------------------------------------------------
+A22. ADVANCED ANALYTICS → NOTIFICATION BELL
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Advanced Analytics  Notification Bell   Anomaly detected (daily cron job)
+   Action              Notification sent to Admin / relevant department manager:
+                         title: "Anomaly Detected: [metric name]"
+                         body:  "[value] is [X]% above/below 90-day average"
+                         deep_link: /advanced-analytics?anomaly_id=<id>
+   Data Passed         anomaly_id, metric_name, current_value, baseline_value,
+                         deviation_pct, domain, severity, deep_link
+   Sync Type           Scheduled (daily anomaly detection job) →
+                         event-driven notification on detection
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A23. EXECUTIVE DASHBOARD → NOTIFICATION BELL
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Executive Dashboard Notification Bell   KPI threshold breached (e.g. attrition > 5%)
+   Action              Notification to Exec/Admin roles:
+                         title: "KPI Alert: [KPI name] threshold breached"
+                         body:  "[current value] exceeds threshold [threshold value]"
+                         deep_link: /executive-dashboard?tab=<domain>&kpi=<kpi_id>
+   Data Passed         kpi_id, kpi_name, current_value, threshold_value,
+                         domain, deep_link
+   Sync Type           Event-driven (threshold check on each KPI refresh)
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   Executive Dashboard Notification Bell   Scheduled report generation completed
+   Action              Notification to report recipients:
+                         title: "Your scheduled report is ready"
+                         body:  "[Report name] for [period] is ready to download"
+                         deep_link: /executive-dashboard/reports/<report_id>
+   Data Passed         report_id, report_name, period, recipient_ids[], deep_link
+   Sync Type           Scheduled (post report generation job)
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A24. PAYROLL ↔ WORKFLOW AUTOMATION
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Payroll             Workflow Automation Salary revision submitted by HR/Manager
+   Action              Salary Revision Approval Workflow instance created;
+                       approver(s) notified via Notification Bell
+   Data Passed         workflow_template_id = "salary_revision_approval",
+                       employee_id, old_ctc, new_ctc, effective_date,
+                       submitted_by, justification
+   Sync Type           Event-driven
+   Bidirectional       Yes — Workflow approval/rejection result written back to
+                         payroll.salary_revision_status; Payroll updates salary
+                         structure on approval
+
+#  Source App          Target App          Trigger
+   Payroll             Workflow Automation Payroll lock / unlock action performed
+   Action              Event logged to workflow_instance_events table for
+                       traceability (not a separate workflow — audit trail only)
+   Data Passed         actor_id, action = "payroll_locked" | "payroll_unlocked",
+                       run_id, timestamp
+   Sync Type           Event-driven
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   Workflow Automation Payroll             Scheduled Payroll Reminder Workflow fires
+                                           (e.g. 3 days before payroll due date)
+   Action              Notification sent to Payroll Admin / Finance Manager:
+                         "Payroll processing due on [date]"
+   Data Passed         workflow_template_id = "payroll_reminder",
+                       due_date, recipient_ids[]
+   Sync Type           Scheduled (cron-based workflow trigger)
+   Bidirectional       (above is the reverse direction)
+
+--------------------------------------------------------------------------------
+A25. INVOICE ↔ WORKFLOW AUTOMATION
+--------------------------------------------------------------------------------
+
+#  Source App          Target App          Trigger
+   Invoice             Workflow Automation Invoice overdue (due_date < today,
+                                           status != 'paid')
+   Action              Invoice Overdue Reminder Workflow instance created;
+                       client follow-up task assigned; Finance notified
+   Data Passed         workflow_template_id = "invoice_overdue_reminder",
+                       invoice_id, client_id, due_date, overdue_days, amount
+   Sync Type           Scheduled (daily cron checks for overdue invoices)
+   Bidirectional       No
+
+#  Source App          Target App          Trigger
+   Invoice             Workflow Automation Recurring invoice created
+   Action              Workflow event logged: recurring_invoice_created;
+                       next generation scheduled in workflow_schedules table
+   Data Passed         recurring_config_id, invoice_id, next_run_date,
+                       recurrence_rule
+   Sync Type           Event-driven
+   Bidirectional       No
+
+--------------------------------------------------------------------------------
+A26. KEY INTRA-GROUP-1 (HR APPS) INTEGRATIONS — CONFIRMATION
+--------------------------------------------------------------------------------
+(Previously specced but confirmed here for completeness)
+
+  Employee Directory ↔ Employee Dashboard
+    Employee record = single source of truth for dashboard profile data
+    Dashboard reads employee fields on load; no write-back
+
+  Performance → Employee Directory
+    Performance ratings stored against employee_id; Directory shows
+    last_rating on employee profile (read-only badge)
+
+  Recruitment → Employee Directory
+    Candidate hired → employee record auto-created in Directory
+    with source = "recruitment", candidate_id reference stored
+
+  Recruitment → Onboarding
+    Candidate hired → Onboarding task list auto-generated for new employee
+    Data passed: employee_id, start_date, department_id, manager_id
+
+  Training → Performance
+    Training completions visible in Performance review context
+    (employee_certifications read on form load)
+
+  Communications → Notification Bell
+    New announcement / event / poll → push notification to targeted employees
+
+  Workflow Automation → Notification Bell
+    Every workflow step requiring human action → push notification to assignee
+
+  User Management → ALL apps
+    Role assignment change → Supabase Auth metadata updated → all apps
+    re-evaluate permissions on next page load (JWT refresh)
+
+  Onboarding → Employee Dashboard
+    Onboarding task list shows in Dashboard "My Tasks" widget until complete
+
+================================================================================
+SECTION B: MASTER DATA APP — SHARED CONFIG MATRIX
+================================================================================
+
+All lookup/configuration data lives in the master_data / config tables and is
+read by consuming apps via the Master Data API. Changes propagate immediately
+(no caching beyond component re-render cycle).
+
+  Config Entity              | Used By Apps                                       | Purpose
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  DEPARTMENTS                | All HR apps + Analytics + Payroll + OKR +          | Department-level filtering, org structure,
+                             | Executive Dashboard                                | reporting hierarchy
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  DESIGNATIONS               | Directory + Recruitment + Payroll + OKR +          | Role/level hierarchy, grade-based salary
+                             | Performance                                        | band mapping
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  LOCATIONS                  | Directory + Dashboard + Payroll (PT slabs) +       | Location-based tax config, office mapping,
+                             | Recruitment + Onboarding                           | state identification for compliance
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  LEAVE_TYPES                | Employee Dashboard + Payroll (LOP calc)            | Leave balance management, LOP deduction
+                             |                                                    | eligibility flags
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  COMPETENCY_FRAMEWORKS      | Performance + Recruitment (feedback scorecard) +   | Skill definition, assessment criteria,
+                             | OKR (capability-linked OKRs)                       | competency ratings
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  OKR_CYCLES                 | OKR Management + Performance                       | Cycle alignment, review period mapping,
+                             |                                                    | grading calendar
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  REVIEW_RATING_SCALES       | Performance + OKR (grade mapping)                  | Consistent rating labels (e.g. 1–5 scale
+                             |                                                    | with descriptors), OKR score-to-grade map
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  WORKFLOW_TRIGGER_EVENTS    | Workflow Automation + ALL apps                     | Event registry for automation rules;
+                             |                                                    | maps app actions to trigger identifiers
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  NOTIFICATION_TEMPLATES     | Notification Bell + ALL apps                       | Title/body templates for each notification
+                             |                                                    | event; supports variable substitution
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  PROFESSIONAL_TAX_SLABS     | Payroll                                            | State-wise monthly income slab → PT amount
+                             |                                                    | lookup table; updated per Finance Act
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  INVOICE_POLICIES           | Invoice Generation                                 | Invoice number prefix/sequence, default
+                             |                                                    | payment terms, currency, late-fee rules
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  GST_TAX_RATES              | Invoice Generation                                 | CGST/SGST/IGST rates by HSN/SAC code;
+                             |                                                    | applies to invoice line items
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  BANK_TEMPLATES             | Payroll                                            | NEFT/RTGS file format templates per bank
+                             |                                                    | (SBI, HDFC, ICICI formats)
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  RECRUITMENT_AGENCY_CONFIG  | Recruitment + Invoice                              | Agency fee % of CTC; used for automatic
+                             |                                                    | placement invoice generation
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  INTEGRATIONS               | Advanced Features (Integrations module)            | Registry of available integration
+                             |                                                    | connectors and their config schemas
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  MONITORING_THRESHOLDS      | Advanced Features (System Health module)           | Alert thresholds for system metrics
+                             |                                                    | (response time, error rate, queue depth)
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  COMPLIANCE_FRAMEWORKS      | Security & Compliance                              | Seed data for compliance requirements
+                             |                                                    | (SOC 2, GDPR, ISO 27001 control lists)
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  REPORT_TEMPLATES           | Advanced Analytics + Advanced Features             | Pre-built report definitions (SQL +
+                             |                                                    | column config + chart type)
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  RECOGNITION_BADGE_TYPES    | Performance + Communications                       | Badge name, icon, color, description;
+                             |                                                    | used in Continuous Feedback + feed posts
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  KPI_THRESHOLDS             | Executive Dashboard + Notification Bell            | Per-KPI alert thresholds for exec
+                             |                                                    | notifications (e.g. attrition > 5%)
+  ---------------------------+----------------------------------------------------+------------------------------------------
+  ANALYTICS_ANOMALY_RULES    | Advanced Analytics                                 | Metric names, baseline windows, and
+                             |                                                    | deviation % thresholds for anomaly detect
+  ---------------------------+----------------------------------------------------+------------------------------------------
+
+================================================================================
+SECTION C: PERMISSIONS APP — CROSS-APP PERMISSION KEYS
+================================================================================
+
+These permission keys span multiple apps and are checked via the shared
+usePermissions hook. Roles are assigned in User Management; resolved at runtime
+from Supabase Auth JWT metadata.
+
+  Permission Key                | Apps That Check It                         | Roles Granted By Default
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_view_salary_data          | Payroll + Employee Directory (salary band)  | Finance Manager, HR Admin, Super Admin
+                                | + Advanced Analytics (salary charts)        |
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_view_executive_dashboard  | Executive Dashboard (full access)           | Super Admin, CEO, CFO, HR Director,
+                                |                                             | Finance Manager, Department Head (limited)
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_view_advanced_analytics   | Advanced Analytics (full report access)     | Super Admin, HR Admin, Finance Manager,
+                                |                                             | Department Manager
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_approve_payroll           | Payroll (approve payroll run)               | Finance Manager, HR Admin
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_manage_compliance         | Security & Compliance (edit frameworks,     | Compliance Officer, HR Admin, Super Admin
+                                | assessments, controls)                      |
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_view_audit_logs           | Security (full audit log access)            | HR Admin, IT Admin, Finance Manager,
+                                |                                             | Super Admin
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_export_sensitive_data     | Any app's sensitive export (salary, PII,    | HR Admin, Finance Manager, Super Admin
+                                | payroll NEFT, employee personal data)       | (every export creates audit event)
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_manage_invoices           | Invoice (create / edit / delete invoices    | Finance Manager, Admin, Super Admin
+                                | and clients)                                |
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_manage_integrations       | Advanced Features (connect / disconnect     | IT Admin, Super Admin
+                                | external integrations)                      |
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_edit_documentation        | Documentation (CMS edit + publish)          | Documentation Admin role (separate from
+                                |                                             | standard admin; assignable in User Mgmt)
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_view_security_risks       | Security & Compliance (risk register)       | IT Admin, Compliance Officer, Super Admin
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_manage_payroll_structures | Payroll (create/update salary structures)   | HR Admin, Finance Manager, Super Admin
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_view_contractor_invoices  | Invoice + Payroll (contractor view)         | Finance Manager, HR Admin, Super Admin
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_schedule_exec_reports     | Executive Dashboard (scheduled reports)     | Super Admin, Finance Manager, HR Director
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_run_custom_reports        | Advanced Features (Report Builder run)      | All managers + Admin roles
+  ------------------------------+--------------------------------------------+------------------------------------------
+  can_manage_okr_cycles         | OKR Management (create/close cycles)        | HR Admin, OKR Admin, Super Admin
+  ------------------------------+--------------------------------------------+------------------------------------------
+
+Notes:
+  - All cross-app sensitive permission checks are audited automatically by
+    the usePermissions hook when can_export_sensitive_data is involved
+  - Default employee role: can_view_executive_dashboard = false,
+    can_view_salary_data = false (own payslip visible via separate
+    employee-scoped payslip endpoint without this permission)
+  - Permission keys are stored in the permissions table; UI resolves them
+    via GET /api/permissions/my-permissions (cached per session)
+
+================================================================================
+SECTION D: PORTAL-WIDE AUDIT EVENTS
+================================================================================
+
+All events use the shared useAuditLogger hook:
+  useAuditLogger().log({ action, entityType, entityId, metadata? })
+
+Severity defaults: info | low | medium | high | critical
+Sensitive events (salary access, data export, security events) default to high.
+
+--------------------------------------------------------------------------------
+D1. HR APPS — EXISTING AUDIT EVENTS (confirmed)
+--------------------------------------------------------------------------------
+
+Employee Dashboard   : leave_applied | leave_approved | leave_rejected |
+                       attendance_updated | task_completed | payslip_viewed
+
+Employee Directory   : employee_created | employee_updated | employee_deactivated |
+                       employee_reactivated | bulk_import_executed | profile_viewed
+
+Recruitment          : job_created | candidate_added | offer_sent | offer_accepted |
+                       offer_rejected | candidate_hired | requisition_approved
+
+Onboarding           : onboarding_started | task_completed | onboarding_completed |
+                       offboarding_started | offboarding_completed
+
+User Management      : user_created | role_assigned | role_revoked | session_revoked |
+                       password_reset | mfa_enabled | mfa_disabled | login_failed
+
+Performance          : review_created | review_submitted | review_approved |
+                       pip_created | pip_updated | feedback_submitted |
+                       rating_calibrated | cycle_opened | cycle_closed
+
+Training             : course_enrolled | course_completed | certificate_earned |
+                       path_assigned | compliance_training_completed
+
+Communications       : announcement_published | post_created | poll_published |
+                       recognition_sent | event_created
+
+Collaboration        : channel_created | file_shared | dm_sent (metadata only)
+
+Workflow Automation  : workflow_created | workflow_triggered | step_approved |
+                       step_rejected | workflow_completed | workflow_cancelled
+
+--------------------------------------------------------------------------------
+D2. BUSINESS APPS — NEW AUDIT EVENTS
+--------------------------------------------------------------------------------
+
+OKR Management:
+  okr_created             — new OKR created (individual/team/dept/company)
+  okr_updated             — objective or key result edited
+  okr_deleted             — OKR removed
+  okr_graded              — final score submitted for OKR
+  okr_cycle_closed        — OKR cycle finalized (triggers Performance sync)
+  okr_checkin_submitted   — weekly/bi-weekly check-in added
+  okr_blocker_flagged     — blocker raised on a key result
+
+Invoice Generation:
+  invoice_created         — new invoice record created
+  invoice_sent            — invoice emailed/shared with client
+  invoice_paid            — payment recorded (status = paid)
+  invoice_deleted         — invoice removed (soft delete)
+  invoice_cancelled       — invoice voided
+  invoice_exported        — PDF or CSV downloaded (data export — severity: high)
+  payment_recorded        — manual payment entry added to invoice
+  recurring_config_created — recurring invoice schedule set up
+  client_created          — new client added
+  client_updated          — client details changed (name/GST/address)
+
+Payroll Management:
+  payroll_processed         — payroll run executed for a period
+  payroll_approved          — payroll run approved by Finance Manager
+  payroll_rejected          — payroll run rejected with reason
+  payroll_locked            — payroll period locked (no further edits)
+  payroll_unlocked          — locked period unlocked (requires 2nd approver)
+  salary_structure_created  — new salary structure defined for employee
+  salary_structure_updated  — salary structure modified (severity: high)
+  salary_revision_submitted — revision request submitted for approval
+  salary_revision_approved  — revision approved; structure updated
+  salary_revision_rejected  — revision rejected with reason
+  neft_file_exported        — NEFT bank file downloaded (severity: high)
+  payslip_viewed            — employee or admin views a payslip
+  compliance_challan_downloaded — PF/ESI/PT challan downloaded (severity: high)
+
+Advanced Analytics:
+  analytics_report_created        — new custom report definition saved
+  analytics_report_run            — report executed
+  analytics_report_exported       — report data exported to CSV/Excel
+                                    (severity: high if salary/personal data)
+  analytics_anomaly_detected      — anomaly auto-detected by cron job
+  analytics_anomaly_acknowledged  — admin marks anomaly as reviewed
+
+Executive Dashboard:
+  exec_dashboard_viewed    — dashboard page opened (by whom, when)
+  exec_report_exported     — exec report or KPI data exported (severity: high)
+  exec_report_scheduled    — scheduled report configured
+
+Security & Compliance:
+  compliance_updated         — compliance control marked done/in-progress
+  assessment_created         — new compliance assessment started
+  privacy_request_created    — DSAR or right-to-erasure request submitted
+  privacy_request_completed  — privacy request resolved
+  security_risk_created      — new risk added to risk register
+  security_risk_updated      — risk likelihood/impact/status changed
+  evidence_added             — evidence document attached to control
+  audit_log_exported         — audit log data exported (severity: critical)
+
+Advanced Features:
+  custom_report_created    — report definition created in Report Builder
+  custom_report_run        — report run by user
+  custom_report_exported   — report data downloaded (severity: high if sensitive)
+  custom_report_scheduled  — scheduled report configured
+  integration_connected    — new external integration activated
+  integration_disconnected — integration deactivated or credentials revoked
+  integration_test_run     — integration connection test executed
+  documentation_updated    — help article edited
+  documentation_published  — help article published (becomes visible in apps)
+
+--------------------------------------------------------------------------------
+D3. AUDIT LOG TABLE SCHEMA (reference)
+--------------------------------------------------------------------------------
+
+  Table: audit_logs
+  Columns:
+    id              uuid PRIMARY KEY DEFAULT gen_random_uuid()
+    actor_id        uuid REFERENCES auth.users(id)
+    actor_role      text
+    action          text NOT NULL          -- event key from lists above
+    entity_type     text NOT NULL          -- 'invoice' | 'employee' | 'okr' etc.
+    entity_id       uuid
+    old_value       jsonb                  -- null for creates
+    new_value       jsonb                  -- null for deletes
+    ip_address      inet
+    user_agent      text
+    severity        text DEFAULT 'info'    -- info | low | medium | high | critical
+    metadata        jsonb                  -- additional context
+    created_at      timestamptz DEFAULT now()
+
+  Indexes: actor_id, action, entity_type, created_at, severity
+  RLS: Super Admin, HR Admin, IT Admin, Finance Manager can SELECT all rows
+       Each app can INSERT its own rows (service role key in Edge Function)
+       No UPDATE or DELETE permitted on audit_logs (append-only)
+
+================================================================================
+SECTION E: NOTIFICATION BELL — COMPLETE EVENT CATALOG
+================================================================================
+
+Column: "Web Push Events" = subset of total events that trigger browser/device
+push notification (as opposed to in-app-only notification).
+
+  App Group      | App                    | Total Notification Events | Web Push Events
+  ---------------+------------------------+---------------------------+-----------------
+  HR Apps        | Employee Dashboard     |            17             |        9
+  HR Apps        | Employee Directory     |             9             |        3
+  HR Apps        | Recruitment            |            15             |        7
+  HR Apps        | Onboarding             |            10             |        5
+  HR Apps        | User Management        |            10             |        4
+  HR Apps        | Performance            |            15             |       11
+  HR Apps        | Training               |            16             |       10
+  HR Apps        | Communications         |            10             |        5
+  HR Apps        | Collaboration          |             6             |        2
+  HR Apps        | Workflow Automation    |             8             |        4
+  ---------------+------------------------+---------------------------+-----------------
+  Business Apps  | OKR Management         |             7             |        4
+  Business Apps  | Executive Dashboard    |             5             |        3
+  Business Apps  | Advanced Analytics     |             4             |        2
+  Business Apps  | Security & Compliance  |             7             |        5
+  Business Apps  | Advanced Features      |             6             |        3
+  Business Apps  | Invoice Generation     |             7             |        4
+  Business Apps  | Payroll Management     |             8             |        5
+  ---------------+------------------------+---------------------------+-----------------
+  Shared         | Notification Bell      |             3             |        1
+                 | (system events)        |                           |
+  ---------------+------------------------+---------------------------+-----------------
+  TOTALS         | ALL APPS               |           ~163            |       ~87
+
+--------------------------------------------------------------------------------
+E1. BUSINESS APP NOTIFICATION EVENT DETAILS
+--------------------------------------------------------------------------------
+
+OKR Management (7 total, 4 web push):
+  okr_checkin_due               — reminder: check-in due (web push)
+  okr_graded_by_manager         — manager graded your OKR (web push)
+  okr_cycle_closing_soon        — cycle ends in X days (web push)
+  okr_blocker_flagged           — manager flagged your blocker (web push)
+  okr_achievement_celebrated    — your OKR celebration posted (in-app)
+  pip_okr_update_required       — PIP-linked OKR check-in overdue (in-app)
+  okr_cycle_closed              — cycle closed, scores finalised (in-app)
+
+Executive Dashboard (5 total, 3 web push):
+  kpi_threshold_breached        — KPI alert fired (web push)
+  scheduled_report_ready        — report ready to download (web push)
+  exec_anomaly_alert            — cross-domain anomaly (web push)
+  exec_dashboard_shared         — someone shared dashboard view (in-app)
+  exec_data_export_complete     — large export finished (in-app)
+
+Advanced Analytics (4 total, 2 web push):
+  anomaly_detected              — new anomaly found (web push)
+  anomaly_acknowledged          — anomaly reviewed by admin (web push)
+  scheduled_report_ready        — analytics report ready (in-app)
+  report_shared_with_me         — colleague shared report (in-app)
+
+Security & Compliance (7 total, 5 web push):
+  critical_audit_event          — critical severity audit log entry (web push)
+  compliance_deadline_approaching — control due date within 7 days (web push)
+  privacy_request_received      — DSAR/erasure request submitted (web push)
+  security_risk_critical        — new critical risk added (web push)
+  audit_log_export_attempted    — someone exported audit logs (web push)
+  assessment_overdue            — compliance assessment past due date (in-app)
+  evidence_review_required      — evidence pending review (in-app)
+
+Advanced Features (6 total, 3 web push):
+  integration_disconnected      — integration lost connection (web push)
+  integration_test_failed       — integration health check failed (web push)
+  custom_report_scheduled_ready — scheduled custom report ready (web push)
+  automation_rule_triggered     — automation ran successfully (in-app)
+  documentation_published       — new help article published (in-app)
+  monitoring_alert_fired        — system health threshold breached (in-app)
+
+Invoice Generation (7 total, 4 web push):
+  invoice_overdue               — invoice past due date (web push, to Finance)
+  invoice_paid                  — payment received (web push, to Finance)
+  invoice_sent_confirmation     — invoice delivered to client (web push)
+  recurring_invoice_created     — auto-generated recurring invoice (web push)
+  client_payment_received       — client portal payment confirmed (in-app)
+  invoice_disputed              — client disputed invoice (in-app)
+  agency_placement_invoice_due  — recruitment agency invoice created (in-app)
+
+Payroll Management (8 total, 5 web push):
+  payroll_processing_due        — payroll due date reminder (web push, to Admin)
+  payroll_approved              — payroll run approved (web push, to Processor)
+  payroll_rejected              — payroll run rejected with reason (web push)
+  salary_revision_approved      — salary revision approved (web push, to employee)
+  salary_revision_rejected      — salary revision rejected (web push)
+  payslip_published             — payslip available (in-app, to employee)
+  neft_file_ready               — bank NEFT file ready to download (in-app)
+  compliance_challan_due        — PF/ESI/PT challan due date approaching (in-app)
+
+Notification Bell System Events (3 total, 1 web push):
+  notification_preferences_updated  — user changed their preferences (in-app)
+  bulk_notification_sent             — admin sent broadcast notification (web push)
+  notification_delivery_failed       — push delivery failed, fallback to in-app (in-app)
+
+================================================================================
+SECTION F: RECOMMENDED APP MERGES / SIMPLIFICATIONS
+================================================================================
+
+--------------------------------------------------------------------------------
+F1. OKR MANAGEMENT + PERFORMANCE — MERGE RECOMMENDED
+--------------------------------------------------------------------------------
+
+Reasoning:
+  The HR Spec already defines OKRs as a tab within the Performance app.
+  A standalone OKR Management app creates dual ownership of the okrs table,
+  potential data duplication, and user confusion about where to set/track OKRs.
+  Power users (managers, HR) would need to context-switch between two apps
+  for what is fundamentally a single workflow.
+
+Recommendation:
+  Merge OKR Management INTO Performance app as a dedicated OKR Module.
+  Performance app tabs become:
+    Overview | Reviews | OKRs | Goals | 360 Feedback | PIPs | Cycles | Analytics
+
+  The standalone /okr route remains as a thin app with:
+    - Employee-facing "My OKRs" view (simple, no HR admin controls)
+    - "Open in Performance ↗" link on all detail and edit views
+    - Use case: employees who only need to update OKR check-ins without
+      seeing the full Performance app interface
+
+  Data model: no change — okrs table remains; both apps read from same source
+  Permissions: can_manage_okr_cycles still enforced; OKR tab in Performance
+               respects existing Performance permissions
+
+  When to implement: before launch — avoid building duplicate OKR UI
+  Effort: low (redirect + tab restructure in Performance app)
+
+--------------------------------------------------------------------------------
+F2. ADVANCED FEATURES + DOCUMENTATION — KEEP SEPARATE, LINK BIDIRECTIONALLY
+--------------------------------------------------------------------------------
+
+Reasoning:
+  Advanced Features (Report Builder, Automation Studio, Integrations, Monitoring)
+  is a power-user tool for IT Admins, Finance Managers, and Super Admins.
+  Documentation is a content tool for all employees (help, FAQs, videos).
+  Merging them would bury help content behind admin-only permissions.
+
+Recommendation:
+  Keep as separate apps at /advanced-features and /documentation.
+  Link them bidirectionally:
+    - Advanced Features TopNav includes [? Help] → Documentation for that app
+    - Documentation Admin panel includes "Preview in App" links
+    - Documentation search results include Advanced Features articles
+      tagged for power users
+
+--------------------------------------------------------------------------------
+F3. EXECUTIVE DASHBOARD + ADVANCED ANALYTICS — KEEP SEPARATE, DRILL-THROUGH LINKS
+--------------------------------------------------------------------------------
+
+Reasoning:
+  Executive Dashboard: C-suite audience, high-level KPIs, beautiful visual
+  design, pre-defined views, limited interactivity.
+  Advanced Analytics: HR/Finance power users, detailed data slicing, custom
+  filters, anomaly detection, custom report builder.
+  Same data, very different UX requirements and permission profiles.
+
+Recommendation:
+  Keep as separate apps at /executive-dashboard and /advanced-analytics.
+  Add "View in Advanced Analytics →" drill-through links on every KPI card
+  and chart in the Executive Dashboard. The drill-through pre-applies
+  matching filters (date range, department) to the Analytics view.
+  Executive Dashboard's "Export" action routes to Analytics for large exports
+  to avoid re-implementing export logic.
+
+--------------------------------------------------------------------------------
+F4. NOTIFICATION BELL — ALREADY RESOLVED
+--------------------------------------------------------------------------------
+
+Clarification:
+  "Notification Feature on menu bar" in the original app list IS the
+  Notification Bell component embedded in the AppHeader (TopNav).
+  It is not a separate app — it is a shared React component consuming the
+  notification_events table.
+
+What exists / what to add:
+  - NotificationBell component: bell icon in AppHeader, dropdown with recent
+    notifications, unread count badge. Already specced in HR_Spec_Part6c.
+  - /notifications route: full notification history page with filters
+    (by app, type, read/unread, date). Already specced in HR_Spec_Part6c.
+  - /notifications/preferences route: per-category opt-in/opt-out,
+    web push toggle, email digest settings.
+  - Portal sidebar: add "Notifications" link pointing to /notifications.
+
+Action: No new app needed. Confirm /notifications and /notifications/preferences
+        routes exist in router config.
+
+--------------------------------------------------------------------------------
+F5. WORKFLOW AUTOMATION — EXTEND, DO NOT DUPLICATE
+--------------------------------------------------------------------------------
+
+Reasoning:
+  Workflow Automation is comprehensively specced in the HR Spec (Part 5).
+  The Business Apps (OKR, Invoice, Payroll, Security, Advanced Features) add
+  new trigger events and templates but do NOT require a separate workflow app.
+
+Recommendation:
+  Same app at /workflow-dashboard, extended with:
+  - New trigger events registered in WORKFLOW_TRIGGER_EVENTS master data:
+      okr_cycle_closed | invoice_overdue | payroll_due | salary_revision_submitted |
+      compliance_deadline_approaching | privacy_request_created |
+      security_risk_critical | anomaly_detected
+  - New pre-built workflow templates:
+      Salary Revision Approval | Invoice Overdue Reminder |
+      Payroll Processing Reminder | Compliance Deadline Reminder |
+      Privacy Request Processing | Security Incident Escalation
+  - Advanced Features Automation Studio = UI wrapper over Workflow Automation's
+    template builder; shares the same workflow_templates table
+
+================================================================================
+SECTION G: PORTAL SITEMAP (COMPLETE)
+================================================================================
+
+All routes are client-side React routes (React Router v6).
+Auth guard: all routes redirect to /login if no valid Supabase session.
+Permission guard: routes marked (restricted) redirect to /403 if
+                  required permission key is not held by current user.
+
+--------------------------------------------------------------------------------
+G1. HR APPS
+--------------------------------------------------------------------------------
+
+  /dashboard
+    Description  : Employee Dashboard — personal hub
+    Components   : My Leave, My Payslips, My Tasks, My Attendance, My Profile
+    Access       : All authenticated employees
+    Notes        : Payslip tab reads from payroll_records (read-only)
+
+  /directory
+    Description  : Employee Directory — people search, org chart, profiles
+    Components   : People search, Org Chart, Employee Profile, Department view
+    Access       : All authenticated employees
+    Notes        : Salary band shown only to can_view_salary_data roles
+
+  /recruitment
+    Description  : Recruitment Tracker — hiring pipeline management
+    Components   : Jobs, Requisitions, Candidates, Pipeline, Analytics
+    Access       : HR Team, Hiring Managers, Recruiters
+    Notes        : Agency hires trigger Invoice creation (see A21)
+
+  /onboarding
+    Description  : Onboarding Portal — new joiner + offboarding tasks
+    Components   : Task Lists, Document Checklist, IT Setup, Welcome
+    Access       : New employees (own tasks) + HR Admin (all)
+
+  /user-management
+    Description  : User Management — accounts, sessions, roles, audit
+    Components   : Users, Roles, Sessions, Role Assignment, Audit
+    Access       : IT Admin, HR Admin, Super Admin (restricted)
+
+  /performance
+    Description  : Performance Tracker — reviews, OKRs, goals, 360, PIPs
+    Components   : Overview | Reviews | OKRs | Goals | 360 Feedback |
+                   PIPs | Cycles | Analytics
+    Access       : All employees (own data) + Managers (team) + HR Admin (all)
+    Notes        : OKR tab = primary OKR interface (see F1); /okr is alias
+
+  /training
+    Description  : Training Tracker — courses, paths, compliance, certificates
+    Components   : My Learning, Course Library, Learning Paths, Certificates,
+                   Compliance Training, Admin
+    Access       : All employees (self) + HR Admin (manage)
+
+  /communications
+    Description  : Communications Hub — announcements, events, polls, recognition
+    Components   : Feed, Announcements, Events, Polls, Recognition Wall
+    Access       : All employees
+
+  /collaboration-hub
+    Description  : Collaboration Hub — channels, direct messages, file sharing
+    Components   : Channels, Direct Messages, Files, Search
+    Access       : All employees
+
+  /workflow-dashboard
+    Description  : Workflow Automation — builder, instances, approvals
+    Components   : My Approvals, Workflow Templates, Active Instances,
+                   Automation Studio (power users)
+    Access       : All employees (approvals) + IT Admin/HR Admin (builder)
+    Notes        : Automation Studio tab requires can_manage_integrations
+
+  /notifications
+    Description  : Notification Center — full notification history
+    Components   : All notifications, Read/Unread filter, By App filter,
+                   Mark All Read, Date filter
+    Access       : All authenticated employees
+
+  /notifications/preferences
+    Description  : Notification Preferences — per-category opt-in/opt-out
+    Components   : Category toggles, Web Push toggle, Email Digest settings
+    Access       : All authenticated employees (own preferences only)
+
+--------------------------------------------------------------------------------
+G2. BUSINESS / OPERATIONS APPS
+--------------------------------------------------------------------------------
+
+  /okr
+    Description  : OKR Management — company/dept/team/individual OKRs, cycles
+    Components   : My OKRs, Team OKRs, Department OKRs, Company OKRs,
+                   Cycle Management, Cascade View, Check-ins
+    Access       : All employees (own OKRs) + Managers (team) + HR Admin (all)
+    Notes        : Full OKR admin via /performance (OKRs tab) — see F1.
+                   This route = simplified employee-facing view + redirect
+
+  /executive-dashboard
+    Description  : Executive Dashboard — C-suite KPI overview
+    Components   : People Tab, Finance Tab, Operations Tab, OKR Tab,
+                   Alerts Panel, Scheduled Reports
+    Access       : can_view_executive_dashboard (restricted)
+    Notes        : Read-only aggregation; drill-through to source apps
+
+  /advanced-analytics
+    Description  : Advanced Analytics — detailed reporting and anomaly detection
+    Components   : HR Analytics, Finance Analytics, Operations Analytics,
+                   Anomaly Detection, Custom Reports, Saved Reports
+    Access       : can_view_advanced_analytics (restricted)
+
+  /security-compliance
+    Description  : Security & Compliance — audit logs, frameworks, privacy, risk
+    Components   : Audit Logs, Compliance Frameworks, Assessments, Risk Register,
+                   Privacy Requests, Sensitive Data Access Report
+    Access       : can_view_audit_logs / can_manage_compliance / can_view_security_risks
+                   (restricted — role-based tabs within app)
+
+  /advanced-features
+    Description  : Advanced Features — power tools for admins
+    Components   : Report Builder, Integrations, Monitoring, Automation Studio,
+                   System Health, Smart Search (also available portal-wide)
+    Access       : IT Admin, Finance Manager, Super Admin
+                   (can_manage_integrations for Integrations tab)
+
+  /documentation
+    Description  : Help & Documentation — app guides, FAQs, video tutorials
+    Components   : Article browser, Search, Category filter (by app),
+                   Admin CMS (can_edit_documentation only)
+    Access       : All authenticated employees (read)
+                   Documentation Admin role (write/publish)
+    Notes        : Loaded in slide-over via [? Help] button in all app TopNavs
+
+  /invoices
+    Description  : Invoice Generation — clients, invoices, recurring, payments
+    Components   : Invoice List, Create Invoice, Clients, Recurring Config,
+                   Payments, Analytics
+    Access       : can_manage_invoices for write; Finance team for read
+    Notes        : Contractor invoices linked from /payroll (see A18)
+
+  /payroll
+    Description  : Payroll Management — processing, salary structures, compliance
+    Components   : Payroll Runs, Salary Structures, Salary Revisions,
+                   Payslips (admin view), Compliance (PF/ESI/PT), NEFT Export,
+                   Analytics
+    Access       : HR Admin, Finance Manager, Super Admin for processing
+                   All employees: /payroll/my-payslips (own payslips only)
+    Notes        : Employee payslips also surfaced at /dashboard (Payslip tab)
+
+--------------------------------------------------------------------------------
+G3. SHARED / UTILITY ROUTES
+--------------------------------------------------------------------------------
+
+  /settings
+    Description  : User Settings — profile, appearance, language, security
+    Components   : Profile, Change Password, MFA Setup, Theme (light/dark/system),
+                   Language, Notification Preferences (links to /notifications/preferences)
+    Access       : All authenticated employees (own settings only)
+
+  /login
+    Description  : Authentication page
+    Components   : Email/password form, SSO button (if configured), MFA prompt
+    Access       : Unauthenticated users only (redirect to /dashboard if logged in)
+
+  /403
+    Description  : Access Denied page
+    Components   : Friendly message + link back to /dashboard
+    Access       : Shown when permission guard fails
+
+  /404
+    Description  : Not Found page
+    Access       : Catch-all route
+
+--------------------------------------------------------------------------------
+G4. API ROUTE CONVENTIONS (for integration reference)
+--------------------------------------------------------------------------------
+
+All domain APIs follow the pattern:
+  GET  /api/<domain>                  — list with filter params
+  GET  /api/<domain>/:id              — single record
+  POST /api/<domain>                  — create
+  PUT  /api/<domain>/:id              — update
+  DEL  /api/<domain>/:id              — delete (soft where applicable)
+
+Analytics / aggregation endpoints:
+  GET  /api/analytics/payroll         — payroll cost aggregates
+  GET  /api/analytics/invoices        — invoice revenue aggregates
+  GET  /api/analytics/okrs            — OKR health metrics
+  GET  /api/analytics/employees       — headcount / attrition metrics
+  GET  /api/analytics/recruitment     — hiring funnel metrics
+  GET  /api/analytics/training        — completion / compliance rates
+
+Cross-app search:
+  GET  /api/search?q=&entity_type=    — multi-domain search (Advanced Features)
+
+Audit logging:
+  POST /api/audit-logs                — append audit event (service role only)
+  GET  /api/audit-logs                — query (restricted; permission-checked)
+
+Notifications:
+  GET  /api/notifications             — current user's notifications
+  POST /api/notifications/mark-read   — mark as read
+  GET  /api/notifications/preferences — current user's preferences
+  PUT  /api/notifications/preferences — update preferences
+
+================================================================================
+END OF DOCUMENT
+================================================================================
+Document   : Portal_Spec_Part6_CrossApp_Integration.txt
+Total sections : 7 (A through G)
+Total integrations documented : 25 numbered + intra-Group-1 confirmations
+Last updated   : 2026-09-04
+================================================================================

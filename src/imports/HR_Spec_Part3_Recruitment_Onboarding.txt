@@ -1,0 +1,1178 @@
+================================================================================
+HR PORTAL — ENTERPRISE SPECIFICATION DOCUMENT
+SECTION C: RECRUITMENT & ONBOARDING
+================================================================================
+Tech Stack : React + Supabase + Tailwind CSS v4
+Auth       : Supabase Auth
+Permissions: Permissions App (role-based feature access)
+Master Data: Master Data App (all config / value-help tables)
+Push       : Web Push API (VAPID)
+Accent     : #6366F1 (Indigo)
+================================================================================
+
+
+════════════════════════════════════════════════════════════════════════════════
+APP 3 — RECRUITMENT TRACKER
+════════════════════════════════════════════════════════════════════════════════
+
+Current file  : RecruitmentTrackerEnhancedV3.tsx
+Current DB    : recruitment_candidates | recruitment_jobs |
+                recruitment_interviews | recruitment_feedback
+Current tabs  : Pipeline (Kanban) | Jobs | Analytics
+Dead code     : RecruitmentTrackerEnhancedV2.tsx  ← DELETE (not imported anywhere)
+
+
+────────────────────────────────────────────────────────────────────────────────
+C3.1  FIX PLAN — KNOWN GAPS
+────────────────────────────────────────────────────────────────────────────────
+
+G1 — No email/calendar integration for interview scheduling  [HIGH]
+  Developer approach:
+  • Add column  calendar_event_url TEXT  to  recruitment_interviews.
+  • On "Schedule Interview" form submit, server-side generate an ICS file blob
+    containing DTSTART, DTEND, SUMMARY, DESCRIPTION, ORGANIZER, ATTENDEE fields.
+  • Store the ICS blob in Supabase Storage under
+    recruitment/interviews/{interview_id}.ics  and write the public URL to
+    calendar_event_url.
+  • Render two action buttons on every interview card:
+      [Download .ics]  → direct download link to the stored ICS file.
+      [Send Invite]    → constructs a mailto: link of the form
+        mailto:{interviewer_email}?subject=Interview+Invite&body=...&attach=<ics_url>
+        (attachment via data-URI for clients that support it; fallback: include
+        ICS URL in body).
+  • No third-party calendar OAuth required in this phase; upgrade path noted
+    below in Workflow Integration (C3.5).
+
+G2 — No offer letter generation  [MEDIUM]
+  Developer approach:
+  • Add an "Offer" tab inside the Candidate Detail Drawer.
+  • Load OFFER_LETTER_TEMPLATES from Master Data App at runtime.
+  • Template variable set: {name} {position} {dept} {salary} {joining_date}
+    {manager} — injected via simple string interpolation into the HTML template.
+  • "Generate Offer Letter" button:
+      1. Render template into a hidden iframe / off-screen div.
+      2. Use  window.print()  scoped to that element (print-to-PDF in browser)
+         OR call a server-side  html-to-pdf  endpoint if headless rendering is
+         available.
+      3. Upload resulting PDF to Supabase Storage:
+         recruitment/offers/{candidate_id}/offer_letter_{timestamp}.pdf
+      4. Write public URL to  recruitment_offers.offer_letter_url.
+  • Add column  offer_letter_url TEXT  to  recruitment_candidates  (latest
+    accepted offer shortcut link).
+
+G4 — No requisition approval workflow before job goes live  [MEDIUM]
+  Developer approach:
+  • Create new table  job_requisitions  (schema in C3.3).
+  • All "New Job" creation flows open the Requisition form first.
+  • Job status remains  Draft  until its linked requisition reaches status
+    Approved.
+  • Requisition passes through the existing Workflow App approval chain:
+    Department Manager → HR Manager.
+  • On final approval event webhook: set  job_requisitions.status = 'Approved'
+    and  recruitment_jobs.status = 'Open'  atomically.
+  • Permissions check: only users with  recruitment.post_without_requisition
+    permission (typically System Admin) may bypass this guard.
+
+G7 — Feedback scorecard unstructured  [MEDIUM]
+  Developer approach:
+  • On feedback form mount, fetch  COMPETENCY_FRAMEWORKS  from Master Data App
+    filtered by  job_role_id  of the current job.
+  • Render one star-rating row (1–5 scale) per competency returned.
+  • Persist ratings as JSONB in  recruitment_feedback.competency_ratings:
+    { "Problem Solving": 4, "Communication": 3, "Technical Depth": 5, … }
+  • Add fields  strengths TEXT, concerns TEXT, recommendation ENUM  to the table.
+  • Overall recommendation values: Strong Hire | Hire | Maybe | No Hire.
+  • Aggregate feedback score on candidate card: average of all numerical
+    competency ratings across all submitted feedback records for that candidate
+    (computed view or recomputed on each feedback upsert and stored in
+    recruitment_candidates.aggregate_feedback_score).
+
+G8 — Dead code file must be deleted  [LOW]
+  Developer approach:
+  • Delete  RecruitmentTrackerEnhancedV2.tsx  from the repository.
+  • Confirm no import/reference exists (grep codebase for V2 before delete).
+  • Commit as "chore: remove dead recruitment v2 component".
+
+
+────────────────────────────────────────────────────────────────────────────────
+C3.2  FEATURE ENHANCEMENTS — INDUSTRY STANDARD
+────────────────────────────────────────────────────────────────────────────────
+
+C3.2.1  Job Requisition Workflow
+  A job posting must begin as a requisition and move through approval before
+  candidates can apply.
+
+  Requisition fields:
+    position_title     TEXT
+    department         FK → departments (Master Data)
+    headcount          INTEGER  (number of openings)
+    justification      TEXT     (business case)
+    budget_range       TEXT     (e.g. "₹12L–₹15L")
+    target_date        DATE     (expected go-live / hire-by date)
+    employment_type    ENUM     (Full-time | Part-time | Contract | Intern)
+    location           TEXT     (city / remote / hybrid)
+
+  Approval chain:
+    Requisition Submitted → Dept Manager Approval → HR Approval → Job Posted
+
+  Rules:
+  • A job cannot be set to Active without an approved requisition.
+  • Rejecting the requisition at any stage requires a mandatory reason field.
+  • Re-submission of a rejected requisition is allowed; version counter increments.
+  • Approved requisition is linked to the job via  job_requisitions.job_id.
+
+C3.2.2  Candidate Pipeline (enhanced)
+
+  Stages (ordered):
+    Applied → Screening → Phone Screen → Technical Round 1 → Technical Round 2
+    → HR Interview → Offer → Hired | Rejected
+
+  Stage-move rules:
+  • Moving to Rejected requires a rejection reason (minimum 10 characters).
+  • Moving from Rejected back to any active stage requires HR override + reason
+    (logged in communication log).
+  • Stage history is append-only and timestamped for time-in-stage analytics.
+
+  Duplicate detection:
+  • On candidate creation/import, check for matching email OR phone OR
+    (first_name + last_name) within the same job_id.
+  • Surface a "Possible Duplicate" warning banner with a [View & Merge] prompt.
+  • Merge action: retain primary candidate record; copy interviews/feedback from
+    duplicate; soft-delete duplicate.
+
+  Candidate source tracking:
+  • source field on recruitment_candidates FK to RECRUITMENT_SOURCES in
+    Master Data (values: LinkedIn | Naukri | Referral | Campus | Agency |
+    Walk-in | Job Fair | Other).
+  • Source shown as a colored chip on candidate cards and in analytics.
+
+  Blacklist feature:
+  • HR can mark a candidate as blacklisted with: blacklist_reason TEXT and
+    blacklist_until DATE.
+  • On any new application where email or phone matches a blacklisted record:
+    show warning modal ("Candidate is blacklisted until {date} — Reason: …").
+  • Hire action is blocked for blacklisted candidates; admin override requires
+    reason and creates audit log entry.
+
+C3.2.3  Interview Management
+
+  Multi-round scheduling:
+  • Each candidate can have N interview records linked via candidate_id.
+  • Each interview record contains:
+      round_number       INTEGER
+      scheduled_at       TIMESTAMPTZ
+      interviewer_id     FK → employees
+      interview_type     FK → INTERVIEW_TYPES (Master Data)
+      meeting_link       TEXT  (Zoom / Teams / Google Meet URL)
+      location_type      ENUM  (Virtual | In-Person | Hybrid)
+      location_address   TEXT  (for in-person)
+      status             ENUM  (Scheduled | Completed | Cancelled | No Show)
+      calendar_event_url TEXT  (ICS download URL — see G1 fix)
+
+  Push notification on scheduling:
+  • Interviewer receives  action_required  push: "You are scheduled to interview
+    {candidate_name} on {date} at {time}."
+
+  Feedback deadline enforcement:
+  • 24 h after  scheduled_at  (when status = Completed): send  reminder  push
+    to interviewer — "Feedback due for {candidate_name} interview".
+  • 72 h after  scheduled_at: feedback form is locked (read-only) unless an
+    admin unlocks it; send  urgent  push to interviewer and recruiter.
+  • Admin unlock action requires reason and is logged.
+
+  No-show automation:
+  • A scheduled job checks every 15 minutes; if  scheduled_at < NOW()  and
+    status is still  Scheduled  and no feedback exists → auto-set
+    status = 'No Show'  and notify recruiter.
+
+C3.2.4  Competency-based Feedback Scorecard
+
+  Form behaviour:
+  • On mount, call Master Data API:
+    GET /master-data/competency-frameworks?job_role_id={roleId}
+  • Render one row per competency: label | 1–5 star selector.
+  • Below competency grid: Strengths (textarea) | Areas of Concern (textarea).
+  • Recommendation selector: Strong Hire (green) | Hire (blue) | Maybe (yellow)
+    | No Hire (red).
+  • Submit button disabled until all competency rows have a rating and a
+    recommendation is selected.
+
+  Aggregate display:
+  • Candidate card shows average numeric score across all submitted feedback
+    (e.g. "4.2 ★") calculated from competency_ratings JSONB.
+  • "No feedback yet" shown if no completed interviews exist.
+
+C3.2.5  Offer Management
+
+  Offer creation fields:
+    CTC breakup (JSONB):
+      basic         NUMERIC
+      hra           NUMERIC
+      special       NUMERIC
+      bonus         NUMERIC
+      variable      NUMERIC
+      benefits      NUMERIC
+      total         NUMERIC  (computed)
+    joining_date        DATE
+    offer_expiry_date   DATE
+    created_by          FK → employees (recruiter)
+
+  Offer states (linear with branches):
+    Draft → Sent → Accepted | Negotiating | Rejected | Expired
+
+  Negotiation flow:
+  • If status = Negotiating: show "Log Counter-Offer" button.
+  • Counter-offer fields: counter_ctc JSONB, counter_joining_date DATE,
+    candidate_notes TEXT.
+  • HR can submit revised offer → new offer record version linked to original.
+
+  Acceptance trigger:
+  • Offer Accepted → automatically trigger Hire Workflow:
+      1. Set  recruitment_candidates.stage = 'Hired'.
+      2. Create  onboarding_records  record (App 4).
+      3. Send welcome email to candidate personal email.
+      4. Create IT provisioning ticket via  POST ${API_BASE}/it-services/tickets.
+
+  Expiry automation:
+  • Background job checks daily; 2 days before  offer_expiry_date → send
+    warning  push to recruiter: "Offer for {candidate_name} expires on {date}."
+  • On expiry date if status ≠ Accepted/Rejected → auto-set status = 'Expired'.
+
+C3.2.6  Candidate Communication Log
+
+  Log entry fields:
+    log_date          TIMESTAMPTZ
+    type              ENUM  (Call | Email | WhatsApp | In-person)
+    logged_by         FK → employees (recruiter)
+    summary           TEXT
+    outcome           TEXT
+    next_followup_date DATE
+
+  Behaviour:
+  • Displayed as a reverse-chronological timeline in the Communication Log tab
+    of the Candidate Detail Drawer.
+  • Each entry shows: type icon | date | logged_by name | summary | outcome chip.
+  • Entries with  next_followup_date  appear as tasks in the recruiter's My Tasks
+    widget on the HR portal dashboard.
+
+C3.2.7  Analytics (server-side, DB-aggregated)
+
+  All analytics queries run as Supabase database functions (PostgreSQL) or
+  server-side API routes — not client-side JavaScript aggregations.
+
+  Metrics:
+  a) Stage Funnel
+     SELECT stage, COUNT(*) FROM recruitment_candidates
+     WHERE job_id = $jobId GROUP BY stage ORDER BY stage_sort_order;
+
+  b) Time to Hire
+     SELECT department, AVG(hired_at - applied_at) AS avg_days
+     FROM recruitment_candidates
+     WHERE stage = 'Hired' GROUP BY department;
+
+  c) Source Effectiveness
+     SELECT source,
+            COUNT(*) AS applications,
+            COUNT(*) FILTER (WHERE stage IN ('HR Interview','Offer','Hired')) AS interviewed,
+            COUNT(*) FILTER (WHERE stage = 'Hired') AS hired,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE stage = 'Hired') / COUNT(*), 1) AS conversion_pct
+     FROM recruitment_candidates GROUP BY source;
+
+  d) Interview-to-Offer ratio
+     Candidates who reached Offer stage / candidates who had ≥1 interview.
+
+  e) Offer acceptance rate
+     COUNT(status='Accepted') / COUNT(status IN ('Accepted','Rejected','Expired')).
+
+  f) Requisition fill rate
+     Jobs filled (stage Hired, headcount met) within target_date / total jobs.
+
+  g) Recruiter performance
+     Candidates hired per recruiter (logged_by on communication log or
+     assigned_recruiter on candidates table).
+
+
+────────────────────────────────────────────────────────────────────────────────
+C3.3  DATA MODEL ADDITIONS
+────────────────────────────────────────────────────────────────────────────────
+
+Table: job_requisitions
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  position_title    TEXT NOT NULL
+  department        TEXT NOT NULL  -- FK to departments master
+  headcount         INTEGER NOT NULL DEFAULT 1
+  justification     TEXT
+  budget_range      TEXT
+  target_date       DATE
+  employment_type   TEXT  -- Full-time | Part-time | Contract | Intern
+  location          TEXT
+  status            TEXT NOT NULL DEFAULT 'Draft'
+                    -- Draft | Submitted | Dept_Approved | HR_Approved | Approved | Rejected
+  requested_by      UUID NOT NULL  -- FK to employees
+  job_id            UUID           -- FK to recruitment_jobs (set after approval)
+  rejection_reason  TEXT
+  version           INTEGER NOT NULL DEFAULT 1
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at        TIMESTAMPTZ
+
+Table: recruitment_candidates (ALTER — add columns)
+  source                    TEXT           -- FK to RECRUITMENT_SOURCES (Master Data)
+  blacklisted               BOOLEAN NOT NULL DEFAULT FALSE
+  blacklist_reason          TEXT
+  blacklist_until           DATE
+  aggregate_feedback_score  NUMERIC(3,2)   -- cached avg, recomputed on feedback upsert
+  assigned_recruiter        UUID           -- FK to employees
+  hired_at                  TIMESTAMPTZ    -- set when stage = 'Hired'
+
+Table: recruitment_offers
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  candidate_id      UUID NOT NULL  -- FK to recruitment_candidates
+  job_id            UUID NOT NULL  -- FK to recruitment_jobs
+  ctc_breakup       JSONB NOT NULL
+    -- { "basic": 0, "hra": 0, "special": 0, "bonus": 0, "variable": 0,
+    --   "benefits": 0, "total": 0 }
+  joining_date      DATE NOT NULL
+  expiry_date       DATE NOT NULL
+  status            TEXT NOT NULL DEFAULT 'Draft'
+                    -- Draft | Sent | Accepted | Negotiating | Rejected | Expired
+  offer_letter_url  TEXT
+  counter_offer     JSONB  -- counter-offer details if Negotiating
+  parent_offer_id   UUID   -- FK to self for revised offers
+  created_by        UUID NOT NULL  -- FK to employees
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at        TIMESTAMPTZ
+
+Table: recruitment_communication_log
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  candidate_id      UUID NOT NULL  -- FK to recruitment_candidates
+  log_date          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  type              TEXT NOT NULL  -- Call | Email | WhatsApp | In-person
+  logged_by         UUID NOT NULL  -- FK to employees
+  summary           TEXT NOT NULL
+  outcome           TEXT
+  next_followup_date DATE
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+Table: recruitment_feedback (ALTER — add columns)
+  competency_ratings  JSONB   -- { "competency_name": rating_1_to_5, … }
+  strengths           TEXT
+  concerns            TEXT
+  recommendation      TEXT    -- Strong Hire | Hire | Maybe | No Hire
+
+Table: recruitment_interviews (ALTER — add columns)
+  calendar_event_url  TEXT
+  location_type       TEXT    -- Virtual | In-Person | Hybrid
+  location_address    TEXT
+
+
+────────────────────────────────────────────────────────────────────────────────
+C3.4  VALIDATION RULES
+────────────────────────────────────────────────────────────────────────────────
+
+VR-R-01  Cannot post/activate a job without an approved requisition.
+          Exception: users with permission  recruitment.post_without_requisition
+          may bypass with mandatory reason logged.
+
+VR-R-02  Cannot schedule the same interviewer for more than 4 hours of
+          interviews on the same calendar date.
+          Check: SUM(interview_duration) WHERE interviewer_id = $id AND
+          DATE(scheduled_at) = $date < 240 minutes.
+          Display warning and block save if exceeded.
+
+VR-R-03  Offer CTC total must be > 0.
+          Validate on offer save: ctc_breakup.total > 0.
+
+VR-R-04  Offer joining date must be at least
+          OFFER_POLICIES.min_joining_lead_days  (default: 14) days from today.
+          Configurable per role/band in Master Data.
+
+VR-R-05  Cannot move a candidate to Rejected without a reason string of
+          minimum 10 characters.
+
+VR-R-06  Cannot move a candidate out of Rejected stage without:
+          (a) user having HR_OVERRIDE permission, AND
+          (b) a reason string (min 10 chars) logged to communication log.
+
+VR-R-07  Blacklisted candidate: on application creation or stage-move to Hire,
+          display modal warning showing blacklist reason and blacklist_until date.
+          Block the Hire action; require admin override with reason.
+
+VR-R-08  Feedback deadline (24 h): send reminder push notification to interviewer.
+          Feedback lock (72 h): mark feedback record as locked; UI shows read-only.
+          Admin can unlock; unlock action requires reason (audit logged).
+
+VR-R-09  Offer expiry date must be > joining_date.
+
+VR-R-10  All competency rows must be rated before feedback can be submitted.
+          (Front-end and back-end validation.)
+
+
+────────────────────────────────────────────────────────────────────────────────
+C3.5  WORKFLOW INTEGRATION
+────────────────────────────────────────────────────────────────────────────────
+
+W-R-01  Requisition Approval Workflow
+  Trigger : HR user submits job requisition.
+  Chain   : Department Manager → HR Manager.
+  Steps   :
+    1. Status → Submitted; push notification to Dept Manager (action_required).
+    2. Dept Manager approves → status → Dept_Approved; push to HR Manager.
+    3. HR Manager approves → status → Approved;
+       job_requisitions.job_id populated; recruitment_jobs.status → Open;
+       push to requester (success: "Requisition approved. Job is now live.").
+  Rejection at any step → status → Rejected; rejection_reason stored;
+    push to requester (with reason); requester may re-submit (version++).
+
+W-R-02  Hire Workflow
+  Trigger : recruitment_offers.status set to Accepted.
+  Steps (parallel execution):
+    1. Set candidate stage → Hired; stamp hired_at.
+    2. Create onboarding_records record (App 4) with new joiner data.
+    3. POST ${API_BASE}/emails/send  → welcome email to candidate personal email.
+    4. POST ${API_BASE}/it-services/tickets  → hardware provisioning ticket.
+    5. Push: HR + Dept Manager notified (success: "Offer accepted — onboarding
+       record created for {name}").
+
+W-R-03  Interview No-Show Automation
+  Trigger : Scheduled job runs every 15 minutes.
+  Logic   : For each interview where status = 'Scheduled' AND
+            scheduled_at < NOW() AND no feedback record exists:
+    → Set status = 'No Show'.
+    → Log to candidate communication log (auto-entry, type = System).
+    → Push recruiter: warning "Interview no-show: {candidate} / {interviewer}."
+
+W-R-04  Feedback Reminder / Lock Automation
+  Trigger : Background job runs every hour.
+  24 h check: scheduled_at + 24h < NOW() AND feedback NOT submitted AND
+    status = 'Completed' → push reminder to interviewer.
+  72 h check: scheduled_at + 72h < NOW() AND feedback NOT submitted →
+    lock feedback record; push urgent to interviewer + recruiter.
+
+W-R-05  Offer Expiry Automation
+  Trigger : Daily background job.
+  Logic   : offers where expiry_date = TODAY + 2 AND status NOT IN
+    ('Accepted','Rejected','Expired') → push warning to recruiter.
+  Logic   : offers where expiry_date < TODAY AND status NOT IN
+    ('Accepted','Rejected') → set status = 'Expired'; push to recruiter.
+
+  Upgrade path noted (not in current scope):
+  • Google Calendar / Outlook OAuth integration for interview invites.
+  • DocuSign / Adobe Sign integration for offer letter e-signatures.
+
+
+────────────────────────────────────────────────────────────────────────────────
+C3.6  PUSH NOTIFICATIONS
+────────────────────────────────────────────────────────────────────────────────
+
+  Event                                   Recipient(s)         Type
+  ──────────────────────────────────────  ───────────────────  ────────────────
+  Candidate applied to job                Recruiter            info
+  Interview scheduled                     Interviewer          action_required
+  Feedback due (24 h after interview)     Interviewer          reminder
+  Feedback overdue (72 h, not submitted)  Interviewer, Recruiter  urgent
+  Offer sent to candidate                 Recruiter + candidate email  info
+  Offer accepted                          Recruiter            action_required
+  Offer rejected by candidate             Recruiter            action_required
+  Offer expiring in 2 days                Recruiter            warning
+  Requisition approved                    Requester            success
+  Requisition rejected (with reason)      Requester            warning
+  Stage moved to Hired                    HR, Dept Manager     success
+  Interview no-show detected              Recruiter            warning
+  Duplicate candidate flagged             Recruiter            info
+
+
+────────────────────────────────────────────────────────────────────────────────
+C3.7  FIGMA DESIGN PROMPT — RECRUITMENT TRACKER
+────────────────────────────────────────────────────────────────────────────────
+
+Canvas: 1440 × 900 px | Background: #F8FAFC | Accent: #6366F1 (Indigo)
+Font: Inter | Radius tokens: card=8px, chip=4px, button=6px
+Shadow token: card = 0 1px 3px rgba(0,0,0,0.08)
+
+─────────────────────────
+PAGE HEADER
+─────────────────────────
+Left  : H1 "Recruitment" (24px, semibold, #111827)
+Center: Tab bar — [ Pipeline ] [ Jobs ] [ Requisitions ] [ Analytics ]
+        Active tab: indigo underline + indigo text; inactive: gray-500
+Right : [+ Add Candidate]  indigo filled button, white text, 36px height
+
+─────────────────────────
+PIPELINE TAB
+─────────────────────────
+Sub-header row (filter chips, single-select, gray default / indigo active):
+  All(104) | Applied(18) | Screening(12) | Phone Screen(7) | Tech Round 1(5)
+  | Tech Round 2(3) | HR Interview(4) | Offer(2) | Hired(8) | Rejected(45)
+
+Kanban board (horizontal scroll, columns fixed 260px wide, gap 12px):
+  Each column:
+    Header: stage label bold gray-700 | count badge (gray-200 pill) | [+] icon right
+    Body: vertical stack of CandidateCards, gap 8px
+
+  CandidateCard — white bg | border gray-200 | radius 8 | shadow-sm | padding 12px:
+    ROW 1: source badge chip (LinkedIn = blue, Referral = purple, Naukri = orange,
+           Campus = teal) | SPACER | duplicate warning icon ⚠ yellow-500 if applicable
+    ROW 2: candidate name (15px semibold #111827) | position text (13px gray-500)
+    ROW 3: department chip (gray-100 bg, gray-700 text, radius 4)
+    ROW 4: avg feedback score — stars filled indigo up to score (e.g. "4.2 ★")
+           or "No feedback" gray italic if absent
+    ROW 5: "Day 5" gray chip | "2 interviews" indigo ghost chip
+    ROW 6 (footer): [Move →] secondary button | [Schedule Interview] ghost button
+                    | assignee avatar (24px) right-aligned
+    Special states:
+      Red left-border (4px) + red-50 bg tint if candidate is blacklisted
+      Duplicate warning icon triggers yellow tooltip on hover
+
+─────────────────────────
+CANDIDATE DETAIL DRAWER (740px, slides in from right)
+─────────────────────────
+Header: candidate name H2 | position | department | [✕ close]
+Tabs: [ Info ] [ Interviews ] [ Feedback ] [ Offer ] [ Communication Log ] [ Attachments ]
+
+INFO TAB:
+  2-column grid: full profile fields | resume link | source chip | blacklist badge
+  (red outlined chip "Blacklisted until {date}" if applicable)
+
+INTERVIEWS TAB:
+  Interview cards (white, border, radius 8):
+    "Round 1 — Technical" header | Raj Kumar (avatar + name) | Apr 8, 14:00
+    Zoom link chip | status chip (Scheduled=blue, Completed=green,
+    Cancelled=gray, No Show=red)
+  [+ Schedule Interview] indigo button → slide-over form with:
+    Round number | Date+Time picker | Interviewer (employee picker) |
+    Type (INTERVIEW_TYPES) | Meeting link | Location type toggle
+  If interviewer = current user AND status = Completed AND no feedback:
+    Show [Submit Feedback] prominent indigo button
+
+FEEDBACK TAB:
+  Per-interviewer scorecard card (white, border):
+    Interviewer avatar + name | date | recommendation chip (color-coded)
+    Competency table: rows = competency name | 1-5 filled stars
+    Strengths text (italic gray) | Areas of Concern text (italic gray)
+  Aggregate card (indigo-50 bg):
+    Overall avg score large (e.g. "4.1 / 5") | recommendation distribution
+    donut (4 segments: Strong Hire green / Hire blue / Maybe yellow / No Hire red)
+
+OFFER TAB:
+  Status timeline: Draft → Sent → Negotiating → Accepted
+    (nodes: filled circle indigo if reached, gray if pending)
+  CTC breakdown table:
+    Component | Amount (₹) rows: Basic | HRA | Special | Bonus | Variable |
+    Benefits | TOTAL (bold)
+  Action buttons: [Generate Offer Letter] | [Send Offer] | [View PDF] link
+  If Negotiating: counter-offer details shown | [Log Counter-Offer] button
+
+COMMUNICATION LOG TAB:
+  Reverse-chronological timeline:
+    Icon (phone/envelope/whatsapp/person) | date | type chip | logged_by name
+    summary paragraph | outcome chip | next follow-up date badge (if set)
+
+─────────────────────────
+JOBS TAB
+─────────────────────────
+Filter bar: Status dropdown | Department dropdown | Location input | [Search]
+[+ New Job] button (opens Requisition form first) right-aligned
+
+Table (full width):
+  Job Title | Department | Location | Requisition Status | Candidates | Openings
+  | Status badge | Posted Date | Actions (View / Edit / Close)
+
+Status badges: Open=green | On Hold=yellow | Filled=blue | Draft=gray
+
+─────────────────────────
+REQUISITIONS TAB
+─────────────────────────
+Same table pattern as Jobs tab:
+  Position Title | Department | Headcount | Requester | Submitted Date
+  | Approver | Status | Actions
+
+Approval status chain shown as mini step indicators:
+  ● Submitted → ○ Dept Mgr → ○ HR → ○ Approved  (filled = reached)
+
+─────────────────────────
+ANALYTICS TAB
+─────────────────────────
+ROW 1 (two-column split):
+  LEFT (55%): Stage Funnel — horizontal bar chart (widest at Applied, narrowing
+    to Hired); stage label + count + conversion% on each bar; indigo gradient bars
+  RIGHT (45%): Time to Hire by Department — horizontal bar chart; bars in
+    indigo-400; avg days label at end of each bar
+
+ROW 2 (two-column split):
+  LEFT (65%): Source Effectiveness table — columns: Source | Applications
+    | Interviewed | Hired | Conversion %; sortable; source chip in first column
+  RIGHT (35%): Offer Acceptance — donut chart (3 segments: Accepted green /
+    Rejected red / Expired gray); center text "Acceptance Rate: 72%"
+
+
+════════════════════════════════════════════════════════════════════════════════
+APP 4 — ONBOARDING PORTAL
+════════════════════════════════════════════════════════════════════════════════
+
+Current file  : OnboardingPortalEnhancedV2.tsx
+Current DB    : onboarding_records | onboarding_tasks | onboarding_documents |
+                onboarding_welcome_kits
+Current views : List | Kanban
+Current drawer: Checklist | Documents | Welcome Kit
+
+
+────────────────────────────────────────────────────────────────────────────────
+C4.1  FIX PLAN — KNOWN GAPS
+────────────────────────────────────────────────────────────────────────────────
+
+G1 — Digital signatures are metadata only  [HIGH]
+  Developer approach:
+  • On "Sign Document" action: render a signature pad (canvas-based, e.g.
+    react-signature-canvas or a simple typed-name-with-date implementation).
+  • Simple legal e-sign: typed full name + timestamp + IP address stored as
+    signature metadata (sufficient for most HR documents in India).
+  • Advanced option: export canvas to PNG → upload to Supabase Storage:
+    onboarding/signatures/{document_id}/{employee_id}_signature.png
+  • On signature completion: generate final signed PDF by inserting signature
+    image + typed name + date at the signature placeholder in the document
+    template using the server-side html-to-pdf endpoint.
+  • Store signed PDF URL in  onboarding_documents.signed_pdf_url.
+  • Update  onboarding_documents.signature_data JSONB:
+    { "type": "typed" | "drawn", "signer_name": "...", "signed_at": "...",
+      "ip_address": "...", "signature_image_url": "..." }
+
+G2 — Welcome kit tab is static text  [MEDIUM]
+  Developer approach:
+  • Welcome kit data must come from onboarding_welcome_kits record linked to
+    the onboarding record.
+  • On enable-access trigger: call POST ${API_BASE}/emails/send with template
+    welcome_email_template (loaded from WELCOME_EMAIL_TEMPLATES in Master Data).
+  • Template variables: {name} {joining_date} {manager_name} {buddy_name}
+    {it_equipment_list} {first_day_schedule} {hr_contact} {office_location}
+  • Welcome Kit tab must render dynamically from the onboarding_welcome_kits
+    record fields, not hardcoded text.
+
+G3 — No automated email on Enable Access  [MEDIUM]
+  Developer approach:
+  • After "Enable Access" button action resolves successfully:
+      POST ${API_BASE}/emails/send
+        body: { template: 'welcome_email', employee_id, onboarding_id }
+      POST ${API_BASE}/notifications
+        body: { type: 'welcome', employee_id, message: 'Welcome to the team!' }
+  • Show toast confirmation to HR user: "Welcome email sent to {personal_email}."
+  • Log the send event in onboarding_records.welcome_email_sent_at TIMESTAMPTZ.
+
+G4 — No offboarding module  [HIGH]
+  Developer approach:
+  • Add "Offboarding" view toggle in the page header (alongside "Active
+    Onboarding").
+  • Offboarding uses its own pair of tables: offboarding_records +
+    offboarding_tasks (schema in C4.3).
+  • Reuse the same Kanban card pattern with offboarding-specific columns.
+  • Checklist auto-generated from OFFBOARDING_CHECKLIST_TEMPLATES in Master Data.
+  • Full feature specification in C4.2.5 below.
+
+G5 — No pre-boarding portal  [MEDIUM]
+  Developer approach:
+  • Create a separate public-facing route: /preboarding?token={UUID}
+  • Route is unauthenticated but validates token against
+    onboarding_records.pre_boarding_token (not expired).
+  • Token generation: on onboarding record creation, generate UUID token,
+    store in pre_boarding_token, set pre_boarding_token_expires_at.
+  • Full feature specification in C4.2.1 below.
+
+G6 — Checklist templates not configurable per dept/role  [MEDIUM]
+  Developer approach:
+  • Create ONBOARDING_CHECKLIST_TEMPLATES in Master Data App with fields:
+    department | role | task_title | owner | due_day_offset | category.
+  • On onboarding record creation: query matching template rows
+    (department + role match; fallback to department-only; fallback to global).
+  • Auto-insert  onboarding_tasks  rows from template.
+  • Full specification in C4.2.2 below.
+
+G7 — No IT ticket auto-creation on Enable Access  [MEDIUM]
+  Developer approach:
+  • After "Enable Access" button action resolves:
+      POST ${API_BASE}/it-services/tickets
+        body: { type: 'hardware_provisioning', employee_id, onboarding_id,
+                joining_date, location, equipment_list }
+  • Store returned ticket ID in onboarding_records.it_ticket_id.
+  • Display ticket reference as a chip in the Overview tab:
+    "TKT-{number} — Hardware Provisioning — {status}"
+  • Poll ticket status via GET ${API_BASE}/it-services/tickets/{id} on drawer
+    open (or use webhook callback to update status).
+
+
+────────────────────────────────────────────────────────────────────────────────
+C4.2  FEATURE ENHANCEMENTS — INDUSTRY STANDARD
+────────────────────────────────────────────────────────────────────────────────
+
+C4.2.1  Pre-boarding Portal (candidate-facing, separate URL)
+
+  Access mechanism:
+  • HR clicks [Send Pre-boarding Link] → system generates UUID token, stores in
+    onboarding_records.pre_boarding_token with expiry =
+    MIN(joining_date, NOW() + 7 days).
+  • Email sent to candidate's personal_email with link:
+    https://hrportal.company.com/preboarding?token={UUID}
+  • Route /preboarding is publicly accessible; page validates token on load.
+    If expired or invalid → friendly error page with HR contact info.
+
+  Candidate can complete on pre-boarding portal:
+  • Fill profile information (address, bank details, emergency contact,
+    education history, previous employment).
+  • Upload required documents:
+      PAN card | Aadhaar card | Educational certificates | Experience letters
+      | Passport-size photo | Offer letter signed copy
+    Documents stored in Supabase Storage under
+    preboarding/{onboarding_id}/{document_type}_{filename}
+    and linked in  preboarding_submissions  table.
+  • Read and acknowledge company policies (checkbox per policy, timestamp stored).
+  • View first-day schedule (read-only, set by HR in welcome kit).
+
+  Progress display to candidate:
+  • Progress bar: "3 of 7 items completed" with checklist on left sidebar.
+  • Completion state: tick + green color per section.
+
+  HR view:
+  • Pre-boarding completion percentage shown on onboarding Kanban card.
+  • In drawer Overview tab: "Pre-boarding: 4/7 (57%)" with link to review
+    submitted documents.
+  • pre_boarding_completed_at timestamped when all sections are submitted.
+
+C4.2.2  Configurable Checklist Templates
+
+  Master Data structure (ONBOARDING_CHECKLIST_TEMPLATES):
+    id              UUID
+    department      TEXT  (NULL = all departments)
+    role            TEXT  (NULL = all roles in department)
+    task_title      TEXT NOT NULL
+    description     TEXT
+    owner           ENUM  (HR | IT | Manager | Employee | Finance)
+    due_day_offset  INTEGER  (0 = Day of joining, 1 = Day 1, 3 = Day 3, etc.)
+    category        ENUM  (Documents | IT | Training | Access | Orientation | Other)
+    is_mandatory    BOOLEAN DEFAULT TRUE
+    sort_order      INTEGER
+
+  Template resolution (on onboarding record creation):
+    1. Fetch rows matching (department = record.dept AND role = record.role).
+    2. If none found: fetch rows matching (department = record.dept AND role IS NULL).
+    3. If none found: fetch rows matching (department IS NULL AND role IS NULL).
+    4. Insert onboarding_tasks from matched rows with:
+        due_date = joining_date + due_day_offset
+        status = 'Pending'
+        owner = template.owner
+
+  Category color codes (Tailwind bg chip):
+    Documents   = blue-100 / blue-700
+    IT Setup    = purple-100 / purple-700
+    Training    = green-100 / green-700
+    Access      = orange-100 / orange-700
+    Orientation = teal-100 / teal-700
+    Other       = gray-100 / gray-700
+
+C4.2.3  Onboarding Dashboard (admin view)
+
+  KPI tiles (top row):
+    New Joiners This Month   | Pending Documents (unsigned/unverified)
+    IT Setup Pending         | Completed This Month
+    Offboarding Active       | Pre-boarding Pending (items incomplete day before joining)
+
+  Filter bar:
+    Department (multi-select dropdown) | Joining Date range (date picker pair)
+    | Status (Active / Completed / Pre-boarding / On Hold)
+
+  Overdue logic:
+  • A task is overdue if: status ≠ Completed AND due_date < TODAY.
+  • Overdue tasks highlighted red in checklist; card shows ⚠ overdue indicator.
+  • Dashboard shows count of overdue tasks across all active onboarding records.
+
+C4.2.4  Buddy Program
+
+  Assignment:
+  • HR assigns buddy from employee picker in the Overview tab of the drawer.
+  • Written to  onboarding_records.buddy_id.
+  • On save: push notification to buddy (action_required):
+    "You have been assigned as buddy for {new_joiner_name} joining on {date}."
+  • Auto-create onboarding task for buddy:
+    "Connect with new joiner {name} before Day 3"
+    owner = buddy_id | due_day_offset = 3 | category = Orientation.
+
+  Buddy visibility:
+  • Buddy avatar + name shown on the pre-boarding portal welcome kit section.
+  • Key Contacts section in Welcome Kit tab: Buddy row with photo + name + email.
+
+C4.2.5  Welcome Kit Enhancements
+
+  Welcome Kit sections (stored in onboarding_welcome_kits):
+    IT Equipment      : laptop model, accessories list, credentials note
+    First-Week Schedule: array of { date, time, title, location } events
+    Key Contacts      : { hr, it, manager, buddy } — name + email + phone
+    Company Links     : { policies_url, handbook_url, org_chart_url, benefits_url }
+    Org Chart Snippet : team members (pulled from org structure in Master Data)
+
+  Automated welcome email (sent on Enable Access):
+    Template: WELCOME_EMAIL_TEMPLATES from Master Data.
+    Variables: name | joining_date | manager_name | buddy_name |
+               it_equipment_list | first_day_schedule | office_location |
+               hr_contact_name | hr_contact_email
+    Sent to: personal_email (not corporate email, which may not exist yet).
+
+C4.2.6  Offboarding Module (new view — toggle in page header)
+
+  Trigger:
+    HR marks an employee record as "Initiating Exit" from User Management app
+    OR directly from Offboarding view via [+ New Exit] button.
+
+  Core fields (offboarding_records):
+    employee_id             FK → employees
+    last_working_day        DATE
+    exit_reason             TEXT (from EXIT_REASONS master data)
+    exit_interview_date     DATE
+    exit_interview_status   ENUM (Pending | Scheduled | Completed | Waived)
+    fnf_status              ENUM (Pending | In Progress | Settled | On Hold)
+    created_by              FK → employees (HR)
+
+  Auto-generated offboarding checklist (from OFFBOARDING_CHECKLIST_TEMPLATES):
+    Return Equipment        owner=IT       due=last_working_day - 1
+    Revoke System Access    owner=IT       due=last_working_day
+    Exit Interview          owner=HR       due=last_working_day - 3
+    Knowledge Transfer      owner=Manager  due=last_working_day - 5
+    F&F Settlement          owner=Finance  due=last_working_day + 30
+    NOC Issued              owner=HR       due=last_working_day + 45
+
+  Knowledge transfer tasks:
+  • Each KT task can be assigned to a specific team member (employee picker).
+  • Multiple KT tasks can be created for different domain areas.
+  • Completion requires notes/handover document attachment.
+
+  Access revocation scheduling:
+  • On offboarding initiation: POST ${API_BASE}/user-management/schedule-deactivation
+    body: { employee_id, deactivation_date: last_working_day }
+  • Day before last_working_day: IT receives reminder push notification.
+  • On last_working_day (automated): deactivation job fires.
+
+  F&F tracking:
+  • Finance team updates fnf_status.
+  • Settlement amount and date stored in fnf_details JSONB on offboarding_records.
+
+  Exit analytics:
+    Attrition rate        : exits / avg headcount per period per department
+    Average tenure        : avg employment duration per department
+    Exit reason breakdown : pie chart of exit_reason categories
+    Regretted vs non-regretted attrition (field: is_regretted BOOLEAN on record)
+
+
+────────────────────────────────────────────────────────────────────────────────
+C4.3  DATA MODEL ADDITIONS
+────────────────────────────────────────────────────────────────────────────────
+
+Table: onboarding_records (ALTER — add columns)
+  pre_boarding_token            UUID
+  pre_boarding_token_expires_at TIMESTAMPTZ
+  pre_boarding_completed_at     TIMESTAMPTZ
+  pre_boarding_progress_pct     INTEGER DEFAULT 0
+  buddy_id                      UUID      -- FK to employees
+  it_ticket_id                  TEXT      -- external ticket reference
+  joining_type                  ENUM      -- in-office | remote | hybrid
+  welcome_email_sent_at         TIMESTAMPTZ
+  personal_email                TEXT      -- for pre-boarding comms
+
+Table: offboarding_records
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  employee_id           UUID NOT NULL  -- FK to employees
+  last_working_day      DATE NOT NULL
+  exit_reason           TEXT           -- FK to EXIT_REASONS master
+  exit_interview_date   DATE
+  exit_interview_status TEXT NOT NULL DEFAULT 'Pending'
+                        -- Pending | Scheduled | Completed | Waived
+  fnf_status            TEXT NOT NULL DEFAULT 'Pending'
+                        -- Pending | In Progress | Settled | On Hold
+  fnf_details           JSONB
+  is_regretted          BOOLEAN DEFAULT FALSE
+  created_by            UUID NOT NULL  -- FK to employees
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  updated_at            TIMESTAMPTZ
+
+Table: offboarding_tasks
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  offboarding_id    UUID NOT NULL  -- FK to offboarding_records
+  title             TEXT NOT NULL
+  description       TEXT
+  category          TEXT           -- Return Equipment | Access | Interview |
+                                   -- Knowledge Transfer | F&F | NOC | Other
+  owner             TEXT           -- HR | IT | Manager | Finance | Employee
+  assigned_to       UUID           -- FK to employees (for KT tasks)
+  status            TEXT NOT NULL DEFAULT 'Pending'
+                    -- Pending | In Progress | Completed | Blocked
+  due_date          DATE
+  completed_at      TIMESTAMPTZ
+  notes             TEXT
+  attachment_url    TEXT
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+Table: preboarding_submissions
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid()
+  onboarding_id   UUID NOT NULL  -- FK to onboarding_records
+  document_type   TEXT NOT NULL
+                  -- PAN | Aadhaar | Education | Experience | Photo | Other
+  file_url        TEXT NOT NULL  -- Supabase Storage URL
+  file_name       TEXT
+  submitted_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  verified_by     UUID           -- FK to employees (HR verifier)
+  verified_at     TIMESTAMPTZ
+  rejection_reason TEXT          -- if HR rejects the document
+  status          TEXT NOT NULL DEFAULT 'Pending'
+                  -- Pending | Verified | Rejected
+
+Table: onboarding_documents (ALTER — add columns)
+  signed_pdf_url    TEXT
+  signature_data    JSONB
+    -- { "type": "typed|drawn", "signer_name": "...", "signed_at": "...",
+    --   "ip_address": "...", "signature_image_url": "..." }
+
+
+────────────────────────────────────────────────────────────────────────────────
+C4.4  VALIDATION RULES
+────────────────────────────────────────────────────────────────────────────────
+
+VR-O-01  Enable Access action: joining_date must be ≤ TODAY + 7.
+          Cannot provision systems more than 7 days in advance.
+
+VR-O-02  Cannot mark onboarding as Completed unless ALL of:
+          (a) At least one document has status = 'signed' (signature_data not null).
+          (b) The IT Setup task (category = IT, is_mandatory = true) is Completed.
+          (c) The Orientation task (category = Orientation, is_mandatory = true) is
+              Completed.
+
+VR-O-03  Offboarding last_working_day must be ≥ TODAY + notice_period_days.
+          notice_period_days sourced from employment contract record in Master Data
+          (fallback: 30 days if no contract data).
+
+VR-O-04  Cannot close / complete an offboarding record without:
+          exit_interview_status IN ('Completed', 'Waived')
+
+VR-O-05  Pre-boarding token expires at:
+          MIN(pre_boarding_token_expires_at, joining_date 00:00)
+          After expiry: route shows expired page; HR can regenerate token.
+
+VR-O-06  Pre-boarding document upload: file size max 10 MB per document;
+          accepted MIME types: application/pdf | image/jpeg | image/png.
+
+VR-O-07  Buddy cannot be the same as the assigned manager.
+
+VR-O-08  Cannot mark "Return Equipment" task as complete without attachment
+          (receipt/acknowledgement document).
+
+
+────────────────────────────────────────────────────────────────────────────────
+C4.5  WORKFLOW INTEGRATION
+────────────────────────────────────────────────────────────────────────────────
+
+W-O-01  Hire-to-Onboarding Trigger (from Recruitment)
+  Trigger : recruitment_offers.status → Accepted (see W-R-02)
+  Action  : Create onboarding_records row populated from candidate + offer data.
+            Send pre-boarding link email to candidate personal_email.
+            Notify HR and Dept Manager.
+
+W-O-02  Enable Access — Parallel Workflow
+  Trigger : HR clicks [Enable Access] button (validations VR-O-01 must pass).
+  Parallel steps:
+    A. POST ${API_BASE}/it-services/tickets  (hardware provisioning)
+       → store ticket id in onboarding_records.it_ticket_id
+    B. POST ${API_BASE}/emails/send  (welcome email to candidate personal_email)
+       → stamp welcome_email_sent_at
+    C. POST ${API_BASE}/notifications  (welcome push to new joiner if app account exists)
+    D. POST ${API_BASE}/training/enroll  (mandatory training enrollment per role)
+  On all steps completed: set onboarding status → Active / IT Provisioned.
+
+W-O-03  Pre-boarding Document Verification
+  Trigger  : Candidate submits document on pre-boarding portal.
+  Action   : Set preboarding_submissions.status = 'Pending'.
+             Notify HR (info push): "New document submitted by {name}: {type}."
+  HR action: Approve → status = 'Verified', verified_by, verified_at stamped.
+             Reject  → status = 'Rejected', rejection_reason required.
+             Push notification to candidate (if app account): "Document {type}
+             verified / rejected: {reason}."
+
+W-O-04  Offboarding Initiation — Parallel Notifications
+  Trigger : offboarding_records record created.
+  Parallel:
+    A. Notify IT (action_required): "Access revocation scheduled for {name}
+       on {last_working_day}."
+    B. Notify Finance (info): "F&F settlement initiation required for {name}."
+    C. Notify Manager (action_required): "Knowledge transfer tasks assigned
+       for {name}'s exit."
+    D. Schedule User Management deactivation for last_working_day.
+
+W-O-05  30-Day Probation Review Automation
+  Trigger : Daily background job.
+  Logic   : onboarding_records where
+    joining_date + probation_days - 7 = TODAY AND
+    probation_review_status = 'Pending'
+    → Push manager (action_required): "Probation review due in 7 days for {name}."
+
+W-O-06  Buddy Assignment Workflow
+  Trigger : HR saves buddy_id on onboarding record.
+  Actions :
+    • Push to buddy (action_required): "You are assigned as buddy for {name}."
+    • Auto-create onboarding task for buddy:
+      "Connect with {name} before Day 3" | owner=buddy | due=joining_date+3.
+
+
+────────────────────────────────────────────────────────────────────────────────
+C4.6  PUSH NOTIFICATIONS
+────────────────────────────────────────────────────────────────────────────────
+
+  Event                                        Recipient(s)              Type
+  ───────────────────────────────────────────  ────────────────────────  ────────────────
+  Onboarding record created (from Hire)        HR, Dept Manager          info
+  Pre-boarding link sent                       HR (confirmation)         info
+  Pre-boarding task overdue (day before        HR                        warning
+    joining, items still incomplete)
+  Pre-boarding document submitted              HR                        info
+  Pre-boarding document verified               Candidate                 success
+  Pre-boarding document rejected               Candidate                 warning
+  Checklist task due today                     Task owner                reminder
+  Checklist task overdue                       Task owner + HR           urgent
+  Access enabled (welcome)                     New joiner                success
+  Buddy assigned                               Buddy                     action_required
+  Onboarding completed                         HR, Dept Manager          success
+  Probation review due (7 days before end)     Manager                   action_required
+  Offboarding initiated                        IT, Finance, Manager      action_required
+  Last working day tomorrow                    IT (access revocation      reminder
+    reminder)
+  Access revoked (last working day)            HR, Manager               info
+  Exit interview overdue                       HR                        warning
+  F&F settlement overdue                       Finance                   warning
+
+
+────────────────────────────────────────────────────────────────────────────────
+C4.7  FIGMA DESIGN PROMPT — ONBOARDING PORTAL
+────────────────────────────────────────────────────────────────────────────────
+
+Canvas: 1440 × 900 px | Background: #F8FAFC | Accent: #6366F1 (Indigo)
+Font: Inter | Radius tokens: card=8px, chip=4px, button=6px
+Shadow: card = 0 1px 3px rgba(0,0,0,0.08)
+
+─────────────────────────
+PAGE HEADER
+─────────────────────────
+Left : H1 "Onboarding Portal" (24px, semibold, #111827)
+Center: View toggle — [ Active Onboarding ] [ Offboarding ]
+         (filled indigo for selected, gray-100 for other, toggle-style)
+Right : [+ New Joiner]  indigo button | Filter icon | Department dropdown
+
+─────────────────────────
+KPI ROW (6 tiles, gray-50 bg, border, radius 8)
+─────────────────────────
+  New Joiners This Month : 8    (blue icon)
+  Pre-boarding Pending   : 3    (yellow icon — day before joining, items missing)
+  IT Setup Pending       : 5    (purple icon)
+  Completed This Month   : 6    (green icon)
+  Probation Reviews Due  : 2    (orange icon)
+  Offboarding Active     : 2    (red icon)
+
+─────────────────────────
+KANBAN BOARD — ACTIVE ONBOARDING
+─────────────────────────
+Columns (each 240px, horizontal scroll):
+  Pre-boarding | Documents Pending | HR Verification | IT Setup | Orientation | Completed
+
+OnboardingCard — white | border gray-200 | radius 8 | shadow-sm | padding 12px:
+  ROW 1: joining date chip — green "Joining Apr 10" (future) or
+          red "Joined — Day 3" (past joining, still active)
+  ROW 2: avatar 32px | Name (15px semibold) | Position (13px gray-500)
+  ROW 3: department chip (gray-100)
+  ROW 4: progress bar (indigo fill, gray-200 track, 6px height)
+          "5 / 12 tasks done (42%)" label below bar
+  ROW 5 (icon badges, 20px each with tooltip):
+          📄 docs pending count (blue badge) |
+          💻 IT pending (purple badge) |
+          👥 buddy assigned (green tick / gray cross) |
+          ⚠ overdue (red, if any task is overdue)
+  Click card → Candidate Detail Drawer
+
+─────────────────────────
+DETAIL DRAWER (740px from right)
+─────────────────────────
+Header: avatar 40px | Name H2 | position | department | joining date chip | [✕]
+Tabs: [ Overview ] [ Checklist ] [ Documents ] [ Welcome Kit ] [ Pre-boarding ]
+
+OVERVIEW TAB:
+  LEFT (60%):
+    Employee info card: name | position | department | joining date |
+    manager (avatar+name) | buddy (avatar+name or "Not assigned")
+    Progress donut (indigo): overall completion % large center text
+  RIGHT (40%):
+    IT Ticket chip: "TKT-2048 — Hardware Provisioning — In Progress" (amber badge)
+    Action buttons (stacked):
+      [Enable Access]  — indigo primary (disabled until VR-O-01/02 pass;
+                         tooltip explains reason if disabled)
+      [Send Pre-boarding Link]  — secondary
+      [Assign Buddy]            — ghost
+
+CHECKLIST TAB:
+  Category group headers with colored pill (see category colors in C4.2.2):
+    Documents | IT Setup | Training | Access | Orientation
+  Task row:
+    Checkbox (checkable only by task owner OR HR) | title | owner chip |
+    due chip (green if future, red if overdue) | status chip
+  Overdue task rows: red-50 background tint | ⚠ icon
+  Footer per group: "2 / 4 complete" gray text
+
+DOCUMENTS TAB:
+  Document list: doc type icon | doc name | uploaded date | status chip
+    (Pending=yellow | Signed=green | Verified=blue | Rejected=red)
+  [Upload Document] button
+  On signed doc: [View Signed PDF] link | signature details tooltip
+    showing signer name + date + IP
+
+WELCOME KIT TAB:
+  Section: IT Equipment
+    Checklist items: Laptop — Dell Latitude 5540 ✓ | Charger ✓ | Mouse ✓
+  Section: Key Contacts
+    Manager row: avatar | name | email | phone
+    Buddy row: avatar | name | email (or "Not assigned yet")
+    HR row | IT row
+  Section: First Week Schedule
+    Mini calendar showing week of joining; event chips per day
+    (Day 1: Orientation 9AM | IT Setup 11AM | Team Lunch 1PM)
+  Section: Company Links (grid of 4 link cards with icon)
+    Policies | Handbook | Org Chart | Benefits Portal
+  [Send Welcome Email] button (indigo, sends to personal email)
+
+PRE-BOARDING TAB:
+  Progress bar: "4 / 7 sections completed (57%)"
+  Section rows: icon | section name | status chip (Not Started / In Progress /
+    Submitted / Verified) | action link
+    Sections: Personal Info | Bank Details | PAN Card | Aadhaar | Certificates
+    | Policy Acknowledgement | First Day Schedule (read)
+  Submitted documents: thumbnail preview + verify/reject buttons for HR
+
+─────────────────────────
+OFFBOARDING VIEW (toggle from header)
+─────────────────────────
+KPI row:
+  Active Offboardings: 2 | Pending Exit Interviews: 1 | F&F Pending: 3
+  Access Revocations Today: 1
+
+Table (full width):
+  Employee (avatar+name) | Department | Last Working Day | Exit Reason chip
+  | Exit Interview chip | F&F Status chip | Days Remaining | Actions (View)
+
+Status chips:
+  Exit Interview: Pending=yellow | Scheduled=blue | Completed=green | Waived=gray
+  F&F: Pending=yellow | In Progress=blue | Settled=green | On Hold=red
+
+Offboarding Detail Drawer (740px):
+  Tabs: [ Overview ] [ Checklist ] [ Knowledge Transfer ] [ Exit Interview ]
+  Checklist same pattern as onboarding but with offboarding tasks.
+  Knowledge Transfer tab: task list with assigned team member picker per task
+  Exit Interview tab: date, interviewer, status, notes, recommendation text
+
+
+════════════════════════════════════════════════════════════════════════════════
+END OF SECTION C — RECRUITMENT & ONBOARDING
+================================================================================
+Document: HR Portal Enterprise Specification
+Section : C — Apps 3 & 4
+Version : 1.0
+Author  : Generated specification for developer handoff
+Date    : 2026-09-04
+================================================================================

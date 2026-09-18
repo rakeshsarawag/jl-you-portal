@@ -1,0 +1,1412 @@
+================================================================================
+SECTION E — APP 7: TRAINING TRACKER  |  APP 8: COMMUNICATIONS HUB
+Enterprise HR Portal — Technical Specification
+Tech Stack: React + Supabase + Tailwind CSS v4
+Auth: Supabase Auth | Permissions App (RBAC) | Push: Web Push API (VAPID)
+Accent Color: #6366F1 (Indigo)
+================================================================================
+
+--------------------------------------------------------------------------------
+APP 7: TRAINING TRACKER
+Current File: TrainingTrackerEnhanced.tsx
+Current DB Tables: training_courses, training_enrollments, training_certificates
+Current Tabs: my-training | catalogue | team | compliance | learning-paths
+--------------------------------------------------------------------------------
+
+════════════════════════════════════════════════════════════════════════════════
+E.1  KNOWN GAPS — TRAINING TRACKER
+════════════════════════════════════════════════════════════════════════════════
+
+  ID   Severity  Description
+  ──   ────────  ───────────────────────────────────────────────────────────────
+  G1   CRITICAL  Learning paths stored in-memory only — state lost on page
+                 refresh. Must be persisted to dedicated DB tables.
+  G2   Medium    Certificate generation is API-side only. Frontend receives a
+                 URL with no visible template. No print/PDF export available.
+  G3   Medium    Compliance tab has no reminder or escalation capability.
+  G4   Low       No SCORM player — external URLs only, no tracking.
+  G5   Medium    No training needs analysis / skills gap tool.
+  G6   Low       No manager approval gate before self-enrollment in
+                 non-mandatory courses.
+  G7   Medium    No expiry or renewal tracking for time-limited certifications.
+
+════════════════════════════════════════════════════════════════════════════════
+E.2  FIX PLAN — TRAINING TRACKER
+════════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────────────
+G1 FIX — Persist Learning Paths to Database
+────────────────────────────────────────────────────────────────────────────────
+
+Create the following two tables to replace all in-memory learning path state:
+
+  TABLE: training_paths
+    id               uuid          PRIMARY KEY DEFAULT gen_random_uuid()
+    title            text          NOT NULL
+    description      text
+    target_role      text
+    estimated_hours  numeric(6,2)
+    is_mandatory     boolean       DEFAULT false
+    courses          jsonb         -- array of {course_id, order_index}
+    status           text          CHECK (status IN ('draft','active','archived'))
+                                   DEFAULT 'draft'
+    created_by       uuid          REFERENCES auth.users(id)
+    created_at       timestamptz   DEFAULT now()
+
+  TABLE: training_path_enrollments
+    id               uuid          PRIMARY KEY DEFAULT gen_random_uuid()
+    path_id          uuid          REFERENCES training_paths(id)
+    employee_id      uuid          REFERENCES auth.users(id)
+    enrolled_at      timestamptz   DEFAULT now()
+    completed_at     timestamptz
+    progress_percent numeric(5,2)  DEFAULT 0
+
+Migration steps:
+  1. Run CREATE TABLE migrations above via Supabase SQL editor.
+  2. Replace all useState/useReducer learning path state in
+     TrainingTrackerEnhanced.tsx with Supabase queries.
+  3. On mount: fetch training_paths + training_path_enrollments for current
+     employee; subscribe to realtime changes.
+  4. All create/edit/delete path operations: call Supabase CRUD, then
+     invalidate local query cache.
+  5. Path progress recalculated on each training_enrollments completion event
+     and written back to training_path_enrollments.progress_percent.
+
+────────────────────────────────────────────────────────────────────────────────
+G2 FIX — Certificate Template Rendering + PDF Export
+────────────────────────────────────────────────────────────────────────────────
+
+Add table to Master Data App:
+
+  TABLE: certificate_templates  (managed by Master Data App)
+    template_id        uuid    PRIMARY KEY DEFAULT gen_random_uuid()
+    name               text    NOT NULL
+    html_template      text    NOT NULL   -- Handlebars/mustache template string
+    logo_url           text               -- Supabase Storage path
+    signature_image_url text
+    created_at         timestamptz DEFAULT now()
+
+Frontend certificate rendering:
+  - Fetch template from certificate_templates via Master Data API on
+    certificate issuance.
+  - Merge template variables: {{employee_name}}, {{course_title}},
+    {{completion_date}}, {{certificate_id}}, {{issuer_name}}.
+  - Render merged HTML into a hidden <div id="cert-preview"> at A4 proportions
+    (794px x 1123px, portrait).
+  - Show certificate preview modal before download.
+  - Print/PDF export: call window.print() targeting only #cert-preview.
+    Inject @media print CSS to: hide all UI chrome, show only cert-preview,
+    set page size A4 landscape/portrait as configured in template.
+
+────────────────────────────────────────────────────────────────────────────────
+G7 FIX — Certification Expiry and Renewal Tracking
+────────────────────────────────────────────────────────────────────────────────
+
+Schema change on training_certificates:
+  ALTER TABLE training_certificates
+    ADD COLUMN expiry_date         date,
+    ADD COLUMN renewal_course_id   uuid REFERENCES training_courses(id),
+    ADD COLUMN expiry_status       text
+      CHECK (expiry_status IN ('active','expiring_soon','expired'))
+      DEFAULT 'active';
+
+Background check (Supabase Edge Function — scheduled via pg_cron or
+external cron webhook, runs daily at 07:00 UTC):
+  1. SELECT * FROM training_certificates
+     WHERE expiry_date IS NOT NULL AND expiry_status != 'expired'.
+  2. For each row:
+     - If expiry_date - CURRENT_DATE <= 0  → set expiry_status = 'expired';
+       push notification: employee URGENT, HR WARNING.
+     - If expiry_date - CURRENT_DATE <= 30 → set expiry_status = 'expiring_soon';
+       push notification: employee WARNING, manager INFO.
+       If renewal_course_id set and no open enrollment exists → auto-create
+       enrollment with status = 'not_started'.
+     - If expiry_date - CURRENT_DATE <= 90 → flag in compliance report;
+       no push (in-app only).
+  3. Update compliance report flag in training_certificates.expiry_status.
+
+────────────────────────────────────────────────────────────────────────────────
+G3 FIX — Compliance Tab Reminders
+────────────────────────────────────────────────────────────────────────────────
+
+  - Add [Send Reminder] button per row in compliance table (overdue employees).
+  - On click: POST /api/notifications/send with payload:
+      { recipient_id, type: "course_overdue", course_id, due_date }
+  - Button disables after send; shows "Sent" chip with timestamp.
+  - Add [Send Bulk Reminder] checkbox-select at table top; fires batched
+    POST with array of recipient_ids.
+  - Reminder content: "Action Required: [Course Name] is overdue. Please
+    complete by [due_date]."
+
+════════════════════════════════════════════════════════════════════════════════
+E.3  FEATURE ENHANCEMENTS — TRAINING TRACKER
+════════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────────────
+E.3.1  Learning Paths (Persisted — G1 resolved, expanded feature)
+────────────────────────────────────────────────────────────────────────────────
+
+Path definition fields:
+  - title (required)
+  - description
+  - target_role (value help from Master Data: JOB_ROLES)
+  - estimated_hours (auto-calculated from sum of course.duration_hours)
+  - is_mandatory (boolean toggle)
+  - courses: ordered list — drag-and-drop reorder; each course shows:
+      order_index | course_title | duration | Remove button
+  - status: Draft | Active | Archived
+  - Minimum 2 courses enforced (validation).
+
+Employee enrollment behavior:
+  - Employee clicks [Enroll in Path] on path card.
+  - System creates training_path_enrollments row.
+  - System auto-creates training_enrollments rows for ALL courses in path
+    with status = 'not_started'.
+  - Courses unlock sequentially: course N+1 unlocks only after course N
+    reaches status = 'completed' (enforced via training_path_courses.
+    unlock_after_course_id).
+  - Path progress bar: (completed_courses / total_courses) * 100, written
+    to training_path_enrollments.progress_percent on each course completion.
+
+Admin path assignment:
+  Admins (HR role, Trainer role) can assign a path to:
+    - Individual employee (by employee ID)
+    - Department (all employees in selected department)
+    - Role (all employees with selected job role)
+    - All Employees (org-wide mandatory rollout)
+  Assignment creates training_path_enrollments rows for all matched employees.
+  Push notification sent to each assigned employee: "New Learning Path
+  Assigned: [Path Title]".
+
+Path card displays:
+  - Title + description (2 lines truncated)
+  - Course count chip ("8 Courses")
+  - Estimated hours chip ("12 hrs")
+  - Target role chip (if set)
+  - Mandatory badge (red) if is_mandatory = true
+  - Enrolled count and completion rate (admin view)
+  - Progress bar + "X/N Courses Completed" (if enrolled)
+  - [Enroll in Path] button (if not enrolled) | [Continue Path] (if enrolled)
+
+[+ Create Path] button: visible only to HR and Trainer roles (Permissions App
+check). Opens slide-over form with all path definition fields above.
+
+────────────────────────────────────────────────────────────────────────────────
+E.3.2  Skills Gap Analysis (New Tab: Gap Analysis)
+────────────────────────────────────────────────────────────────────────────────
+
+Purpose: Compare an employee's current skill levels against role requirements
+and surface recommended training to close identified gaps.
+
+Data sources:
+  - Employee current skills: from Employee Directory App
+    (employee_skills table: employee_id | skill_id | current_level)
+  - Role required skills: from Master Data App — COMPETENCY_FRAMEWORKS
+    (competency_frameworks: role | skill_id | required_level)
+  - Training catalogue: training_courses (skill_category field maps to
+    skill_id for recommendation matching)
+
+UI layout:
+  - Employee selector (default: logged-in user; managers can select any
+    direct report from their team).
+  - Header row: "Role: [designation]  |  Skills Framework: [framework_name]"
+  - Summary chips: Met (green) | Minor Gap (amber) | Major Gap (red) counts.
+
+Gap analysis table columns:
+  Skill | Required Level | Your Level | Gap Status | Recommended Course
+
+  Gap status badge logic:
+    - Met:        current_level >= required_level         → green
+    - Minor Gap:  required_level - current_level == 1    → amber
+    - Major Gap:  required_level - current_level >= 2    → red
+
+  Major Gap rows: red-50 background tint across the row.
+  Recommended Course cell: shows matching course name from catalogue (or
+  "No course available" in gray if no match); [Enroll] button inline.
+
+Footer actions:
+  - [Enroll in All Recommended]: enrolls employee in all courses where
+    Gap != 'Met' and a recommended course exists.
+  - Manager-only: [Approve & Enroll]: if TRAINING_ENROLLMENT_POLICY
+    approval_required = true, manager can approve and trigger enrollment
+    from this screen.
+
+Department-wide gap analysis (manager view):
+  - Toggle: "Individual / Department View"
+  - Department view: aggregated table showing each skill with:
+      Skill | Required Level | Avg Team Level | % Employees with Gap
+  - Drill-down: click a skill row to see which employees have the gap.
+
+────────────────────────────────────────────────────────────────────────────────
+E.3.3  Certification Management (Enhanced — G7 resolved)
+────────────────────────────────────────────────────────────────────────────────
+
+Certifications with expiry tracking (examples: CISSP, PMP, AWS, Azure, GCP,
+Prince2, ITIL, CFA, etc.):
+
+Expiry status badges:
+  - Green:  > 90 days to expiry      ("8 months left")
+  - Amber:  31–90 days to expiry     ("28 days left — Renew Soon")
+  - Red:    0–30 days to expiry      ("5 days left — Urgent")
+  - Gray/Strikethrough: Expired      ("EXPIRED — [renewal course if available]")
+
+Renewal workflow:
+  - On 30-day warning: if renewal_course_id is set in training_certificates,
+    system auto-creates a training_enrollments row for renewal course
+    (status = 'not_started') and notifies employee + manager.
+  - If no renewal_course_id: system flags certification in compliance report
+    and notifies HR to add renewal course to catalogue.
+
+Certification dashboard (visible to HR and managers):
+  - Org-wide compliance % per certification type (e.g., "AWS Certified
+    Cloud Practitioner: 78% of required employees compliant").
+  - Filter by: certification type | department | expiry window.
+  - Export to CSV.
+
+────────────────────────────────────────────────────────────────────────────────
+E.3.4  Training Calendar (New Tab)
+────────────────────────────────────────────────────────────────────────────────
+
+Layout:
+  - Month calendar grid (default view) + List view toggle.
+  - Calendar shows: instructor-led sessions (indigo), webinars (teal),
+    deadlines for mandatory courses (red).
+
+Session cards on calendar:
+  - Click a session chip → session detail drawer:
+      Title | Course | Date/Time | Duration | Trainer | Location/Link
+      Seat count: "12/20 seats taken"
+      [Register] button | [Join Waitlist] if full
+
+Session management (HR/Trainer only):
+  - [+ Create Session] button → modal/slide-over form:
+      Title (required) | Course (select from catalogue) | Date (required)
+      Start Time (required) | Duration (minutes) | Max Attendees
+      Location (text, for in-person) | Meeting Link (for virtual)
+      Trainer (employee selector)
+  - Sessions stored in training_sessions table.
+
+Registration rules:
+  - Cannot register after session start date/time (button hidden).
+  - When max_attendees reached: [Register] replaced by [Join Waitlist].
+  - Waitlist auto-promotes first person when a registered attendee cancels
+    (training_session_registrations status = 'waitlisted' → 'registered');
+    push notification sent to promoted employee.
+
+Attendance tracking (post-session):
+  - Trainer can mark attendance: update training_session_registrations
+    status to 'attended' or 'no-show' for each registrant.
+  - Attended → triggers training_enrollments status = 'completed' for
+    the linked course.
+
+────────────────────────────────────────────────────────────────────────────────
+E.3.5  Mandatory Compliance Tracking (Enhanced Compliance Tab)
+────────────────────────────────────────────────────────────────────────────────
+
+Per-role mandatory training matrix:
+  - Sourced from Master Data App: MANDATORY_TRAINING_MATRIX
+    (role | required_course_id | completion_deadline_days_from_joining)
+  - Training Tracker reads this matrix to determine which courses are
+    mandatory per employee's role.
+  - Compliance status per employee: (completed mandatory courses /
+    total mandatory courses for role) * 100.
+
+Compliance summary row (top of tab):
+  - Org Compliance: X% (green/amber/red based on threshold from Master Data)
+  - Overdue: N employees (red if > 0)
+  - Due This Month: N employees (amber)
+
+Compliance table columns:
+  Employee | Department | Mandatory Courses (total) | Completed | Overdue |
+  Status badge | [Send Reminder] button
+
+Status badge logic:
+  - Compliant:  all mandatory courses completed            → green
+  - At Risk:    1+ courses due within 7 days, not done     → amber
+  - Overdue:    1+ courses past due date                   → red
+
+Row expand (click to reveal):
+  Per-mandatory-course row: Course Name | Due Date | Completion Date (or "–")
+  | Status chip (Completed / Overdue / Not Started)
+
+Escalation engine (Supabase Edge Function, runs daily):
+  - Overdue > 7 days:  email to employee
+  - Overdue > 14 days: email to employee + direct manager
+  - Overdue > 30 days: email to employee + manager + HR VP
+  Escalation log stored in a training_escalations table (employee_id |
+  course_id | days_overdue | escalation_level | sent_at).
+
+Bulk reminder:
+  - Checkbox on each overdue row.
+  - [Send Bulk Reminder] button (activates when ≥ 1 row selected).
+  - Fires batched notification POST for all selected employees.
+
+Dept filter: filter compliance table by department (value help from
+Master Data: DEPARTMENTS).
+
+────────────────────────────────────────────────────────────────────────────────
+E.3.6  Manager Approval for Self-Enrollment (G6 resolved)
+────────────────────────────────────────────────────────────────────────────────
+
+Policy configuration (Master Data App):
+  Key:   TRAINING_ENROLLMENT_POLICY
+  Fields:
+    approval_required:  boolean
+    applies_to:         "non_mandatory"  (only non-mandatory courses)
+    approver:           "direct_manager" | "hr"
+
+Enrollment flow when approval_required = true:
+  1. Employee clicks [Enroll] on non-mandatory course in catalogue.
+  2. System creates training_enrollments row with status = 'pending_approval'.
+  3. Push notification sent to approver (manager or HR):
+     "Approval Required: [Employee] has requested enrollment in [Course]."
+  4. Approver sees pending request in Team tab under "Pending Approvals"
+     sub-section.
+  5. [Approve] → status = 'enrolled'; course card unlocked for employee.
+     [Reject] → status = 'rejected'; optional rejection reason text.
+  6. Employee notified of approval or rejection via push notification.
+
+Mandatory courses: bypass approval gate entirely; direct enrollment.
+
+════════════════════════════════════════════════════════════════════════════════
+E.4  DATA MODEL — TRAINING TRACKER (Full Additions)
+════════════════════════════════════════════════════════════════════════════════
+
+  TABLE: training_paths
+    id               uuid          PK  DEFAULT gen_random_uuid()
+    title            text          NOT NULL
+    description      text
+    target_role      text
+    estimated_hours  numeric(6,2)
+    is_mandatory     boolean       DEFAULT false
+    status           text          DEFAULT 'draft'
+                                   CHECK (status IN ('draft','active','archived'))
+    created_by       uuid          REFERENCES auth.users(id)
+    created_at       timestamptz   DEFAULT now()
+
+  TABLE: training_path_courses
+    id                    uuid   PK  DEFAULT gen_random_uuid()
+    path_id               uuid   REFERENCES training_paths(id) ON DELETE CASCADE
+    course_id             uuid   REFERENCES training_courses(id)
+    order_index           int    NOT NULL
+    unlock_after_course_id uuid  REFERENCES training_courses(id)
+    UNIQUE (path_id, order_index)
+
+  TABLE: training_path_enrollments
+    id               uuid          PK  DEFAULT gen_random_uuid()
+    path_id          uuid          REFERENCES training_paths(id)
+    employee_id      uuid          REFERENCES auth.users(id)
+    enrolled_at      timestamptz   DEFAULT now()
+    completed_at     timestamptz
+    progress_percent numeric(5,2)  DEFAULT 0
+    current_course_id uuid         REFERENCES training_courses(id)
+    UNIQUE (path_id, employee_id)
+
+  TABLE: training_sessions
+    id               uuid          PK  DEFAULT gen_random_uuid()
+    course_id        uuid          REFERENCES training_courses(id)
+    title            text          NOT NULL
+    session_date     date          NOT NULL
+    start_time       time          NOT NULL
+    duration_mins    int
+    max_attendees    int
+    location         text
+    meeting_link     text
+    trainer_id       uuid          REFERENCES auth.users(id)
+    created_at       timestamptz   DEFAULT now()
+
+  TABLE: training_session_registrations
+    id               uuid    PK  DEFAULT gen_random_uuid()
+    session_id       uuid    REFERENCES training_sessions(id)
+    employee_id      uuid    REFERENCES auth.users(id)
+    status           text    CHECK (status IN
+                             ('registered','waitlisted','attended','no-show'))
+                             DEFAULT 'registered'
+    registered_at    timestamptz DEFAULT now()
+    UNIQUE (session_id, employee_id)
+
+  ALTERED TABLE: training_certificates
+    -- existing columns preserved; additions:
+    expiry_date          date
+    renewal_course_id    uuid    REFERENCES training_courses(id)
+    expiry_status        text    DEFAULT 'active'
+                                 CHECK (expiry_status IN
+                                 ('active','expiring_soon','expired'))
+
+  TABLE: training_needs
+    id                    uuid   PK  DEFAULT gen_random_uuid()
+    employee_id           uuid   REFERENCES auth.users(id)
+    skill_id              uuid   -- references Master Data skill table
+    current_level         int    CHECK (current_level BETWEEN 1 AND 5)
+    required_level        int    CHECK (required_level BETWEEN 1 AND 5)
+    recommended_course_id uuid   REFERENCES training_courses(id)
+    status                text   DEFAULT 'identified'
+                                 CHECK (status IN
+                                 ('identified','enrolled','completed'))
+    created_at            timestamptz DEFAULT now()
+
+════════════════════════════════════════════════════════════════════════════════
+E.5  VALIDATION RULES — TRAINING TRACKER
+════════════════════════════════════════════════════════════════════════════════
+
+Rule 1 — Path Course Unlock:
+  Cannot enroll in course N+1 in a path while course N is not status =
+  'completed'. Enforced both in UI (button disabled) and at Supabase RLS/
+  edge function level before inserting training_enrollments row.
+
+Rule 2 — Mandatory Course Unenrollment:
+  Employee cannot unenroll from a mandatory course. The [Unenroll] button is
+  hidden when training_enrollments.is_mandatory = true. HR role can override
+  with mandatory reason text (audit logged).
+
+Rule 3 — Session Registration Cutoff:
+  Cannot register for a session after session_date + start_time has passed.
+  [Register] button replaced by "Session has started" label. Enforced at
+  UI render time and by CHECK on registration insert (session_date >=
+  CURRENT_DATE).
+
+Rule 4 — Waitlist Auto-Promotion:
+  When a registered attendee cancels (status set to cancelled):
+  SELECT first waitlisted registration (ORDER BY registered_at ASC); update
+  to status = 'registered'; send push notification to promoted employee.
+  Logic in Supabase database trigger on training_session_registrations.
+
+Rule 5 — Certificate Expiry:
+  Cannot set training_certificates.expiry_status = 'active' if expiry_date
+  is in the past. Enforced via CHECK constraint:
+    CHECK (expiry_status != 'active' OR expiry_date IS NULL
+           OR expiry_date >= CURRENT_DATE)
+  (Admin override: HR can set expiry_status = 'active' with reason; reason
+  stored in expiry_override_reason text column.)
+
+Rule 6 — Learning Path Minimum Courses:
+  Cannot save/publish a learning path with fewer than 2 courses. Validated
+  at form submit level in the slide-over form component; API also rejects
+  paths with < 2 course rows in training_path_courses.
+
+Rule 7 — Progress Cannot Be Manually Set to 100%:
+  training_path_enrollments.progress_percent is calculated server-side from
+  (completed courses / total courses). Direct client-side writes to 100% are
+  rejected unless the final course has status = 'completed'. HR admin can
+  override with an audit log entry (admin_override_reason column).
+
+════════════════════════════════════════════════════════════════════════════════
+E.6  CROSS-APP INTEGRATIONS — TRAINING TRACKER
+════════════════════════════════════════════════════════════════════════════════
+
+  SOURCE APP    → TARGET         EVENT / TRIGGER
+  ──────────────────────────────────────────────────────────────────────────────
+  Onboarding    → Training       Employee joining_date reached → auto-create
+                                 training_path_enrollments for role-specific
+                                 mandatory onboarding path. Triggered by
+                                 Onboarding App on status = 'active'.
+
+  Performance   → Training       Review cycle completed with skill gaps noted
+                                 → POST to Training API: create training_needs
+                                 rows for each gap skill; Training sends
+                                 in-app notification to employee with
+                                 recommended courses.
+
+  Training      → Employee Dir   Course completed + certificate issued →
+                                 PATCH employee_certifications in Employee
+                                 Directory App (certificate_id, issue_date,
+                                 expiry_date).
+
+  Training      → Emp Dashboard  Active training_enrollments (status IN
+                                 ('not_started','in_progress')) for logged-in
+                                 employee → appear in "Upcoming Training"
+                                 widget on Employee Dashboard, showing
+                                 course title + due date + progress %.
+
+  Training      → Notif Bell     All notification events (see E.7) → POST to
+                                 Notifications API; appear in notification
+                                 bell badge and dropdown.
+
+  Training      → Communications Certificate earned for a course whose
+                                 category includes public achievement milestones
+                                 (e.g. AWS Certification, PMP) → if employee
+                                 has opted in to share achievements:
+                                 POST to Communications API to create a
+                                 Recognition post of type 'achievement'.
+
+════════════════════════════════════════════════════════════════════════════════
+E.7  PUSH NOTIFICATION EVENTS — TRAINING TRACKER
+════════════════════════════════════════════════════════════════════════════════
+
+  Event                               Recipient(s)         Priority   Type
+  ─────────────────────────────────────────────────────────────────────────────
+  Enrollment confirmed                Employee             Low        info
+  Course due in 3 days                Employee             Medium     warning
+  Course overdue                      Employee + Manager   High       warning
+  Mandatory course deadline 7 days    Employee             High       action_required
+  Certificate earned                  Employee             Low        success
+  Certification expiry in 30 days     Employee + Manager   High       warning
+  Certification expired               Employee + HR        Critical   urgent
+  Manager approval requested          Manager              High       action_required
+  Enrollment approved                 Employee             Low        info
+  Enrollment rejected                 Employee             Medium     info
+  New mandatory course assigned       Employee             High       action_required
+  Session registration confirmed      Employee             Low        info
+  Session tomorrow reminder           Employee             Medium     info
+  Waitlist promoted to registered     Employee             Low        success
+  Learning path assigned              Employee             High       action_required
+
+  Web Push (VAPID) fires on: action_required, urgent, warning (High+).
+  In-app notification only: info, success, Low/Medium warning.
+
+════════════════════════════════════════════════════════════════════════════════
+E.8  FIGMA PROMPT — TRAINING TRACKER
+════════════════════════════════════════════════════════════════════════════════
+
+Design the Training Tracker application at 1440 x 900 px. Accent color:
+#6366F1 (Indigo). Background: white. Secondary backgrounds: gray-50.
+Border radius tokens: card = 12px, chip = 999px, button = 8px.
+Font: Inter. Tab bar uses standard pill-style navigation in indigo.
+
+Tabs (in order):
+  My Training | Catalogue | Learning Paths | Team | Compliance | Gap Analysis
+  | Calendar
+
+────────────────────────────────────────
+MY TRAINING TAB
+────────────────────────────────────────
+
+KPI Row (5 stat tiles, top of tab, full width):
+  Enrolled (5) | In Progress (3) | Completed (12) | Certificates (4) |
+  Expiring Soon (1) — last tile in amber-50 bg with amber-700 text
+
+Section: "In Progress" (heading + card row, horizontally scrollable if > 3):
+  CourseCard (white, border gray-200, radius-12, shadow-sm, w-280px):
+    Top: thumbnail placeholder (gray-200, 160px height)
+    Category chip (indigo-100 text-indigo-700, xs text)
+    Course title (text-sm font-semibold, 2 lines)
+    Provider chip (gray-100, xs) + Level badge (green-100 for Beginner,
+      blue-100 for Intermediate, purple-100 for Advanced)
+    Progress bar (indigo, h-1.5, rounded-full, shows %)
+    "2h 30min remaining" (text-xs text-gray-500)
+    Due date chip: green if > 7 days; amber if 3–7 days; red if < 3 days
+    [Continue] button (indigo, full-width, text-sm)
+
+Section: "Completed" (heading + table):
+  Table columns: Course | Completed Date | Certificate | Expiry Date | Action
+  Certificate cell: green chip "Issued" or gray chip "No Certificate"
+  Expiry Date: amber text if expiring within 90 days; red if < 30 days
+  Action: [Download Cert] indigo text link (only if certificate issued)
+
+Section: "My Certifications" (card row):
+  CertCard (white, border, radius-12, w-240px):
+    Top: certification logo placeholder (40px circle, gray-100)
+    Certification name (text-sm font-semibold)
+    Issuer (text-xs text-gray-500)
+    Issued date (text-xs)
+    Expiry badge (full-width, bottom of card):
+      Green bg: "> 90 days — Active"
+      Amber bg: "28 days left — Renew Soon"
+      Red bg: "5 days left — Urgent"
+      Gray strikethrough: "EXPIRED"
+
+────────────────────────────────────────
+CATALOGUE TAB
+────────────────────────────────────────
+
+Filter bar (sticky, below tab nav):
+  Category chips (scrollable horizontal): All | Technical | Leadership |
+    Compliance | Soft Skills | etc.
+  Level buttons: Beginner | Intermediate | Advanced (toggle)
+  Duration dropdown: Any | < 1hr | 1–4hrs | > 4hrs
+  Provider dropdown (value help from Master Data)
+  Mandatory toggle (shows only mandatory courses when on)
+  Search input (right-aligned, w-240px)
+
+Course grid (3 columns, gap-4):
+  CourseCard (white, border, radius-12, shadow-sm):
+    Image placeholder (160px height, gray-200 bg with camera icon)
+    Mandatory badge: "Mandatory" red chip, top-right overlay on image
+    Category chip (indigo-100)
+    Title (text-sm font-semibold, 2 lines)
+    Description (text-xs text-gray-500, 2 lines)
+    Provider + Level row (chips)
+    Duration chip (gray-100) | Rating stars (filled amber) + enrolled count
+    [Enroll] button (indigo, full-width) or [Enrolled ✓] (green, disabled)
+    If TRAINING_ENROLLMENT_POLICY approval_required and course is not
+      mandatory: button label = [Request Enrollment] (indigo outline)
+
+────────────────────────────────────────
+LEARNING PATHS TAB
+────────────────────────────────────────
+
+Header row:
+  "Learning Paths" heading (text-xl font-bold)
+  [+ Create Path] button (indigo, right-aligned) — HR/Trainer role only
+
+Path card grid (3 columns, gap-4):
+  PathCard (white, border, radius-12, shadow-sm):
+    Top accent bar (4px height, full-width, indigo for active, gray for
+      draft, red-500 if mandatory)
+    Title (text-base font-semibold)
+    Description (text-xs text-gray-500, 2 lines)
+    Chips row: "[N] Courses" | "[X] hrs" | target_role
+    Mandatory badge (red) if is_mandatory = true
+    Divider
+    Progress bar (if enrolled): indigo fill + "3/8 Courses Completed" label
+    [Enroll in Path] (indigo button) | [Continue Path] (indigo filled) if
+      enrolled | [Completed] (green disabled) if progress = 100%
+
+Slide-over (Create Path — admin only):
+  Fields: Title | Description | Target Role (select) | Mandatory toggle
+  Course list builder: search + add course | drag handle for reorder
+  Estimated hours (auto-calculated, read-only)
+  [Save as Draft] (outline) | [Publish] (indigo filled)
+
+────────────────────────────────────────
+GAP ANALYSIS TAB
+────────────────────────────────────────
+
+Header:
+  Employee selector: avatar + name dropdown (default: self; manager sees
+    team members; HR sees all employees)
+  "Role: Senior Developer  |  Framework: Tech Engineering v2.1"
+  Summary chips: "12 Met" (green) | "4 Minor Gaps" (amber) |
+    "2 Major Gaps" (red)
+  Individual / Department view toggle (right-aligned)
+
+Gap table:
+  Columns: Skill | Required Level | Your Level | Gap | Recommended Course
+  Level values shown as colored dot + number (1–5)
+  Gap status badge: Met (green) | Minor Gap (amber) | Major Gap (red)
+  Major Gap rows: bg-red-50 full row tint
+  Recommended Course cell: course name as indigo text link + [Enroll] button
+  "No course available" in gray-400 if no match
+
+Footer:
+  [Enroll in All Recommended] (indigo, right-aligned)
+  [Approve & Enroll] (indigo outline, manager only, if
+    approval_required = true)
+
+────────────────────────────────────────
+COMPLIANCE TAB
+────────────────────────────────────────
+
+Summary bar (gray-50 bg, full-width, p-4, border-b):
+  "Org Compliance: 82%" (large text, green-600) |
+  "Overdue: 14 employees" (red-600) |
+  "Due This Month: 7 employees" (amber-600)
+
+Filter row:
+  Dept filter (select) | Search employee (input, w-240px) |
+  Status chips: All | Compliant | Overdue | At Risk
+
+Compliance table:
+  Columns: checkbox | Employee (avatar + name) | Department | Mandatory
+    Courses | Completed | Overdue | Status | Action
+  Status badge: Compliant (green) | At Risk (amber) | Overdue (red)
+  Action: [Send Reminder] (indigo outline, xs button) — disables with
+    "Sent ✓" chip after click
+  Row expander (chevron icon, rightmost): expands to show per-course
+    compliance sub-table
+
+[Send Bulk Reminder] bar: appears at bottom of table when ≥ 1 row checked.
+  "N employees selected" + [Send Bulk Reminder] indigo button
+
+================================================================================
+APP 8: COMMUNICATIONS HUB
+Current File: InternalCommunicationsHubEnhanced.tsx
+Current DB Tables: communications_posts (shared table for posts,
+  announcements, events, polls, channels)
+Current Tabs: Feed | Announcements | Events | Polls | Channels | Analytics
+================================================================================
+
+════════════════════════════════════════════════════════════════════════════════
+E.9  KNOWN GAPS — COMMUNICATIONS HUB
+════════════════════════════════════════════════════════════════════════════════
+
+  ID   Severity  Description
+  ──   ────────  ───────────────────────────────────────────────────────────────
+  G1   High      Channels tab only lists/creates channels — no in-channel
+                 messaging (that lives in Collaboration Hub). No link to
+                 Collaboration Hub from channel cards.
+  G2   Medium    Analytics tab is a plain data table — no charts or visual
+                 engagement metrics.
+  G3   Medium    No direct-message feature exists.
+  G4   Medium    Event RSVP and attendee management not implemented.
+  G5   Medium    No file or image attachments on posts.
+  G6   Medium    No read-receipt tracking for announcements.
+  G7   Low       No scheduled post feature.
+  G8   Low       No @mention support in post composer.
+
+════════════════════════════════════════════════════════════════════════════════
+E.10  FIX PLAN — COMMUNICATIONS HUB
+════════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────────────
+G1 FIX — Channels Tab: Link to Collaboration Hub
+────────────────────────────────────────────────────────────────────────────────
+
+Channels tab in Communications Hub manages channel metadata only (creation,
+description, member management, pinned announcements). All in-channel
+messaging resides in Collaboration Hub.
+
+On each channel card: add "Open in Collaboration Hub ↗" link.
+  - Navigate to Collaboration Hub route with ?channel=[channel_id] query
+    param pre-selecting the channel.
+  - Alternatively: if embedding is approved by UX, render Collaboration Hub
+    channel view in a right-side drawer within Communications Hub.
+  - Default implementation: navigation link (simpler, no iframe CORS issues).
+
+Channel announcement workflow:
+  - "Post to Channel" button on each channel card in Communications Hub.
+  - Creates a communications_posts row with type = 'channel_announcement'
+    and channel_id set.
+  - Collaboration Hub listens to Supabase Realtime on communications_posts
+    filtered by channel_id → pins incoming channel_announcement post at
+    top of channel chat.
+
+────────────────────────────────────────────────────────────────────────────────
+G2 FIX — Analytics Tab: Replace Table with Charts
+────────────────────────────────────────────────────────────────────────────────
+
+Replace plain table with the following chart panels (using Recharts):
+
+  Chart 1 — Engagement Trend (Line Chart, 30 days):
+    X-axis: date | Y-axis: count
+    Three lines: Posts (indigo) | Reactions (emerald) | Comments (amber)
+    Tooltip: hover shows exact counts per day.
+    Title: "Engagement Over Last 30 Days"
+
+  Chart 2 — Announcement Reach (Horizontal Bar Chart):
+    Top 10 announcements by total views (read_count).
+    X-axis: view count | Y-axis: announcement title (truncated to 30 chars)
+    Bar color: indigo-400.
+    Title: "Top Announcements by Reach"
+
+  Chart 3 — Poll Participation (Vertical Bar Chart):
+    Each active/closed poll: bar showing participation rate %.
+    Color: green if >= 70%, amber 40–69%, red < 40%.
+    Title: "Poll Participation Rate"
+
+  Chart 4 — Recognition Leaderboard (horizontal bar, this month):
+    Top 10 employees by times recognized.
+    Bar color: violet-400.
+    Title: "Top Recognized Employees — This Month"
+
+  Read Receipt Compliance Panel (Critical Announcements):
+    Table: Announcement Title | Target Audience | Sent | Read | Acknowledged |
+    % Acknowledged
+    Row color: red if % < 80%; amber if 80–94%; green if >= 95%.
+
+────────────────────────────────────────────────────────────────────────────────
+G4 FIX — Event RSVP and Attendee Management
+────────────────────────────────────────────────────────────────────────────────
+
+Schema addition: communications_event_rsvps (see E.11 data model).
+
+RSVP UI on EventCard:
+  Three-button toggle group: [Going] [Not Going] [Maybe]
+  Active selection fills the relevant button (indigo for Going, gray for
+  Not Going, amber for Maybe).
+  Counts displayed as chips: "Going: 15 | Not Going: 3 | Maybe: 8"
+  Cannot RSVP after event date (buttons replaced by "Event has passed").
+  One RSVP per user per event; update allowed anytime before event date.
+
+Attendee list:
+  Visible to event organizer always.
+  Toggle "Show Attendees" for all employees (controlled by event setting).
+  Attendee avatars row (max 5 shown + "+N more" chip).
+  Organizer can export attendee list to CSV.
+
+────────────────────────────────────────────────────────────────────────────────
+G5 FIX — File and Image Attachments on Posts
+────────────────────────────────────────────────────────────────────────────────
+
+Post composer: add [Attach] icon button (paperclip icon).
+  Opens file input: accepts image/* and common document types (PDF, DOCX,
+  XLSX, PPTX). Max file size: 10MB per file. Max 5 attachments per post.
+
+On file select:
+  - Upload to Supabase Storage bucket: communications-attachments/[post_id]/
+  - Show upload progress inline in composer.
+  - On success: append URL to post.image_urls (images) or a new
+    file_attachment_urls array field.
+
+Feed display:
+  - Images: inline full-width rounded image block below post body text.
+  - Files: attachment chip row showing file name, type icon, file size;
+    [Download] link on each chip.
+  - Multiple images: first image full-width, additional images in a 2-col
+    or 3-col grid below.
+
+────────────────────────────────────────────────────────────────────────────────
+G7 FIX — Scheduled Post Feature
+────────────────────────────────────────────────────────────────────────────────
+
+In post composer expanded state:
+  Add [Schedule] clock-icon button next to [Post].
+  On click: shows inline date/time picker (min: 30 minutes from now,
+  enforced client and server side).
+  Post saved with status = 'scheduled' and scheduled_at = selected datetime.
+  Visible to post author in "Scheduled Posts" section of the Feed tab
+  (below composer, collapsed by default).
+  Draft label: "Scheduled for Apr 12 at 10:00 AM — [Edit] [Cancel]"
+
+Publish mechanism:
+  Supabase Edge Function (pg_cron or external scheduler, runs every minute):
+    SELECT * FROM communications_posts
+    WHERE status = 'scheduled' AND scheduled_at <= NOW();
+    UPDATE status = 'published', published_at = NOW();
+    Trigger notification events for the newly published post.
+
+────────────────────────────────────────────────────────────────────────────────
+G8 FIX — @Mention Support in Post Composer
+────────────────────────────────────────────────────────────────────────────────
+
+Implementation:
+  - Post composer uses a contenteditable div (or a rich-text library such as
+    TipTap) instead of a plain textarea.
+  - Type "@" → open floating dropdown of employee suggestions filtered by
+    the substring typed after "@".
+  - Dropdown fetches from Employee Directory API:
+      GET /api/employees/search?q={substring}&limit=10
+    Shows: avatar | name | designation (max 10 results).
+  - Select employee → inserts a mention node:
+      <span data-mention-id="[emp_id]" class="text-indigo-600">@Name</span>
+  - Mention stored in post body as text "@Name" with metadata in
+    communications_post_mentions table:
+      post_id | mentioned_user_id
+  - On publish: foreach mentioned_user_id → send push notification:
+      "You were mentioned in a post by [Author]."
+  - Max 10 @mentions per post (enforced at submit; error shown if exceeded).
+
+════════════════════════════════════════════════════════════════════════════════
+E.11  FEATURE ENHANCEMENTS — COMMUNICATIONS HUB
+════════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────────────
+E.11.1  Rich Feed Experience
+────────────────────────────────────────────────────────────────────────────────
+
+Image attachments:
+  - Images uploaded via G5 fix render inline in PostCard below body text.
+  - Single image: full-width rounded (max-h-64, object-cover).
+  - 2+ images: grid layout (2-col for 2, 3-col masonry for 3+).
+
+Video link embedding:
+  - Post composer: paste YouTube or Vimeo URL → system detects and shows
+    embedded player iframe (YouTube: youtube.com/embed/[id]; Vimeo:
+    player.vimeo.com/video/[id]).
+  - Stored in communications_posts.video_url field.
+  - Feed: render responsive 16:9 iframe below post body.
+
+Post categories:
+  Category chip on each post (label + color):
+    Company News (blue) | Product Update (teal) | HR Announcement (violet) |
+    Event (amber) | Achievement (emerald) | Policy (red-400)
+  Filter bar in Feed: filter stream by category.
+
+Pinned posts:
+  Admin/HR can pin a post: updates communications_posts.is_pinned = true.
+  Pinned posts render at top of feed stream with purple-50 background
+  and "Pinned" chip (top-left of card with pin icon).
+  Max 3 pinned posts at once (enforced: if 4th pinned, oldest is unpinned).
+
+Post reactions:
+  Reaction bar: 👍 (Like) | ❤️ (Love) | 🎉 (Celebrate) | 💡 (Insightful)
+  Counts per reaction type.
+  [+ React] button opens emoji picker overlay (filtered to 4 supported
+  reactions).
+  Toggle behavior: clicking same reaction again removes it.
+  Comment reactions: same emoji set on inline comment bubbles.
+
+Read receipt tracking:
+  For posts with acknowledgement_required = true (Critical announcements):
+    - Track communications_post_reads (post_id | user_id | read_at |
+      acknowledged_at).
+    - Record read_at when post is visible in viewport for > 3 seconds
+      (Intersection Observer).
+    - Record acknowledged_at when user clicks [I've Read This] button.
+  For all posts: increment communications_posts.read_count on first view
+  (deduplicated per user per post by checking communications_post_reads).
+
+────────────────────────────────────────────────────────────────────────────────
+E.11.2  Announcements Enhancements
+────────────────────────────────────────────────────────────────────────────────
+
+Audience targeting (communications_posts.audience field, JSON):
+  Options (select in composer):
+    All Employees | Department (multi-select) | Location (multi-select) |
+    Role (multi-select) | Specific Employees (employee multi-select)
+  Stored as: { "type": "department", "values": ["Engineering","Finance"] }
+  Feed filtered server-side: employee sees announcements where their
+  dept/role/location/ID matches announcement.audience.
+
+Priority levels:
+  Level     Color     Push behavior
+  Critical  red-500   Immediate web push to all targeted employees
+  High      orange    Web push within 5 minutes (queued)
+  Medium    blue-500  In-app notification only (no web push)
+  Low       gray-400  In-app notification only (no web push)
+
+AnnouncementCard left border: 4px solid per priority color.
+Priority badge in card header: colored pill.
+
+Read confirmation (Critical only):
+  Card footer: [I've Read This] button (red outlined) if not acknowledged.
+  On click: writes acknowledged_at to communications_post_reads.
+  Button replaced by: green chip "Read on Apr 5 at 14:23" after click.
+
+Read receipt dashboard:
+  Author of any announcement can click [View Readers] link on card.
+  Opens drawer: "Read by N of M employees" progress bar + table:
+    Employee | Read At | Acknowledged At (for Critical) | Department
+  Search + filter within drawer.
+
+Announcement archive:
+  [Archive] button on announcement card (author + HR only).
+  Sets communications_posts.status = 'archived'.
+  Archived announcements accessible via "Archived" toggle in filter bar
+  (not shown in default feed stream).
+  Full-text search across archive.
+
+────────────────────────────────────────────────────────────────────────────────
+E.11.3  Events Enhancements
+────────────────────────────────────────────────────────────────────────────────
+
+RSVP (G4 resolved — see fix plan above for core behavior):
+  Going/Not Going/Maybe toggle on EventCard.
+  Count badges under each RSVP option.
+  Attendee avatars row (5 shown + "+N more").
+
+Event reminder push notifications:
+  - 1 day before event: all Going RSVPs → web push.
+  - 1 hour before event: all Going RSVPs → web push.
+  Reminder scheduled via Edge Function checking events within 25h and 1.5h.
+
+Recurring events:
+  Event creation form: "Repeat" toggle → options: None | Daily | Weekly |
+  Monthly | Annually.
+  recurrence_rule stored as RRULE string (RFC 5545 compatible).
+  System generates child event rows for next N occurrences (max 52 for
+  weekly, 12 for monthly) on publish.
+
+Event capacity:
+  max_attendees field on event (optional).
+  When RSVP Going count reaches max_attendees:
+    - [Going] button disabled; replaced by [Join Waitlist].
+    - Waitlist tracked in communications_event_rsvps with status =
+      'waitlisted'.
+  When a Going RSVP cancels (changes to Not Going): first waitlisted
+  user auto-promoted to Going + push notification.
+
+Calendar integration:
+  [Add to Calendar] button on EventCard.
+  Generates ICS file (RFC 5545) with event details + meeting_link as URL.
+  Browser downloads ics file → compatible with Google Calendar, Outlook,
+  Apple Calendar.
+
+────────────────────────────────────────────────────────────────────────────────
+E.11.4  Employee Recognition (New Feature — new tab: Recognition)
+────────────────────────────────────────────────────────────────────────────────
+
+Post type: Recognition
+  A dedicated recognition post has additional fields:
+    - giver_id (required)
+    - receiver_id (required, must be different from giver)
+    - badge_type (required, from Master Data: RECOGNITION_BADGE_TYPES)
+    - message (required, 10–500 characters)
+    - is_public (boolean, default true)
+
+Recognition badge types (configured in Master Data App key:
+RECOGNITION_BADGE_TYPES):
+  Innovator | Team Player | Above & Beyond | Customer First | Leadership |
+  Mentor | Problem Solver | (extensible list)
+  Each badge has: name | icon | color (gradient pair)
+
+Recognition Wall (tab: Recognition):
+  Masonry or uniform card grid.
+  RecognitionCard (white, shadow-sm, radius-12):
+    Badge icon (large, 48px, colored per badge type)
+    Badge type label (text-sm font-semibold, colored)
+    "[Giver Name] recognized [Receiver Name]"
+    Giver + Receiver dept chips
+    Quote: message text (italic, text-sm, max 3 lines)
+    Reaction row (❤️ count) | Comment link
+  Feed filter: "All" | "Given by Me" | "Received by Me" | "My Team"
+
+Integration with Performance App:
+  When a Performance Continuous Feedback entry with type = 'recognition' is
+  submitted and is_public = true:
+    → Communications API auto-creates a communications_recognitions row.
+    → RecognitionCard appears in Recognition tab and Feed (category =
+      Achievement).
+    → Push notification sent to receiver: "You received recognition from
+      [Giver]!"
+
+Integration with Onboarding App:
+  When a new joiner's onboarding status transitions to 'active' (first day):
+    → Communications API auto-creates a post with type = 'announcement',
+      category = 'Company News', audience = 'all_employees':
+      "Please welcome [Employee Name] who has joined [Department] as
+      [Designation] today!"
+    → Post is pinned for 7 days.
+
+────────────────────────────────────────────────────────────────────────────────
+E.11.5  Topics/Channels Enhancements
+────────────────────────────────────────────────────────────────────────────────
+
+Communications Hub owns channel metadata:
+  - Create channel (name | description | type: public/private |
+    initial members)
+  - Edit channel description and settings
+  - Manage members: add/remove; assign channel admin
+  - Archive channel
+  All stored in communications_channels table (or the existing
+  communications_posts shared table via type = 'channel' row + separate
+  channel_members table).
+
+Collaboration Hub handles messaging:
+  - All chat messages within a channel live in Collaboration Hub.
+  - Channels tab in Communications Hub shows: channel card with name,
+    description, member count, last activity timestamp.
+  - "Open in Collaboration Hub ↗" link (G1 fix).
+
+Channel announcement (cross-app):
+  [Post Announcement to Channel] button on channel card.
+  Opens post composer pre-filled with audience = this channel.
+  Published post: type = 'channel_announcement'.
+  Collaboration Hub Realtime subscription: on new channel_announcement →
+  auto-pin at top of channel chat view.
+
+════════════════════════════════════════════════════════════════════════════════
+E.12  DATA MODEL — COMMUNICATIONS HUB (Full Additions)
+════════════════════════════════════════════════════════════════════════════════
+
+  ALTERED TABLE: communications_posts
+    -- existing columns preserved; additions:
+    scheduled_at             timestamptz
+    published_at             timestamptz
+    category                 text   CHECK (category IN ('company_news',
+                                    'product_update','hr_announcement',
+                                    'event','achievement','policy',
+                                    'channel_announcement','recognition'))
+    image_urls               text[]  DEFAULT '{}'
+    file_attachment_urls     text[]  DEFAULT '{}'
+    video_url                text
+    read_count               int     DEFAULT 0
+    acknowledgement_required boolean DEFAULT false
+    is_pinned                boolean DEFAULT false
+    audience                 jsonb   -- {type, values}
+
+  TABLE: communications_post_reads
+    id               uuid    PK  DEFAULT gen_random_uuid()
+    post_id          uuid    REFERENCES communications_posts(id)
+    user_id          uuid    REFERENCES auth.users(id)
+    read_at          timestamptz DEFAULT now()
+    acknowledged_at  timestamptz
+    UNIQUE (post_id, user_id)
+
+  TABLE: communications_post_mentions
+    id                  uuid   PK  DEFAULT gen_random_uuid()
+    post_id             uuid   REFERENCES communications_posts(id)
+    mentioned_user_id   uuid   REFERENCES auth.users(id)
+    created_at          timestamptz DEFAULT now()
+
+  ALTERED TABLE: communications_events  (or separate table if events are
+  stored separately from the shared communications_posts table)
+    rsvp_enabled     boolean DEFAULT true
+    max_attendees    int
+    is_recurring     boolean DEFAULT false
+    recurrence_rule  text    -- RRULE string
+    location_url     text
+    organizer_id     uuid    REFERENCES auth.users(id)
+
+  TABLE: communications_event_rsvps
+    id         uuid   PK  DEFAULT gen_random_uuid()
+    event_id   uuid   REFERENCES communications_posts(id)
+    user_id    uuid   REFERENCES auth.users(id)
+    status     text   CHECK (status IN ('going','not_going','maybe',
+                             'waitlisted'))
+               DEFAULT 'going'
+    created_at timestamptz DEFAULT now()
+    UNIQUE (event_id, user_id)
+
+  TABLE: communications_recognitions
+    id           uuid   PK  DEFAULT gen_random_uuid()
+    post_id      uuid   REFERENCES communications_posts(id)
+    giver_id     uuid   REFERENCES auth.users(id)
+    receiver_id  uuid   REFERENCES auth.users(id)
+    badge_type   text   NOT NULL   -- value from Master Data RECOGNITION_BADGE_TYPES
+    message      text   CHECK (char_length(message) BETWEEN 10 AND 500)
+    is_public    boolean DEFAULT true
+    created_at   timestamptz DEFAULT now()
+
+════════════════════════════════════════════════════════════════════════════════
+E.13  VALIDATION RULES — COMMUNICATIONS HUB
+════════════════════════════════════════════════════════════════════════════════
+
+Rule 1 — Critical Announcement Immutability:
+  communications_posts with priority = 'critical' cannot be deleted after
+  status = 'published'. [Delete] button hidden for Critical posts once
+  published. Archive is the only permitted action (status → 'archived').
+  Enforced at API level: DELETE request on a critical published post
+  returns 403.
+
+Rule 2 — Scheduled Post Minimum Lead Time:
+  scheduled_at must be >= NOW() + 30 minutes. Validated client-side in
+  date/time picker (min selectable time = 30 min from now). Also validated
+  server-side on INSERT to communications_posts: reject if scheduled_at <
+  NOW() + interval '30 minutes'.
+
+Rule 3 — Event Date Integrity:
+  For event posts: end_date >= start_date (enforced via CHECK constraint
+  and form validation). If max_attendees_enabled = true: max_attendees >= 1.
+
+Rule 4 — RSVP After Event Date:
+  Cannot create or update an RSVP row if the event's event_date is in the
+  past. CHECK constraint on communications_event_rsvps deferred to
+  application layer: on UPSERT, check event.event_date >= CURRENT_DATE;
+  return error "Cannot RSVP for past events."
+
+Rule 5 — Recognition Self-Recognition:
+  recognition giver_id != receiver_id enforced by:
+    CHECK (giver_id != receiver_id) in communications_recognitions table.
+  Receiver must be an active employee: validate auth.users.is_active = true
+  for receiver_id before insert.
+
+Rule 6 — @Mention Limit:
+  Max 10 @mentions per post. Enforced at submit in post composer (count
+  mention nodes; disable submit if > 10 with inline error).
+  Also enforced server-side: count rows in communications_post_mentions per
+  post_id; reject if > 10.
+
+Rule 7 — Post/Announcement Length:
+  communications_posts.body content max 5000 characters. Enforced via
+  CHECK constraint: char_length(body) <= 5000. Post composer shows live
+  character counter (e.g., "4823 / 5000").
+
+Rule 8 — One RSVP Per User Per Event:
+  UNIQUE (event_id, user_id) on communications_event_rsvps ensures no
+  duplicate RSVPs. Updates (change from Going to Not Going) use
+  ON CONFLICT (event_id, user_id) DO UPDATE SET status = excluded.status.
+
+════════════════════════════════════════════════════════════════════════════════
+E.14  CROSS-APP INTEGRATIONS — COMMUNICATIONS HUB
+════════════════════════════════════════════════════════════════════════════════
+
+  SOURCE APP      → TARGET             EVENT / TRIGGER
+  ──────────────────────────────────────────────────────────────────────────────
+  Communications  → Emp Dashboard      3 most recent published announcements
+                                       matching employee's audience targeting →
+                                       shown in Dashboard "Announcements" widget.
+                                       Dashboard polls GET /api/announcements/
+                                       recent?employee_id={id}&limit=3.
+
+  Communications  → Notification Bell  On announcement publish (Critical/High):
+                                       POST to Notifications API for each
+                                       targeted employee.
+                                       On @mention: immediate notification to
+                                       mentioned employee.
+                                       On event reminder: 1 day and 1 hour
+                                       before event for all Going RSVPs.
+
+  Communications  → Collab Hub         Channel created in Communications Hub →
+                                       Supabase Realtime event → Collaboration
+                                       Hub creates channel entry in its channel
+                                       list. Channel announcement pinned in
+                                       Collaboration Hub chat via Realtime
+                                       subscription on type = 'channel_
+                                       announcement'.
+
+  Performance     → Communications     Continuous Feedback entry with type =
+                                       'recognition' AND is_public = true →
+                                       POST to Communications API →
+                                       auto-create recognition post. Appears in
+                                       Recognition tab + Feed.
+
+  Onboarding      → Communications     Employee onboarding_status transitions
+                                       to 'active' → auto-POST welcome
+                                       announcement (audience = all, pinned
+                                       7 days).
+
+  Communications  → Notification Bell  Poll closing in 24 hours: non-voters
+                                       in targeted audience → in-app
+                                       notification (no web push).
+                                       Recognition received: receiver →
+                                       web push (success priority).
+
+════════════════════════════════════════════════════════════════════════════════
+E.15  PUSH NOTIFICATION EVENTS — COMMUNICATIONS HUB
+════════════════════════════════════════════════════════════════════════════════
+
+  Event                                    Recipient(s)       Push?   Priority
+  ───────────────────────────────────────────────────────────────────────────────
+  Critical announcement published          All targeted       YES     urgent
+  High priority announcement published     All targeted       YES     warning
+  Medium priority announcement             All targeted       NO      in-app only
+  Low priority announcement                All targeted       NO      in-app only
+  @mention in post or comment              Mentioned person   YES     info
+  Event RSVP reminder (1 day before)       Going RSVPs        YES     info
+  Event starts in 1 hour                   Going RSVPs        YES     info
+  Poll closing in 24 hours                 Non-voters         NO      in-app only
+  Recognition received                     Receiver           YES     success
+  Scheduled post published                 Post author        NO      in-app only
+  New channel announcement                 Channel members    NO      in-app only
+  Waitlist promoted to Going (event)       Waitlisted user    YES     success
+
+  Web Push (VAPID) fires for: urgent, all YES rows above.
+  In-app notification bell: ALL events regardless of web push eligibility.
+
+════════════════════════════════════════════════════════════════════════════════
+E.16  FIGMA PROMPT — COMMUNICATIONS HUB
+════════════════════════════════════════════════════════════════════════════════
+
+Design the Communications Hub at 1440 x 900 px. Accent: #6366F1 (Indigo).
+Background: white. Card bg: white, border gray-200, radius-12, shadow-sm.
+Font: Inter. Tabs: pill navigation row in indigo.
+
+Tabs (in order):
+  Feed | Announcements | Events | Polls | Recognition | Channels | Analytics
+
+────────────────────────────────────────
+FEED TAB
+────────────────────────────────────────
+
+Post composer (white card, border gray-200, radius-12, full width, mb-6):
+  Collapsed state: Avatar (36px) + "What's on your mind?" placeholder
+  (gray-400 italic) + [Post] indigo button
+
+  Expanded state (on click/focus — smooth height transition):
+    Full-width rich-text area (min-h-24, p-3, border-b gray-100)
+    Row 2: Category select (gray-100 select, xs) + Audience select (xs)
+    Row 3 (toolbar): [Attach 📎] icon button | [Schedule 🗓] icon button |
+      [@ Mention] icon button
+    Row 4: character counter (text-xs gray-400, right-aligned) +
+      [Post] indigo button (right-aligned)
+    If schedule clicked: date/time picker inline, gray-50 bg row, shows
+      "Scheduled for [datetime]" confirmation chip
+
+Feed stream (max-w-2xl, centered, mx-auto):
+
+  Pinned post (if any): purple-50 bg, border purple-200, radius-12, mb-4
+    "📌 Pinned" chip (purple, top-left of card)
+    [same PostCard layout below]
+
+  PostCard (white, border gray-200, radius-12, mb-4, p-4):
+    Author row: avatar (36px) | name (text-sm font-semibold) | designation
+      (text-xs gray-500) | dept chip (gray-100, xs) | "3 hours ago" (text-xs
+      gray-400) | category chip (colored by category) | ··· menu (top-right)
+    Body text (text-sm text-gray-700, mt-2): @mention links highlighted as
+      indigo-600 underlined text
+    Attached image (mt-3, w-full, max-h-64, object-cover, rounded-lg) if any
+    Video embed (mt-3, aspect-video, w-full, rounded-lg) if video_url set
+    File attachments (mt-2): chip row showing filename + type icon + size
+    Reaction row (mt-3, flex, gap-3):
+      👍 12 | ❤️ 5 | 🎉 3 | 💡 2 | [+ React] indigo text button |
+      💬 4 Comments (text-xs gray-500) | Bookmark icon | Share icon
+    Comments section (mt-3, border-t pt-3 if expanded):
+      "View 4 comments" expander link (indigo, text-xs)
+      On expand: comment bubbles (avatar + name + text + timestamp + reactions)
+      Comment input (mt-2): avatar (28px) + input placeholder "Add a comment..."
+        + [Post] text button (indigo, text-xs)
+
+────────────────────────────────────────
+ANNOUNCEMENTS TAB
+────────────────────────────────────────
+
+Filter bar (sticky, flex, gap-3, pb-4, border-b):
+  Priority chips: All | Critical (red) | High (orange) | Medium (blue) |
+    Low (gray)
+  Audience dropdown | Date range picker | Search input (w-240px)
+  [+ Create Announcement] button (indigo, right-aligned)
+
+Announcement list (mt-4, flex flex-col gap-3):
+  AnnouncementCard (white, border-l-4, radius-12, p-4):
+    Left border color: red-500 (Critical) | orange-400 (High) |
+      blue-500 (Medium) | gray-300 (Low)
+    Priority badge (inline colored pill) | Title (text-base font-semibold) |
+    Author avatar + name | "Apr 5 · 2 days ago" (text-xs gray-400)
+    Body preview (2 lines, text-sm gray-600, mt-1)
+    Target row: "→ All Employees" chip (gray-100, text-xs)
+    Footer: "Read: 234 / 312 employees" (text-xs gray-500) |
+      [View Readers] indigo text link |
+      [Edit] text button | [Archive] text button (gray-500)
+    Critical unacknowledged: [I've Read This] button (red-500 outlined,
+      text-sm, full-width, mt-2)
+    After acknowledgement: green chip "Read on Apr 5 at 14:23" (replaces btn)
+
+────────────────────────────────────────
+EVENTS TAB
+────────────────────────────────────────
+
+View toggle: [Calendar] [List] (top-right, pill toggle)
+
+Calendar view:
+  Monthly grid (standard 7-col calendar).
+  Event chips inside date cells: colored by type (company=indigo,
+    webinar=teal, social=amber).
+  Click chip → EventCard detail drawer (right side).
+
+List view:
+  EventCard (white, border, radius-12, p-4, mb-3, flex gap-4):
+    Left: date block (month label text-xs, day number text-2xl font-bold,
+      indigo or red if < 7 days)
+    Right:
+      Title (text-base font-semibold) + location/link chip (teal or gray)
+      Date/time chip + duration chip
+      RSVP toggle group: [Going 15] [Not Going 3] [Maybe 8]
+        Active state: Going = indigo filled; Not Going = gray; Maybe = amber
+      Attendee avatars row (5 shown + "+N more" gray chip)
+      [Add to Calendar] link (text-xs indigo) | [View Attendees] link
+
+────────────────────────────────────────
+RECOGNITION TAB
+────────────────────────────────────────
+
+Header: "Recognition Wall" heading + filter chips: All | Given by Me |
+  Received by Me | My Team
+
+Recognition card grid (3 columns, gap-4):
+  RecognitionCard (white, border, radius-12, shadow-sm, p-4, overflow-hidden):
+    Top gradient accent bar (4px, gradient from badge-type color pair)
+    Badge icon (48px, centered, colored per badge type):
+      Innovator = amber | Team Player = indigo | Above & Beyond = emerald |
+      Customer First = teal | Leadership = violet
+    Badge type label (text-sm font-semibold, badge color, centered)
+    "[Giver] recognized [Receiver]" (text-sm text-gray-700, centered, mt-1)
+    Giver chip (gray-100, xs) + Receiver chip (gray-100, xs), centered row
+    Divider
+    Message (text-sm italic text-gray-600, max 3 lines, text-center)
+    Timestamp (text-xs gray-400, text-right)
+    Footer: [❤️ 7] react button (text-sm) | [💬 Comment] text button
+
+────────────────────────────────────────
+ANALYTICS TAB
+────────────────────────────────────────
+
+Row 1 (2-col, gap-4):
+  [Engagement Trend Line Chart — 30 days] (col-span-2 or left 60%)
+    X-axis: dates | Y-axis: count
+    Three lines: Posts (indigo-500), Reactions (emerald-500),
+      Comments (amber-500)
+    Legend below chart | Tooltip on hover
+
+  [Announcement Reach Horizontal Bar] (right 40% or below line chart)
+    Top 10 announcements by views
+    Bar color: indigo-400 | Axis labels: truncated titles
+
+Row 2 (2-col, gap-4):
+  [Poll Participation Bar Chart] (left):
+    Each poll as a vertical bar; color by participation rate
+    Green >= 70%, amber 40-69%, red < 40%
+
+  [Recognition Leaderboard Bar] (right):
+    Top 10 recognized employees — horizontal bars
+    Color: violet-400 | Employee name labels
+
+Row 3 (full width):
+  Critical Announcement Read Receipt Table:
+    Columns: Title | Audience | Sent | Read | Acknowledged | % Acknowledged
+    Row background: red-50 if < 80%, amber-50 if 80–94%, green-50 if >= 95%
+    [Export CSV] button (top-right)
+
+================================================================================
+END OF SECTION E
+================================================================================

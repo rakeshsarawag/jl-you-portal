@@ -1,0 +1,1039 @@
+================================================================================
+HR PORTAL — SPECIFICATION PART 6C: NOTIFICATION BELL COMPONENT ENHANCEMENTS
+================================================================================
+Tech Stack  : React + Supabase + Tailwind CSS v4
+Realtime    : Supabase Realtime (postgres_changes)
+Push        : Web Push API (VAPID)
+Auth        : Supabase Auth
+App Accent  : #6366F1 (Indigo)
+Date        : 2026-09-04
+================================================================================
+
+
+CURRENT STATE SUMMARY
+---------------------
+File            : NotificationBell.tsx (258 lines)
+Mount Point     : AppHeader — visible on all pages
+Database        : notifications table (reads/mutates via REST API)
+Filter Tabs     : all | it-services | assets | projects (only 3 of 11 apps covered)
+Polling         : every 15 seconds (no WebSocket/Realtime)
+Push            : usePushNotifications hook with Web Push API + VAPID (works when env vars set)
+
+Known Gaps:
+  G1  Only 3 app filter tabs — 8+ apps produce notifications without filter      [HIGH]
+  G2  No mark individual notification as read                                     [MEDIUM]
+  G3  15-second polling — no WebSocket/Realtime                                   [MEDIUM]
+  G4  No notification preferences/settings panel                                  [HIGH]
+  G5  No notification categories (info/warning/action_required/success)           [MEDIUM]
+  G6  No snooze/remind later                                                      [LOW]
+  G7  VAPID setup unconfirmed                                                     [MEDIUM]
+  G8  No in-app notification history page                                         [LOW]
+  G9  No bulk delete                                                              [LOW]
+
+
+================================================================================
+SECTION 1 — FIX PLAN (EXACT DEVELOPER APPROACH PER GAP)
+================================================================================
+
+------------------------------------------------------------------------
+G1 — ALL APP FILTER TABS
+------------------------------------------------------------------------
+Problem:
+  Only 3 filter tabs exist (all | it-services | assets | projects).
+  8+ apps generate notifications with no way to filter by app.
+
+Approach:
+  1. Add all 10 HR apps plus IT Services, Assets, and Projects as filter tabs.
+
+  Tab list (in order):
+    All | Dashboard | Directory | Recruitment | Onboarding | User Mgmt |
+    Performance | Training | Communications | Collaboration | Workflow |
+    IT Services | Assets | Projects
+
+  2. Database:
+    - Ensure notifications table has app_filter VARCHAR column.
+    - Add composite index: CREATE INDEX idx_notifications_user_app
+        ON notifications(user_id, app_filter);
+    - Valid app_filter values:
+        dashboard | directory | recruitment | onboarding | user-mgmt |
+        performance | training | communications | collaboration | workflow |
+        it-services | assets | projects
+
+  3. Each tab displays a count badge for unread notifications in that app.
+     "All" tab count = total unread across all apps (same value shown on bell icon).
+
+  4. Tab bar must be horizontally scrollable:
+    - Container: overflow-x-auto, no wrapping (whitespace-nowrap).
+    - Hide scrollbar visually (scrollbar-none / custom CSS).
+    - Show left/right chevron arrow buttons when overflow exists.
+
+  5. API: GET /notifications?userId={id}&app_filter={tab} (or 'all' for no filter).
+
+  6. NotificationBell.tsx changes:
+    - Replace hardcoded 3-tab array with APP_FILTER_TABS constant (14 entries).
+    - Add selectedTab state; pass to fetch and Realtime filter.
+    - Compute per-tab unread counts from in-memory notification state.
+
+------------------------------------------------------------------------
+G2 — MARK INDIVIDUAL NOTIFICATION AS READ
+------------------------------------------------------------------------
+Problem:
+  No way to mark a single notification as read.
+
+Approach:
+  1. Database additions to notifications table:
+    - is_read BOOLEAN NOT NULL DEFAULT false
+    - read_at TIMESTAMPTZ
+
+  2. On notification row click (user navigates to entity):
+    - Call PUT /notifications/{id}/read
+    - Payload: { read_at: new Date().toISOString() }
+    - Optimistically update local state (is_read: true) before API response.
+
+  3. Hover interaction:
+    - Show a gray dot on the left edge of unread notification rows.
+    - Clicking the dot calls PUT /notifications/{id}/read without navigation.
+    - Dot turns solid/filled when read.
+
+  4. Visual styling:
+    - Unread notification (info/success): background indigo-50 (#EEF2FF)
+    - Read notification: background white; title font-weight returns to normal
+    - See G5 for type-specific overrides (action_required always red-50 regardless)
+
+  5. Bell badge count decrements immediately on mark-read (optimistic update).
+
+------------------------------------------------------------------------
+G3 — REPLACE POLLING WITH SUPABASE REALTIME
+------------------------------------------------------------------------
+Problem:
+  setInterval polls every 15 seconds. Notifications are delayed and create
+  unnecessary network load.
+
+Approach:
+  1. Remove all setInterval / clearInterval polling logic from NotificationBell.tsx.
+
+  2. On component mount — keep initial fetch:
+       GET /notifications?userId={currentUser.id}&limit=50&is_read=false
+
+  3. Set up Supabase Realtime subscription after mount:
+
+       const channel = supabase
+         .channel('user-notifications')
+         .on(
+           'postgres_changes',
+           {
+             event: 'INSERT',
+             schema: 'public',
+             table: 'notifications',
+             filter: `user_id=eq.${currentUser.id}`
+           },
+           (payload) => {
+             addNotification(payload.new);       // prepend to local state
+             triggerBrowserPush(payload.new);    // G7 push hook
+           }
+         )
+         .subscribe();
+
+  4. On component unmount:
+       return () => { supabase.removeChannel(channel); }
+
+  5. Bell badge count:
+    - Derived reactively from unread count in local React state.
+    - Updated by: Realtime INSERT events, G2 mark-read mutations, G9 bulk delete.
+
+  6. Error handling:
+    - If Realtime subscription fails (CHANNEL_ERROR), fall back to 60-second polling
+      with console.warn. Do not silently fail.
+
+------------------------------------------------------------------------
+G4 — NOTIFICATION PREFERENCES PANEL
+------------------------------------------------------------------------
+Problem:
+  No way for users to configure which notifications they receive or how.
+
+Approach:
+  1. New route: /notifications/preferences
+     (Also accessible via bell dropdown footer link: [⚙ Preferences])
+
+  2. New database tables (see Section 3 for full schema):
+    - notification_preferences (user_id, app, event_key, in_app, push)
+    - notification_quiet_hours (user_id, start_time, end_time, timezone, is_active)
+
+  3. Preferences API endpoints:
+    - GET  /notifications/preferences?userId={id}
+    - PUT  /notifications/preferences  — upsert array of preference rows
+    - GET  /notifications/quiet-hours?userId={id}
+    - PUT  /notifications/quiet-hours
+
+  4. Quiet hours enforcement:
+    - In-app notifications: always stored in notifications table regardless of quiet hours.
+    - Web Push: before calling web-push library, check if current time (in user timezone)
+      falls within quiet hours window. If yes, skip push delivery.
+    - Enforcement happens server-side in the Supabase Edge Function that sends push.
+
+  5. UI: See Section 4 for full Preferences Page Spec.
+
+------------------------------------------------------------------------
+G5 — NOTIFICATION CATEGORIES / TYPES
+------------------------------------------------------------------------
+Problem:
+  All notifications look the same. Critical action-required items are not visually
+  distinguished from informational ones.
+
+Approach:
+  1. Database: add type column to notifications table:
+       type VARCHAR NOT NULL DEFAULT 'info'
+       CHECK (type IN ('info', 'warning', 'action_required', 'success'))
+
+  2. Visual mapping per type:
+
+    action_required:
+      Left border: 3px solid red-500 (#EF4444)
+      Background:  red-50 (#FEF2F2)
+      Icon:        Red filled bell (24px), in red-100 circle
+      Dot:         Red
+
+    warning:
+      Left border: 3px solid amber-500 (#F59E0B)
+      Background:  amber-50 (#FFFBEB)
+      Icon:        Amber triangle-exclamation (24px), in amber-100 circle
+      Dot:         Amber
+
+    success:
+      Left border: 3px solid green-500 (#22C55E)
+      Background:  green-50 (#F0FDF4)
+      Icon:        Green check-circle (24px), in green-100 circle
+      Dot:         Green
+
+    info:
+      Left border: 3px solid blue-400 (#60A5FA)
+      Background:  white (unread: indigo-50)
+      Icon:        Blue information-circle (24px), in blue-100 circle
+      Dot:         Blue / Indigo
+
+  3. Bell icon behavior:
+    - If ANY action_required notification is unread: bell icon turns red (text-red-500).
+    - Otherwise: bell icon uses default gray-600.
+
+  4. Bell count badge:
+    - Red badge (bg-red-500) if any action_required unread.
+    - Indigo badge (bg-indigo-600) otherwise.
+
+  5. action_required notifications with action_data.approval_id:
+    - Render inline [Approve] (green filled small) + [Reject] (red ghost small) buttons
+      directly in the notification row.
+    - On Approve: POST /workflow/approvals/{approval_id}/approve
+    - On Reject:  POST /workflow/approvals/{approval_id}/reject
+    - After action: mark notification as read + update row to show "Approved" or "Rejected"
+      status chip.
+
+------------------------------------------------------------------------
+G6 — SNOOZE / REMIND LATER
+------------------------------------------------------------------------
+Problem:
+  No way to temporarily dismiss a notification and have it resurface later.
+
+Approach:
+  1. Database: add snoozed_until TIMESTAMPTZ column to notifications table.
+
+  2. Snoozed notifications are excluded from:
+    - Bell dropdown list
+    - Bell unread count badge
+    - Notification history page default view (unless "Show Snoozed" filter is on)
+
+  3. Re-surfacing:
+    - Supabase Realtime: subscribe to UPDATE events on notifications table where
+      snoozed_until <= now() AND is_read = false.
+    - Alternatively: on each dropdown open, re-fetch to catch newly unsnoozed items.
+
+  4. Snooze UI:
+    - On hover of a notification row, show [💤 Snooze ▾] icon button on the right side.
+    - Click opens a small dropdown menu (portal-rendered to avoid overflow clipping):
+        30 minutes
+        1 hour
+        Tomorrow 9:00 AM
+        Next Monday 9:00 AM
+    - Snooze times computed in user's local timezone.
+
+  5. API:
+    PUT /notifications/{id}/snooze
+    Body: { snoozed_until: "2026-09-05T09:00:00+05:30" }
+
+  6. Snoozed management:
+    - Accessible at /notifications/preferences under a "Snoozed Notifications" section.
+    - Lists all currently snoozed notifications with: title, snoozed_until datetime, [Unsnooze] button.
+    - [Unsnooze]: PUT /notifications/{id}/snooze with { snoozed_until: null }
+
+  7. Validation: snoozed_until must be > now() and <= now() + 7 days.
+
+------------------------------------------------------------------------
+G7 — VAPID SETUP VERIFICATION + PUSH HARDENING
+------------------------------------------------------------------------
+Problem:
+  VAPID keys may not be configured in the Supabase Edge Function environment.
+  Push failures are not communicated to the user.
+
+Approach:
+  1. Environment verification:
+    - Confirm VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are set in Supabase Edge Function
+      environment variables (Dashboard → Edge Functions → Secrets).
+    - VAPID_SUBJECT should also be set (e.g. mailto:admin@yourapp.com).
+
+  2. usePushNotifications hook improvements:
+    - Wrap Notification.requestPermission and pushManager.subscribe in try/catch.
+    - If permission === 'denied': set state to 'blocked'; stop attempting push.
+    - If VAPID_PUBLIC_KEY missing (env var not set): log warning; set state to 'unconfigured'.
+    - Graceful degradation: if push unavailable for any reason, app continues with
+      in-app notifications only (no thrown errors, no broken UI).
+
+  3. Bell dropdown — "Enable Desktop Notifications" prompt:
+    - If Notification.permission === 'default' (not yet asked):
+      Show a soft banner inside the dropdown (indigo-50 bg, indigo border):
+        [🔔 Enable Desktop Notifications] → click triggers requestPermission()
+    - If permission === 'denied': show a gray informational note:
+        "Desktop notifications are blocked. Enable in browser settings."
+    - Hide banner once permission is granted.
+
+  4. Push subscription storage:
+    - On successful subscription: POST /notifications/push-subscription
+    - Body: { endpoint, p256dh_key, auth_key, user_agent }
+    - Upsert by (user_id, endpoint) — replace keys if same endpoint re-subscribes.
+    - Table: user_push_subscriptions (see Section 3)
+
+  5. Server-side push delivery (Supabase Edge Function):
+    - Triggered by Supabase Realtime INSERT on notifications table.
+    - Before sending: check notification_preferences (event not disabled for push).
+    - Before sending: check notification_quiet_hours (not in quiet window).
+    - Use web-push library with VAPID keys to deliver to all active subscriptions
+      for the target user_id.
+
+------------------------------------------------------------------------
+G8 — NOTIFICATION HISTORY PAGE
+------------------------------------------------------------------------
+Problem:
+  No full-page notification center for browsing/searching older notifications.
+
+Approach:
+  1. New route: /notifications
+     Linked from bell dropdown footer: [View All Notifications →]
+
+  2. Same app filter tabs as bell dropdown (All + 13 apps).
+
+  3. Additional filter bar:
+    - Type filter: All Types | Info | Warning | Action Required | Success
+    - Date range picker: From — To (defaults to last 30 days)
+    - Status filter: All | Unread | Read | Snoozed
+    - Search input: full-text search on title + body (ILIKE or pg tsvector)
+
+  4. Notification list:
+    - Card list layout (not table) matching bell dropdown row design.
+    - 50 notifications per page (or infinite scroll — implementation choice).
+    - Each row includes: checkbox, type icon, title, body, app chip, timestamp, status, action icons.
+
+  5. Bulk actions toolbar (appears when 1+ items selected):
+    - "{N} selected" count
+    - [Mark Read] — PUT /notifications/bulk-read { ids: [...] }
+    - [Delete]    — DELETE /notifications/bulk { ids: [...] }
+    - [Snooze]    — opens snooze time picker for batch snooze
+
+  6. Pagination:
+    - Previous | 1 2 3 ... N | Next
+    - API: GET /notifications?userId={id}&offset={n}&limit=50&...filters
+
+------------------------------------------------------------------------
+G9 — BULK DELETE
+------------------------------------------------------------------------
+Problem:
+  No way to clear multiple read notifications at once.
+
+Approach:
+  1. Bell dropdown footer:
+    - [🗑 Delete All Read] ghost danger small button (left side of footer).
+    - On click: show inline confirmation toast/dialog:
+        "Delete {X} read notifications? This cannot be undone."
+        [Cancel] [Delete]
+    - On confirm: DELETE /notifications/bulk with body: { filter: { is_read: true, user_id: X } }
+    - Remove deleted notifications from local state immediately.
+
+  2. Notification history page (/notifications):
+    - Checkbox per row + "Select All" header checkbox.
+    - Bulk toolbar [Delete Selected] triggers DELETE /notifications/bulk { ids: [...] }
+
+  3. API constraints:
+    - Users can only delete their own notifications (server enforces user_id = auth.uid()).
+    - Maximum 500 notifications per bulk operation.
+    - If request exceeds 500: return 400 with error "Bulk operations limited to 500 items."
+
+
+================================================================================
+SECTION 2 — FEATURE SPEC: NOTIFICATION BELL DROPDOWN (REDESIGNED)
+================================================================================
+
+CONTAINER
+---------
+  Width           : 380px
+  Max height      : 520px
+  Position        : Fixed, right-anchored below bell icon (top: header height, right: 16px)
+  Border radius   : 16px (rounded-2xl)
+  Shadow          : shadow-xl (0 20px 25px -5px rgba(0,0,0,0.1))
+  Background      : white
+  Border          : 1px solid gray-200
+  Z-index         : 50
+
+HEADER ROW (px-4, py-3, border-b border-gray-200)
+-----------
+  Left  : "Notifications" — font-bold text-gray-900 text-base
+  Center: "{N} unread" chip — bg-indigo-100 text-indigo-700 text-xs font-semibold px-2 py-0.5 rounded-full
+  Right : [Mark All Read] — ghost text button, text-sm text-indigo-600 hover:text-indigo-800
+          [⚙ Preferences] — ghost icon button, text-gray-500 hover:text-gray-700, links to /notifications/preferences
+
+APP FILTER TAB BAR (overflow-x-auto, border-b border-gray-200, px-4)
+-------------------
+  Display     : flex, whitespace-nowrap, gap-x-0, no wrap
+  Scroll      : overflow-x-auto; scrollbar hidden (scrollbar-none)
+  Arrows      : left/right chevron buttons appear when content overflows
+
+  Tab item styling:
+    Default   : py-2 px-3 text-sm text-gray-500 cursor-pointer hover:text-gray-700
+    Active    : text-indigo-600 font-medium border-b-2 border-indigo-600
+    Count badge: inline rounded-full text-xs ml-1
+      - 0 count  : hidden
+      - > 0 count: bg-gray-100 text-gray-600
+      - action_required unread in tab: bg-red-100 text-red-600
+
+  Tab order and example counts:
+    All(12) | Dashboard(0) | Directory(0) | Recruitment(1) | Onboarding(0) |
+    User Mgmt(0) | Performance(0) | Training(2) | Communications(1) |
+    Collaboration(2) | Workflow(4) | IT Services(1) | Assets(0) | Projects(1)
+
+NOTIFICATION LIST (overflow-y-auto, max-h: 350px)
+------------------
+  Scroll bar: thin, gray, right edge
+
+  NOTIFICATION ROW layout (px-4, py-3, border-b border-gray-100, relative):
+
+    LEFT COLUMN (flex-shrink-0, mr-3):
+      Type icon circle (32x32px, rounded-full):
+        action_required : bg-red-100,   icon = BellAlertIcon,   text-red-500
+        warning         : bg-amber-100, icon = ExclamationTriangleIcon, text-amber-500
+        success         : bg-green-100, icon = CheckCircleIcon,  text-green-500
+        info            : bg-blue-100,  icon = InformationCircleIcon, text-blue-500
+
+    CENTER COLUMN (flex-1, min-w-0):
+      Row 1:
+        Title (text-sm font-semibold text-gray-900, truncate)
+        App chip (text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded ml-2)
+        Timestamp (text-xs text-gray-400 ml-auto flex-shrink-0)
+      Row 2:
+        Body text (text-xs text-gray-500, truncate to 1 line, max-w full)
+      Row 3 (action_required with action_data.approval_id only):
+        [✓ Approve] bg-green-500 hover:bg-green-600 text-white text-xs px-3 py-1 rounded mr-2
+        [✗ Reject]  border border-red-500 text-red-500 hover:bg-red-50 text-xs px-3 py-1 rounded
+
+    RIGHT COLUMN (hidden, visible on row hover, flex-col gap-1, flex-shrink-0, ml-2):
+      Unread dot   : w-2 h-2 rounded-full bg-indigo-500 (only if unread)
+      [💤] snooze  : icon button, text-gray-400 hover:text-gray-600, tooltip "Snooze"
+      [×] delete   : icon button, text-gray-400 hover:text-red-500, tooltip "Delete"
+
+  ROW BACKGROUND COLORS:
+    action_required : bg-red-50
+    warning         : bg-amber-50
+    success         : bg-green-50
+    info + unread   : bg-indigo-50
+    info + read     : bg-white
+    (action_required remains red-50 even when read — visual priority)
+
+  UNREAD vs READ DISTINCTION:
+    Unread: title font-semibold, colored left border (3px), bg tint per type
+    Read  : title font-normal text-gray-700, no left border, white bg (except action_req)
+
+SAMPLE NOTIFICATION ROWS (illustrative content):
+-------------------------------------------------
+  Row 1 — action_required:
+    Icon    : Red bell in red-100 circle
+    Title   : "Leave Approval Required"
+    App     : [Workflow]
+    Time    : 5m ago
+    Body    : "Asha Sharma — Sick Leave Apr 10–12 (3 days)"
+    Actions : [✓ Approve] [✗ Reject]
+    BG      : red-50, red left border
+
+  Row 2 — warning:
+    Icon    : Amber triangle in amber-100 circle
+    Title   : "Certification Expiring Soon"
+    App     : [Training]
+    Time    : 1h ago
+    Body    : "Your AWS Cloud Practitioner expires in 28 days"
+    BG      : amber-50, amber left border
+
+  Row 3 — success:
+    Icon    : Green check in green-100 circle
+    Title   : "Certificate Earned!"
+    App     : [Training]
+    Time    : 3h ago
+    Body    : "You completed PMP Certification — view in your profile"
+    BG      : green-50, green left border
+
+  Row 4 — info (unread):
+    Icon    : Blue info-circle in blue-100 circle
+    Title   : "Policy Update"
+    App     : [Communications]
+    Time    : 2h ago
+    Body    : "New Work From Home policy effective May 1, 2026"
+    BG      : indigo-50, blue left border
+    Dot     : indigo-500 unread dot visible
+
+  Row 5 — info (read):
+    Icon    : Blue info-circle (dimmer, text-blue-400)
+    Title   : "New DM" (font-normal, text-gray-600)
+    App     : [Collaboration]
+    Time    : 10m ago
+    Body    : "Raj Kumar: Hey, quick question about the auth flow..."
+    BG      : white, no left border
+
+EMPTY STATE (centered, py-12):
+  Bell illustration (SVG, gray-200, 48px)
+  "You're all caught up!" — text-sm font-medium text-gray-500
+  "No new notifications" — text-xs text-gray-400
+
+FOOTER ROW (px-4, py-2, border-t border-gray-200, flex justify-between items-center):
+  Left  : [🗑 Delete All Read] — text-sm text-red-500 hover:text-red-700 ghost button
+  Right : [View All Notifications →] — text-sm text-indigo-600 hover:text-indigo-800 font-medium link
+
+
+================================================================================
+SECTION 3 — DATA MODEL ADDITIONS
+================================================================================
+
+NOTIFICATIONS TABLE — ADD COLUMNS
+-----------------------------------
+  ALTER TABLE notifications ADD COLUMN IF NOT EXISTS
+    type           VARCHAR NOT NULL DEFAULT 'info'
+                   CHECK (type IN ('info', 'warning', 'action_required', 'success')),
+    app_filter     VARCHAR NOT NULL DEFAULT 'all'
+                   CHECK (app_filter IN (
+                     'dashboard', 'directory', 'recruitment', 'onboarding', 'user-mgmt',
+                     'performance', 'training', 'communications', 'collaboration', 'workflow',
+                     'it-services', 'assets', 'projects'
+                   )),
+    entity_type    VARCHAR,          -- leave | candidate | employee | course | workflow_approval | etc.
+    entity_id      UUID,             -- FK to related entity
+    deep_link      VARCHAR,          -- e.g. /workflow-dashboard?instance=123
+    is_read        BOOLEAN NOT NULL DEFAULT false,
+    read_at        TIMESTAMPTZ,
+    snoozed_until  TIMESTAMPTZ,
+    action_data    JSONB;            -- e.g. {"approval_id": "uuid", "approve_url": "/...", "reject_url": "/..."}
+
+  -- Indexes
+  CREATE INDEX IF NOT EXISTS idx_notifications_user_app
+    ON notifications(user_id, app_filter);
+
+  CREATE INDEX IF NOT EXISTS idx_notifications_user_unread
+    ON notifications(user_id, is_read) WHERE is_read = false;
+
+  CREATE INDEX IF NOT EXISTS idx_notifications_snooze
+    ON notifications(snoozed_until) WHERE snoozed_until IS NOT NULL;
+
+
+NEW TABLE: notification_preferences
+-------------------------------------
+  CREATE TABLE notification_preferences (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id      UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    app          VARCHAR NOT NULL,       -- same values as app_filter
+    event_key    VARCHAR NOT NULL,       -- e.g. 'leave_approval_required', 'dm_received'
+    in_app       BOOLEAN NOT NULL DEFAULT true,
+    push         BOOLEAN NOT NULL DEFAULT true,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, app, event_key)
+  );
+
+
+NEW TABLE: notification_quiet_hours
+--------------------------------------
+  CREATE TABLE notification_quiet_hours (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE,
+    start_time  TIME NOT NULL,           -- e.g. '22:00:00'
+    end_time    TIME NOT NULL,           -- e.g. '08:00:00'
+    timezone    VARCHAR NOT NULL,        -- IANA timezone e.g. 'Asia/Kolkata'
+    is_active   BOOLEAN NOT NULL DEFAULT true,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+
+
+NEW TABLE: user_push_subscriptions
+--------------------------------------
+  CREATE TABLE user_push_subscriptions (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    endpoint      TEXT NOT NULL,
+    p256dh_key    TEXT NOT NULL,
+    auth_key      TEXT NOT NULL,
+    user_agent    TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_used_at  TIMESTAMPTZ,
+    UNIQUE (user_id, endpoint)
+  );
+
+
+================================================================================
+SECTION 4 — NOTIFICATION PREFERENCES PAGE SPEC (/notifications/preferences)
+================================================================================
+
+PAGE LAYOUT
+-----------
+  Layout          : Standard portal layout (TopNav + Sidebar + main content area)
+  Max content width: 800px centered
+  Background      : gray-50
+
+PAGE HEADER
+-----------
+  H1: "Notification Preferences" — text-2xl font-bold text-gray-900
+  Subtitle: "Control which notifications you receive and how" — text-sm text-gray-500 mt-1
+
+--------------------------------------------------------------------
+QUIET HOURS CARD
+--------------------------------------------------------------------
+  Container: bg-white border border-gray-200 rounded-xl p-6 mb-6
+
+  Row 1:
+    Left: 🌙 icon (moon) + "Quiet Hours" label (text-base font-semibold text-gray-800)
+    Right: Toggle switch (ON = indigo, OFF = gray-300)
+
+  Row 2 (visible when toggle ON):
+    Start time picker: "From" label + time input (e.g. 10:00 PM)
+    Arrow (→)
+    End time picker: "To" label + time input (e.g. 8:00 AM)
+    Timezone select dropdown (e.g. IST — Asia/Kolkata)
+
+  Preview text (italic, text-sm text-gray-500 mt-3):
+    "Push notifications paused between 10:00 PM and 8:00 AM IST"
+
+  Save button (right-aligned):
+    "Save Quiet Hours" — bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm
+
+--------------------------------------------------------------------
+PER-APP PREFERENCE ACCORDION CARDS
+--------------------------------------------------------------------
+  One card per app (14 total: 10 HR + IT Services + Assets + Projects + Dashboard).
+  Container: bg-white border border-gray-200 rounded-xl mb-3
+
+  ACCORDION HEADER (px-5, py-4, flex items-center, cursor-pointer):
+    App icon (24px, colored per app)
+    App name (text-sm font-semibold text-gray-800, ml-3)
+    Event count chip (text-xs text-gray-400 ml-2, e.g. "7 events")
+    Spacer (flex-1)
+    Master toggle (ON = indigo)
+    Chevron (▼/▲ to expand/collapse, ml-3)
+
+  ACCORDION BODY (px-5 pb-4, visible when expanded):
+    Column headers (text-xs text-gray-400 uppercase tracking-wide, border-b pb-2 mb-2):
+      "Event" | "In-App" | "Push"
+
+    EVENT ROW (py-2.5 border-b border-gray-50, flex items-center):
+      Event name (text-sm text-gray-700, flex-1)
+      In-App toggle (pill switch, w-10, h-5; ON = indigo-600; OFF = gray-300)
+      Push toggle (pill switch, w-10, h-5; disabled and grayed if in_app = false)
+      Lock icon (if event is forced-on; tooltip: "This event cannot be disabled")
+
+--------------------------------------------------------------------
+APP EVENT SPECIFICATIONS
+--------------------------------------------------------------------
+
+  WORKFLOW (app = 'workflow'):
+    "Approval Required"          | In-App ON | Push ON  [LOCKED]
+    "Approval Deadline Warning"  | In-App ON | Push ON
+    "Approval Escalated"         | In-App ON | Push ON
+    "Workflow Step Assigned"     | In-App ON | Push ON
+    "Workflow Completed"         | In-App ON | Push OFF
+    "Workflow Failed"            | In-App ON | Push ON
+    "Workflow Cancelled"         | In-App ON | Push OFF
+
+  COMMUNICATIONS (app = 'communications'):
+    "Critical Announcement"      | In-App ON | Push ON  [LOCKED]
+    "High Priority Announcement" | In-App ON | Push ON
+    "Medium Announcement"        | In-App ON | Push OFF
+    "Low Announcement"           | In-App ON | Push OFF
+    "@Mention in Post"           | In-App ON | Push ON
+    "Comment on Your Post"       | In-App ON | Push OFF
+    "Event Reminder"             | In-App ON | Push ON
+    "Poll Closing"               | In-App ON | Push OFF
+
+  COLLABORATION (app = 'collaboration'):
+    "Direct Message Received"    | In-App ON | Push ON
+    "@Mention in Channel"        | In-App ON | Push ON
+    "New Channel Member"         | In-App ON | Push OFF
+    "File Shared with You"       | In-App ON | Push OFF
+    "Meeting Invite"             | In-App ON | Push ON
+
+  RECRUITMENT (app = 'recruitment'):
+    "New Application Received"   | In-App ON | Push ON
+    "Interview Scheduled"        | In-App ON | Push ON
+    "Offer Letter Action Needed" | In-App ON | Push ON  [LOCKED]
+    "Candidate Status Change"    | In-App ON | Push OFF
+    "Job Requisition Approved"   | In-App ON | Push ON
+
+  TRAINING (app = 'training'):
+    "Course Assigned"            | In-App ON | Push ON
+    "Certification Expiring"     | In-App ON | Push ON
+    "Course Deadline Approaching"| In-App ON | Push ON
+    "Certificate Earned"         | In-App ON | Push OFF
+    "Course Completed"           | In-App ON | Push OFF
+
+  ONBOARDING (app = 'onboarding'):
+    "Task Assigned"              | In-App ON | Push ON
+    "Task Overdue"               | In-App ON | Push ON  [LOCKED]
+    "Onboarding Complete"        | In-App ON | Push OFF
+    "Document Submission Needed" | In-App ON | Push ON
+
+  PERFORMANCE (app = 'performance'):
+    "Review Cycle Started"       | In-App ON | Push ON
+    "Review Submission Deadline" | In-App ON | Push ON
+    "Feedback Received"          | In-App ON | Push ON
+    "Goal Updated"               | In-App ON | Push OFF
+    "Review Approved"            | In-App ON | Push OFF
+
+  DIRECTORY (app = 'directory'):
+    "Profile Update Approved"    | In-App ON | Push OFF
+    "Team Change Notification"   | In-App ON | Push OFF
+    "New Team Member Joined"     | In-App ON | Push OFF
+
+  DASHBOARD (app = 'dashboard'):
+    "System Alert"               | In-App ON | Push ON  [LOCKED]
+    "Report Ready"               | In-App ON | Push OFF
+    "Scheduled Maintenance"      | In-App ON | Push ON
+
+  USER MGMT (app = 'user-mgmt'):
+    "Account Access Changed"     | In-App ON | Push ON  [LOCKED]
+    "Password Policy Expiry"     | In-App ON | Push ON
+    "New User Created (yours)"   | In-App ON | Push OFF
+
+  IT SERVICES (app = 'it-services'):
+    "Ticket Update"              | In-App ON | Push ON
+    "Ticket Resolved"            | In-App ON | Push OFF
+    "SLA Breach Warning"         | In-App ON | Push ON  [LOCKED]
+    "New IT Announcement"        | In-App ON | Push OFF
+
+  ASSETS (app = 'assets'):
+    "Asset Assigned to You"      | In-App ON | Push ON
+    "Asset Return Due"           | In-App ON | Push ON
+    "Asset Request Approved"     | In-App ON | Push OFF
+    "Maintenance Reminder"       | In-App ON | Push OFF
+
+  PROJECTS (app = 'projects'):
+    "Task Assigned"              | In-App ON | Push ON
+    "Task Overdue"               | In-App ON | Push ON
+    "Milestone Reached"          | In-App ON | Push OFF
+    "Project Status Changed"     | In-App ON | Push OFF
+    "@Mention in Task"           | In-App ON | Push ON
+
+--------------------------------------------------------------------
+SNOOZED NOTIFICATIONS SECTION
+--------------------------------------------------------------------
+  Section header: "Snoozed Notifications" — text-base font-semibold text-gray-800 mb-3
+
+  Snoozed item row (px-4 py-3 bg-white border rounded-lg mb-2, flex items-center):
+    Left:  type icon (20px) + title (text-sm font-medium text-gray-700) + app chip
+    Right: "Until {date time}" (text-xs text-gray-400) + [Unsnooze] button
+           [Unsnooze]: border border-gray-300 text-gray-600 text-xs px-3 py-1 rounded hover:bg-gray-50
+
+  Empty state: "No snoozed notifications" — text-sm text-gray-400 italic text-center py-4
+
+
+================================================================================
+SECTION 5 — NOTIFICATION HISTORY PAGE (/notifications)
+================================================================================
+
+PAGE LAYOUT
+-----------
+  Layout   : Standard portal layout (TopNav + Sidebar + main content area)
+  Max width: 960px centered
+
+PAGE HEADER
+-----------
+  H1: "All Notifications" — text-2xl font-bold text-gray-900
+  Subtitle: showing count e.g. "243 notifications" — text-sm text-gray-400
+
+FILTER BAR (sticky below header, bg-white border-b, py-3 px-4, flex gap-3 flex-wrap):
+  1. App filter tabs (same scrollable tabs as bell dropdown — All + 13 apps)
+  2. Type filter select: "All Types" | Info | Warning | Action Required | Success
+  3. Date range picker: [From date] → [To date] (default: last 30 days)
+  4. Status filter select: "All" | Unread | Read | Snoozed
+  5. Search input: placeholder "Search notifications..." (full-text, 250px min-width)
+
+BULK TOOLBAR (appears above list when 1+ rows checked, bg-indigo-50 border border-indigo-200 rounded-lg px-4 py-2 mb-3, flex items-center gap-3):
+  "{N} selected" — text-sm font-medium text-indigo-700
+  [Mark Read] — text-sm text-indigo-600 hover:text-indigo-800 button
+  [Delete]    — text-sm text-red-500 hover:text-red-700 button
+  [Snooze]    — text-sm text-gray-600 hover:text-gray-800 button with snooze time picker
+  [✕ Clear selection] — text-xs text-gray-400 ml-auto
+
+NOTIFICATION LIST (card-style rows, not a table):
+  Each card (bg-white border border-gray-200 rounded-lg px-4 py-3 mb-2, flex items-center gap-3):
+    ☐ Checkbox (flex-shrink-0)
+    Type icon circle (32px, same as dropdown design)
+    Left border (3px, color per type)
+    CENTER:
+      Row 1: Title (text-sm font-semibold) + App chip (text-[10px]) + Timestamp (text-xs text-gray-400 ml-auto)
+      Row 2: Body (text-xs text-gray-500, truncate 1 line)
+    Status chip (flex-shrink-0): "Unread" indigo-100 text-indigo-700 OR "Read" gray-100 text-gray-500
+    Action icons (hover): [Mark Read] [Snooze] [Delete]
+
+PAGINATION (flex justify-center items-center gap-1 py-6):
+  [← Previous]  1  2  3  ...  10  [Next →]
+  Current page: bg-indigo-600 text-white rounded
+  Other pages: text-gray-600 hover:bg-gray-100 rounded
+  API: GET /notifications?userId={id}&offset={n}&limit=50&...all_filters
+
+
+================================================================================
+SECTION 6 — VALIDATION RULES
+================================================================================
+
+QUIET HOURS:
+  - start_time must not equal end_time (no zero-duration quiet period)
+  - timezone must be a valid IANA timezone string (validate against Intl.supportedValuesOf('timeZone'))
+  - Spans midnight are valid (e.g. 22:00 to 08:00 = next day morning)
+
+NOTIFICATION PREFERENCES:
+  - (user_id, app, event_key) must be unique (enforced by DB unique constraint)
+  - push cannot be true if in_app is false (push depends on in_app)
+  - Locked events (is_locked = true in event config): cannot set in_app = false
+
+PUSH SUBSCRIPTIONS:
+  - endpoint must be unique per user — upsert behavior: if same (user_id, endpoint) exists, update keys
+  - endpoint must be a valid HTTPS URL
+  - p256dh_key and auth_key must be non-empty Base64URL strings
+
+BULK DELETE:
+  - All notification IDs in the request must belong to auth.uid() (server enforces)
+  - Maximum 500 IDs per bulk operation; return HTTP 400 if exceeded
+  - Filter-based bulk delete (e.g. all read) also capped at 500 per call
+
+SNOOZE:
+  - snoozed_until must be > now() (cannot snooze in the past)
+  - snoozed_until must be <= now() + 7 days (max snooze duration)
+  - Cannot snooze a notification that is already read (business rule; warn user)
+
+NOTIFICATIONS INSERT (server-side, all apps posting notifications):
+  - type must be one of: info | warning | action_required | success
+  - app_filter must be a valid app slug (no 'all' allowed on insert)
+  - user_id must reference a valid auth.users(id)
+  - title: max 200 chars; body: max 500 chars
+
+
+================================================================================
+SECTION 7 — CROSS-APP INTEGRATION
+================================================================================
+
+ALL APPS → NOTIFICATION BELL
+------------------------------
+  Every app (Workflow, Training, Collaboration, etc.) posts notifications via:
+
+  POST /api/notifications
+  Headers: Authorization: Bearer {service_role_key}
+  Body:
+  {
+    "user_id"      : "uuid",
+    "title"        : "Leave Approval Required",
+    "body"         : "Asha Sharma — Sick Leave Apr 10–12 (3 days)",
+    "type"         : "action_required",
+    "app_filter"   : "workflow",
+    "entity_type"  : "workflow_approval",
+    "entity_id"    : "uuid-of-approval",
+    "deep_link"    : "/workflow-dashboard?instance=abc123",
+    "action_data"  : { "approval_id": "uuid", "approve_url": "/...", "reject_url": "/..." }
+  }
+
+NOTIFICATION BELL → WEB PUSH
+------------------------------
+  Flow triggered on INSERT in notifications table (via Supabase Realtime in Edge Function):
+  1. Look up notification_preferences for (user_id, app_filter, event_key).
+     If in_app = false: skip storage (or store with is_suppressed flag).
+     If push = false: store notification but skip push delivery.
+  2. Check notification_quiet_hours for user_id.
+     If current time (in user timezone) is within quiet window: skip push only.
+  3. Fetch all active push subscriptions for user_id from user_push_subscriptions.
+  4. For each subscription: call web-push.sendNotification() with VAPID credentials.
+  5. Handle 410 Gone (expired subscription): delete from user_push_subscriptions.
+
+WORKFLOW → NOTIFICATION BELL
+------------------------------
+  Trigger: approval step assigned to a user
+  Creates: action_required notification
+  action_data: { "approval_id": "uuid", "approve_url": "/api/approvals/{id}/approve", "reject_url": "/api/approvals/{id}/reject" }
+  Bell renders: inline [✓ Approve] [✗ Reject] buttons in notification row
+  On button click:
+    POST /api/approvals/{approval_id}/approve (or /reject)
+    On success: mark notification as read + replace buttons with status chip "Approved" / "Rejected"
+
+COLLABORATION → NOTIFICATION BELL
+-----------------------------------
+  Trigger: DM received OR @mention in channel
+  Creates: info notification (DM) or info/warning notification (@mention)
+  deep_link: /collaboration/channels/{channel_id}?message={message_id}
+  On click: navigate to deep_link + mark notification as read
+
+ALL NOTIFICATION INLINE ACTIONS → APP APIS
+--------------------------------------------
+  Inline actions (Approve/Reject in bell dropdown) call the respective app's REST endpoint.
+  On completion:
+  1. Mark notification as read: PUT /notifications/{id}/read
+  2. Update notification row UI to show result status chip (no full re-fetch needed)
+
+
+================================================================================
+SECTION 8 — FIGMA DESIGN PROMPT
+================================================================================
+
+Design the Notification Bell dropdown and Notification Preferences page at 1440x900px.
+App accent color: #6366F1 (Indigo). Font: Inter. Use Heroicons outline icon set.
+
+---
+
+FRAME 1: TOP NAV BELL ICON STATE
+
+  Context: rightmost icon cluster in the portal TopNav bar.
+
+  State A — No unread notifications:
+    Bell icon: Heroicons outline bell, 24px, text-gray-400
+
+  State B — Unread info/success notifications only:
+    Bell icon: 24px, text-gray-600
+    Badge: top-right of bell, 16px circle, bg-indigo-600, text-white text-[10px] font-bold
+    Badge shows count (e.g. "8")
+
+  State C — Any action_required unread:
+    Bell icon: 24px, text-red-500 (icon itself turns red)
+    Badge: bg-red-500 text-white (red badge)
+    Bell should have a subtle pulse animation (animate-pulse, 1 cycle)
+
+---
+
+FRAME 2: NOTIFICATION BELL DROPDOWN (380px wide, shadow-xl, radius-16)
+
+  HEADER (px-4 py-3 border-b border-gray-200):
+    "Notifications" — Inter SemiBold 16px text-gray-900
+    "12 unread" chip — bg-indigo-100 text-indigo-700 text-[11px] SemiBold px-2 py-0.5 rounded-full ml-2
+    [Mark All Read] — text-[13px] text-indigo-600 font-medium (right)
+    [⚙ Preferences] — Heroicons cog-6-tooth 18px text-gray-400 (far right)
+
+  FILTER TABS (overflow-x-auto, border-b border-gray-200, px-4):
+    Show 8 tabs visible before overflow (the rest are accessible by scroll):
+    All(12 red) | Workflow(4 red) | Dashboard | Training(2) | Collab(2) | Recruitment(1) | IT(1) | Assets
+    Active tab "All": indigo-600 text, border-b-2 border-indigo-600, Inter Medium 13px
+    Inactive tabs: text-gray-500 Inter Regular 13px
+    Count badge on "All": bg-red-100 text-red-600 (because action_required unread exist)
+    Count badge on "Workflow": bg-red-100 text-red-600 (4 action_required)
+    Count badge on "Training": bg-gray-100 text-gray-500
+
+  NOTIFICATION ROWS (5 rows visible, max-h-350px scrollable):
+
+    ROW 1 — action_required (red-50 bg, 3px red left border):
+      Left icon: 32px circle bg-red-100, BellAlertIcon 18px text-red-500
+      Title: "Leave Approval Required" Inter SemiBold 14px text-gray-900
+      App chip: "Workflow" bg-gray-100 text-gray-500 text-[10px] px-1.5 rounded ml-1
+      Time: "5m ago" text-[11px] text-gray-400 ml-auto
+      Body: "Asha Sharma — Sick Leave Apr 10–12 (3 days)" text-[12px] text-gray-500
+      Buttons: [✓ Approve] 24px h bg-green-500 text-white text-[11px] rounded px-2 mr-1
+               [✗ Reject] 24px h border border-red-400 text-red-500 text-[11px] rounded px-2
+      Hover state: [💤] and [×] icons appear right side
+
+    ROW 2 — warning (amber-50 bg, 3px amber left border):
+      Icon: bg-amber-100 ExclamationTriangleIcon text-amber-500
+      Title: "Certification Expiring Soon" | App: [Training] | Time: 1h ago
+      Body: "Your AWS Cloud Practitioner expires in 28 days"
+
+    ROW 3 — success (green-50 bg, 3px green left border):
+      Icon: bg-green-100 CheckCircleIcon text-green-500
+      Title: "Certificate Earned!" | App: [Training] | Time: 3h ago
+      Body: "You completed PMP Certification — view in your profile"
+
+    ROW 4 — info unread (indigo-50 bg, 3px blue left border):
+      Icon: bg-blue-100 InformationCircleIcon text-blue-500
+      Title: "Policy Update" | App: [Communications] | Time: 2h ago
+      Body: "New Work From Home policy effective May 1, 2026"
+      Unread dot: 6px circle bg-indigo-500 (left of icon or row left edge)
+
+    ROW 5 — info read (white bg, no border):
+      Icon: bg-gray-100 InformationCircleIcon text-gray-400
+      Title: "New DM" Inter Regular text-gray-600 | App: [Collaboration] | Time: 10m ago
+      Body: "Raj Kumar: Hey, quick question about the auth flow..." (dimmer)
+
+  FOOTER (px-4 py-2 border-t border-gray-200):
+    Left:  [🗑 Delete All Read] text-[13px] text-red-500 font-medium
+    Right: [View All Notifications →] text-[13px] text-indigo-600 font-medium
+
+---
+
+FRAME 3: NOTIFICATION PREFERENCES PAGE (/notifications/preferences) @ 1440x900px
+
+  Layout: portal sidebar (240px) + TopNav + main content (800px max-width centered)
+
+  BREADCRUMB: Home > Notification Preferences (text-xs text-gray-400 mb-4)
+
+  PAGE HEADER:
+    H1: "Notification Preferences" Inter Bold 24px text-gray-900
+    Subtitle: "Control which notifications you receive and how" text-sm text-gray-500 mt-1
+
+  QUIET HOURS CARD (bg-white border border-gray-200 rounded-xl p-6 mb-6):
+    Row 1: 🌙 MoonIcon 20px + "Quiet Hours" Inter SemiBold 16px text-gray-800 flex-1
+            ON/OFF toggle switch (indigo when ON, 40x22px pill)
+    Row 2 (visible when ON):
+      "From" label + time input [10:00 PM] → "To" label + time input [8:00 AM]
+      Timezone select [Asia/Kolkata (IST) ▾]
+    Preview: italic text-sm text-gray-500 mt-3
+      "Push notifications paused between 10:00 PM and 8:00 AM IST"
+    [Save Quiet Hours] bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium mt-4 (right-aligned)
+
+  APP ACCORDION CARDS (show 2 expanded, rest collapsed, mb-3 each):
+
+    CARD: WORKFLOW (expanded state):
+      Header: WorkflowIcon 20px text-indigo-500 + "Workflow Automation" SemiBold + "7 events" gray chip + ON toggle + ▲
+      Body (table):
+        Headers: Event | In-App | Push (text-xs text-gray-400 uppercase, border-b)
+        Row 1: "Approval Required" | [●ON indigo] | [●ON indigo] + 🔒 lock icon (locked)
+        Row 2: "Approval Deadline Warning" | [●ON] | [●ON]
+        Row 3: "Workflow Completed" | [●ON] | [○OFF gray]
+        Row 4: "Workflow Failed" | [●ON] | [●ON]
+        Row 5: "Workflow Cancelled" | [●ON] | [○OFF]
+        Row 6: "Workflow Step Assigned" | [●ON] | [●ON]
+        Row 7: "Approval Escalated" | [●ON] | [●ON]
+
+    CARD: COMMUNICATIONS (expanded state):
+      Header: ChatBubbleIcon + "Communications" + "8 events" + ON toggle + ▲
+      Body rows: Critical Announcement(locked), High Priority, Medium, Low, @Mention, Comment, Event Reminder, Poll Closing
+
+    CARD: TRAINING (collapsed state):
+      Header: AcademicCapIcon + "Training" + "5 events" + ON toggle + ▼
+
+    CARD: COLLABORATION (collapsed state):
+      Header: UsersIcon + "Collaboration" + "5 events" + ON toggle + ▼
+
+    (Remaining app cards shown collapsed)
+
+  SNOOZED NOTIFICATIONS SECTION (mt-8):
+    Section title: "Snoozed Notifications" Inter SemiBold 16px text-gray-800 mb-3
+    Empty state: "No snoozed notifications" text-sm text-gray-400 italic text-center py-4 bg-white border rounded-xl
+
+---
+
+DESIGN TOKENS (for consistency across all frames):
+  Primary:    #6366F1 (indigo-500)
+  Primary Dk: #4F46E5 (indigo-600)
+  Danger:     #EF4444 (red-500)
+  Warning:    #F59E0B (amber-500)
+  Success:    #22C55E (green-500)
+  Info:       #60A5FA (blue-400)
+  Text Dark:  #111827 (gray-900)
+  Text Mid:   #6B7280 (gray-500)
+  Text Light: #9CA3AF (gray-400)
+  Border:     #E5E7EB (gray-200)
+  BG App:     #F9FAFB (gray-50)
+  Font:       Inter, fallback system-ui
+
+
+================================================================================
+END OF SPECIFICATION — HR_Spec_Part6c_NotificationBell
+================================================================================

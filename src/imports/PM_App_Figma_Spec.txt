@@ -1,0 +1,1101 @@
+================================================================================
+PROJECT MANAGEMENT APP — FULL SPECIFICATION
+Version 1.0 | September 2026
+================================================================================
+Based on existing blueprint: ProjectManagementJira.tsx (~4,320 lines)
+DB: project_tasks | project_backlog_items | project_defects | project_milestones | project_sprints
+Tech: React + Supabase (direct queries, Edge Fn broken for Milestones/Sprints)
+================================================================================
+
+
+================================================================================
+SECTION 1 — MASTER DATA ADDITIONS REQUIRED
+(Add these to existing Master Data App)
+================================================================================
+
+PM_PROJECT_CATEGORIES
+  Fields: category_id | name | description | default_methodology | icon | color | is_active
+  Seed: Product Development | IT Infrastructure | Business Process | Research & Innovation
+        | Compliance | Marketing | Operations | Client Delivery | Internal Tools
+
+PM_METHODOLOGIES
+  Fields: methodology_id | name | description | has_sprints | sprint_length_days | story_points_enabled
+  Seed: Scrum (sprints: yes, 14d, points: yes)
+        Kanban (sprints: no, points: no)
+        SAFe (sprints: yes, 14d, points: yes)
+        Waterfall (sprints: no, points: no)
+        Hybrid (configurable)
+
+PM_TASK_TYPES
+  Fields: type_id | name | icon | color | sort_order
+  Seed: Story (blue) | Bug (red) | Task (gray) | Epic (purple) | Sub-task (light gray)
+        | Spike (teal) | Improvement (orange)
+
+PM_STORY_POINT_SCALES
+  Fields: scale_id | name | values (array)
+  Seed: Fibonacci: [1, 2, 3, 5, 8, 13, 21]
+        T-Shirt: [XS, S, M, L, XL, XXL]
+        Linear: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+PM_SPRINT_GOALS_TEMPLATES
+  Fields: template_id | name | goal_text | methodology_id
+
+PM_RISK_CATEGORIES
+  Fields: cat_id | name | description
+  Seed: Technical | Resource | Schedule | Scope | Budget | External/Vendor | Compliance
+
+PM_RISK_LIKELIHOODS
+  High | Medium | Low  (with numeric values 3/2/1)
+
+PM_RISK_IMPACTS
+  Critical | High | Medium | Low (values 4/3/2/1)
+
+PM_RISK_STATUS
+  Identified | Assessed | Mitigated | Accepted | Closed | Triggered
+
+PM_BACKLOG_ITEM_TYPES (already seeded)
+  Story | Bug | Task | Epic | Improvement | Spike
+
+PM_EPIC_STATUSES
+  Not Started | In Progress | Done | On Hold
+
+PM_CUSTOM_FIELD_TYPES
+  Text | Number | Date | Dropdown | Multi-select | Checkbox | User | URL
+
+PM_TIME_LOG_TYPES (already exists)
+  Development | Review | Testing | Meeting | Documentation | Other
+
+PM_BUDGET_CATEGORIES
+  Personnel | Infrastructure | Software/Licenses | Travel | Training | Contingency | Other
+
+PM_VELOCITY_CALC_METHODS
+  Last 3 Sprints Average | Last 5 Sprints Average | All Sprints Average | Manual Override
+
+PM_DEPENDENCY_TYPES
+  Finish-to-Start | Start-to-Start | Finish-to-Finish | Start-to-Finish | Blocks | Blocked By | Relates To | Duplicates
+
+PM_NOTIFICATION_EVENTS (project-specific)
+  Task Assigned | Task Status Changed | Task Overdue | Sprint Started | Sprint Completed
+  | Milestone Achieved | Milestone Missed | Defect Created | Defect S1 Opened | Budget Threshold
+  | Project RAG Changed | New Comment/Mention | Member Added/Removed
+
+PM_HEALTH_METRICS
+  Fields: metric_id | name | calculation_rule | green_threshold | yellow_threshold | weight
+  Seed: Schedule Variance | Scope Change% | Sprint Velocity Trend | Defect Density
+        | Budget Burn Rate | Team Utilization | Blocker Count
+
+
+================================================================================
+SECTION 2 — FIX PLAN: BROKEN + INCOMPLETE AREAS
+(Developer approach — fix before design enhancement)
+================================================================================
+
+--- FIX 1: Milestones Tab (Edge Function 404) ---
+
+Replace PM_API Edge Function calls with direct Supabase queries.
+
+current broken call:
+  fetch('/api/pm_api', { method: 'POST', body: ... })
+
+replace with:
+  supabase.from('project_milestones')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('due_date', { ascending: true })
+
+CRUD operations:
+  Create:  supabase.from('project_milestones').insert({ project_id, title, due_date, status, description })
+  Update:  supabase.from('project_milestones').update({ ...fields }).eq('id', id)
+  Delete:  supabase.from('project_milestones').delete().eq('id', id)
+
+DB Schema (project_milestones):
+  id | project_id | title | description | due_date | status (Pending/Achieved/Missed/At Risk)
+  | milestone_type (Phase/Release/Review/Contract/Internal) | owner_id | linked_tasks (array)
+  | completion_date | notes | created_at
+
+--- FIX 2: Sprints Tab (Edge Function 404) ---
+
+Replace with direct Supabase queries.
+
+supabase.from('project_sprints')
+  .select('*, sprint_items:project_sprint_items(*)')
+  .eq('project_id', projectId)
+  .order('start_date', { ascending: true })
+
+DB Schema additions needed (project_sprints):
+  id | project_id | sprint_number | name | goal | start_date | end_date
+  | status (Planning/Active/Completed/Cancelled) | capacity_points | committed_points
+  | completed_points | velocity | created_by | created_at
+
+DB Schema (project_sprint_backlog — junction):
+  id | sprint_id | backlog_item_id | added_at | order_index
+
+--- FIX 3: Burndown Chart (mock data → live) ---
+
+Current: hardcoded 14-day/55pt mock data.
+
+Replace with:
+  1. Get active sprint from project_sprints where status = 'Active'
+  2. Get committed backlog items for that sprint from junction table
+  3. Calculate total committed story points
+  4. For each day of sprint, query project_tasks / backlog_items where completed_at <= day
+  5. Ideal line: total_pts - (total_pts / sprint_days) * day_number
+  6. Actual line: sum of remaining points on that date
+
+Query pattern:
+  supabase.from('project_sprint_backlog')
+    .select('*, backlog_item:project_backlog_items(story_points, status, completed_at)')
+    .eq('sprint_id', activeSprintId)
+
+--- FIX 4: Gantt Chart (no interactivity) ---
+
+Enhancements:
+  - Click on bar → open ProjectDetailPanel
+  - Hover tooltip: project name, start/end, % complete, manager
+  - Add zoom controls: Week / Month / Quarter / Year views
+  - Add dependency lines between milestones across projects
+  - Color bars by RAG status (green/amber/red)
+  - Show milestone diamonds on Gantt bars
+  - Drag bar to adjust dates (managers/admins only — needs date update on drag end)
+
+
+================================================================================
+SECTION 3 — FEATURE ENHANCEMENTS (Industry Standard)
+================================================================================
+
+--- ENHANCEMENT 1: Sprint Management (Full Scrum Flow) ---
+
+Sprint Lifecycle:
+  Planning → Active → Review → Retrospective → Completed
+
+Sprint Planning screen (within SprintsTab):
+  Left panel: Backlog (unassigned items, filterable by type/priority/epic)
+  Right panel: Sprint board (items dragged from backlog into sprint)
+  Capacity bar: team capacity (hrs or pts) vs committed (color: green/yellow/red)
+  Sprint Goal input (required before starting)
+  [Start Sprint] button → sets start_date = today, status = Active
+  [Cancel Sprint] → moves all items back to backlog
+
+Active Sprint view:
+  Kanban board filtered to this sprint's items (same KanbanBoard component)
+  Sprint header: name | goal | days remaining countdown | burndown mini-chart
+  [Complete Sprint] button → opens Complete Sprint modal
+
+Complete Sprint modal:
+  Shows incomplete items: radio "Move to Next Sprint" / "Move to Backlog" per item or bulk
+  Sprint Summary: committed / completed / carried over / added during sprint
+  [Complete Sprint] → sets status = Completed, calculates velocity
+
+--- ENHANCEMENT 2: Epic Management ---
+
+Epics are large backlog items that group stories.
+
+Epic list view (inside BacklogTab, toggle "Epics" view):
+  EpicCard: color strip (configurable) | title | progress bar (% child items done)
+  | dates | linked items count | status badge
+
+Epic Detail slide-over:
+  Header: color picker | title | epic status | date range
+  Child items table: linked stories/tasks from backlog
+  Progress: story points done / total
+  Timeline: Gantt strip showing epic span and milestone alignment
+  Description | Acceptance Criteria
+
+Backlog item → link to Epic: dropdown in AddBacklogSlideOver
+
+--- ENHANCEMENT 3: Dependency Tracking ---
+
+Dependencies between backlog items:
+  AddBacklogSlideOver → "Dependencies" section:
+    Add relationship: [item picker] + [type: Blocks / Blocked By / Relates To / Duplicates]
+
+Dependency visualization:
+  BacklogTab → toggle "Dependency View" → show items with linking arrows
+  Blocked items: warning chip "Blocked by ITEM-X"
+  Circular dependency detection: show error "Circular dependency detected" on save
+
+--- ENHANCEMENT 4: Time Tracking & Reports ---
+
+Time Log enhancements:
+  LogTimeModal additions: date picker (default today) | billable toggle | comment (optional)
+
+Time Report (new view inside ProjectDetailPanel — "Reports" tab):
+  Filter: member | date range | log type | sprint
+  DataTable: Date | Member | Task | Type | Hours | Billable | Comment
+  Summary row: total hours | billable hours | cost estimate (if rate configured)
+  Export: CSV / PDF
+
+Team utilization panel (within TeamTab):
+  Stacked bar per member: logged vs capacity per sprint
+  Capacity = team_member.weekly_hours * sprint_weeks (configurable per member)
+  Color: green if <85% | yellow 85-100% | red >100%
+
+--- ENHANCEMENT 5: Budget Tracking ---
+
+Budget additions to ProjectForm:
+  Budget | Spent (auto-calculated from time logs if hourly rate set) | Forecast
+  Budget categories breakdown table (editable)
+  Budget alerts: threshold notifications at 70%, 90%, 100%
+
+ProjectDetailPanel → Overview tab:
+  Budget card: Budget | Spent | Remaining | Burn Rate per sprint
+  Mini donut by category
+
+--- ENHANCEMENT 6: Risk Register ---
+
+New tab: Risks (add to ProjectDetailPanel after Milestones)
+
+Risk entry:
+  Title | Category (PM_RISK_CATEGORIES) | Description | Likelihood | Impact
+  Risk Score = Likelihood × Impact (auto-calculated)
+  Status | Owner (team member) | Mitigation Plan | Contingency Plan | Due Date | Resolution Notes
+
+Risk matrix heat map (3×3 or 4×4 grid):
+  X = Impact, Y = Likelihood
+  Each cell: count of risks in that quadrant
+  Hover → list of risks in that quadrant
+
+Risk list table:
+  ID | Title | Category | Score badge (color: red≥6, yellow 3-5, green 1-2) | Status | Owner | Due
+  Sort by score default
+
+--- ENHANCEMENT 7: Project Health Score ---
+
+Auto-calculated per project from PM_HEALTH_METRICS config.
+
+Health Score (0-100) composed of:
+  - Schedule: milestones on track / total milestones = %
+  - Scope: (backlog items in sprint not added after sprint start) / total = %
+  - Quality: (defects in sprint / story points completed) trend
+  - Velocity: current sprint velocity vs average (stable/improving/declining)
+  - Budget: % budget spent vs % timeline elapsed
+
+Health badge on ProjectCard and ProjectDetailPanel header:
+  Healthy (80-100): green | At Risk (60-79): yellow | Critical (<60): red
+
+Health Detail modal: per-dimension breakdown with trend arrow
+
+--- ENHANCEMENT 8: Velocity & Analytics ---
+
+SprintsTab → Analytics sub-tab:
+
+Velocity chart (bar chart):
+  X = sprints, Y = story points
+  Bars: committed (gray) vs completed (blue) per sprint
+  Rolling average line
+  Velocity number shown (last 3 sprints avg)
+
+Cumulative Flow Diagram (CFD):
+  X = dates, Y = item count
+  Stacked area by status: Backlog / To Do / In Progress / In Review / Done
+  Bottleneck visible as widening band in a status
+
+Sprint Comparison table:
+  Sprint | Committed Pts | Completed Pts | Velocity | Added Mid-Sprint | Carried Over | Defects | Team Size
+
+--- ENHANCEMENT 9: Notifications & Mentions ---
+
+@mention support in task descriptions and comments:
+  Type "@" → dropdown of project members
+  Mentioned user gets notification
+  Mentions stored as structured data (not just text)
+
+Watchers:
+  Task/backlog item can have "Watchers" (users who follow but aren't assigned)
+  Watcher gets notified on status change, comment, due date change
+
+Project-level notification preferences (per user, per project):
+  Toggle each PM_NOTIFICATION_EVENTS item on/off
+
+--- ENHANCEMENT 10: Advanced Filters & Saved Views ---
+
+BacklogTab: Filter by Epic | Sprint | Type | Priority | Assignee | Label | Status | Story Points range
+  Save as named view: "Sprint 12 Bugs" / "Unplanned High Priority" etc.
+
+KanbanBoard (Tasks): swimlane toggle (Group by Assignee / Priority / Epic)
+
+My Tasks view: filter by project | type | priority | due date range | sprint
+
+Global search (Cmd+K):
+  Search tasks, backlog items, defects, projects
+  Results grouped by type with preview chips
+
+
+================================================================================
+SECTION 4 — COMPLETE SCREEN SPECIFICATIONS
+================================================================================
+
+--- SCREEN 1: Dashboard View ---
+
+Layout: SideNav (3 items) + TopNav + main content
+
+KPI Row (4 cards):
+  Active Projects: 12 | trend since last month
+  Tasks Due Today: 8  | red if >0
+  Overdue Tasks:  14  | red + badge on SideNav
+  At Risk Projects: 3 | amber
+
+My Tasks panel (white card, full width):
+  Tabs: Today | This Week | Overdue
+  Table: Task | Project chip | Priority badge | Due Date | Status dropdown | [Open]
+  "View All My Tasks" link → mainView = mytasks
+
+Active Projects list (grid 3-col):
+  ProjectCard: color bar (by category) | health dot | project name | RAG dot
+  Progress bar | Sprint chip (active sprint name) | Manager avatar | dates
+  S1 defect count badge (red, pulsing if >0)
+  Click → ProjectDetailPanel
+
+Team Workload chart (white card):
+  Stacked bar per member: # tasks by status (color-coded)
+  Click member → filter My Tasks to that person
+
+Sprint Burndown mini chart (white card):
+  Active sprint of first/primary project
+  Title shows sprint name + days remaining
+  "Full Chart" link → opens that project's sprint
+
+Gantt Timeline (white card, full width):
+  All projects on timeline
+  Month granularity, project bars colored by RAG
+  Milestone diamonds on bars
+  Click bar → ProjectDetailPanel
+  Zoom: Month / Quarter / Year toggle
+
+--- SCREEN 2: Projects List ---
+
+PageHeader: "Projects" + "New Project" button + View toggle (Grid/Table)
+
+Filter bar: Search | Status multi-select | Category filter | Manager filter | Methodology filter
+Active filter chips row
+
+GRID VIEW: 3-col cards (as described above, + Health Score badge)
+
+TABLE VIEW:
+  Columns: Name | Category | Status | Health | RAG | Manager | Sprint | Progress | Budget % | Defects | Actions
+  Sortable columns
+
+New Project modal (full spec in Section 5)
+
+--- SCREEN 3: ProjectDetailPanel ---
+
+Header bar (white, border-bottom):
+  Breadcrumb: [Dashboard] › [Projects] › Project Name
+  Project name H2 | Status badge | RAG dot selector (click to change R/A/G)
+  Health score badge | [Edit] | [Delete] (role-gated)
+  Sprint pill (active sprint name + days left)
+
+Tabs (8 tabs):
+  Overview | Backlog | Tasks | Sprints | Milestones | Defects | Risks | Reports
+
+Note on tab visibility: Risks, Reports are new additions. All others exist.
+
+TAB: Overview
+  Left 2/3:
+    Description (rich text, editable inline)
+    Key Metrics row: Total Tasks | Open Defects | Active Sprint Points | Budget Used
+    Milestones timeline strip (compact, click → Milestones tab)
+    Recent Activity log (last 10 events: task updates, comments, status changes)
+  Right 1/3:
+    Project Info card: dates | category | methodology | manager | created
+    Budget card: total | spent | remaining | burn rate
+    Team members (avatars + names, click → Team tab)
+    Health Detail (per-dimension mini bars)
+    RAG history log (last 5 RAG changes with date and changer)
+
+TAB: Backlog
+  Left panel (if Epics view on): Epic list with progress bars
+  Main area:
+    Views toggle: Table | Kanban | Dependency
+    Filter bar: Epic | Sprint | Type | Priority | Assignee | Status | Labels
+    Saved views dropdown
+    "+ Add Item" button → AddBacklogSlideOver
+    Sort: Priority / Created / Updated / Story Points
+
+    TABLE view columns:
+      Type icon | ID | Title | Epic chip | Sprint chip | Status | Priority | Story Points
+      | Assignee | Linked Defects | Linked Tickets | Actions
+
+    KANBAN: columns = status workflow (Product Backlog / Sprint Backlog / To Do / In Progress / Done)
+
+    DEPENDENCY view: network graph or dependency table with arrows
+
+TAB: Tasks
+  Sprint selector dropdown (All / Sprint X / Sprint X-1 / No Sprint)
+  Swimlane toggle: None / By Assignee / By Priority / By Epic
+  KanbanBoard: To Do | In Progress | In Review | Done
+  "+ Add Task" button
+  TaskCard: ID | title | priority dot | assignee avatar | story point chip | due date | defect links
+  Drag-and-drop between columns (update status on drop)
+
+TAB: Sprints
+  Sprint list (left sidebar, 240px):
+    All sprints listed: Sprint 1 (Completed) / Sprint 2 (Completed) / Sprint 3 (Active) / Sprint 4 (Planned)
+    Click sprint → load sprint detail
+
+  Sprint detail (right main area):
+    PLANNING state:
+      Sprint header: name input | goal input | date range picker | capacity indicator
+      Two-column: Backlog (left) | Sprint Items (right)
+      Drag from backlog to sprint (or right-click > Add to Sprint)
+      Capacity bar: X / Y points committed
+      [Start Sprint] primary | [Save] secondary
+
+    ACTIVE state:
+      Sprint header: name | goal | progress bar | days remaining countdown
+      Mini burndown chart (inline, h=120px)
+      Kanban board for sprint items only
+      [Complete Sprint] button (right-aligned, opens modal)
+
+    COMPLETED state:
+      Sprint Summary panel:
+        Committed: 45 pts | Completed: 38 pts | Velocity: 38 | Carried Over: 7 pts
+        Items: completed list vs carried list
+      Velocity chart (this sprint vs previous 5)
+
+    Analytics sub-tab (within Sprints):
+      Velocity chart (all sprints)
+      CFD (Cumulative Flow Diagram) date-range selector
+      Sprint comparison table
+
+TAB: Milestones
+  Timeline view (default): horizontal strip, milestones as diamonds on a line
+    Color: green = Achieved | amber = At Risk | red = Missed | gray = Pending
+    Click diamond → milestone detail slide-over
+
+  Table view toggle:
+    Columns: Milestone | Type | Due Date | Status | Owner | Linked Tasks | Days Until/Since | Notes
+
+  "+ Add Milestone" button → slide-over form:
+    Title | Type (Phase/Release/Review/Contract/Internal) | Due Date | Owner
+    Description | Linked Backlog Items (multi-select) | Status
+
+  Milestone detail slide-over:
+    All fields editable | Status change | Completion date (auto when Achieved)
+    Linked tasks progress mini-bar | Comments section
+
+TAB: Defects
+  (Syncs bidirectionally with Defect Tracker app)
+
+  KPI row: Total | Open | SLA Breached | Fixed This Sprint
+
+  Filter: Severity | Status | Assignee | Sprint | Environment | Regression flag | Labels
+  Views: Table | Kanban
+
+  Table columns: ID | Severity | Title | Status | Assignee | Sprint | SLA | Regression | Age | [Open in Defect Tracker ↗]
+
+  "+ Log Defect" button → AddDefectSlideOver
+
+  SLA countdown on each row (same as Defect Tracker app)
+  "Open in Defect Tracker ↗" link in header → opens Defect Tracker filtered to this project
+
+TAB: Risks
+  KPI row: Total Risks | High (red) | Medium (amber) | Mitigated (green)
+
+  Risk Matrix (3×4 heat map):
+    Y-axis: Likelihood (High/Med/Low)
+    X-axis: Impact (Critical/High/Medium/Low)
+    Each cell: count, colored (red≥6, amber 3-5, green 1-2)
+    Click cell → filtered list of risks in that quadrant
+
+  Risk table:
+    Columns: ID | Title | Category | Score | Likelihood | Impact | Status | Owner | Due | Mitigation
+    Sort by score default (highest first)
+
+  "+ Add Risk" button → slide-over:
+    Title | Category | Description | Likelihood | Impact | (auto score shown)
+    Status | Owner | Mitigation Plan | Contingency Plan | Due Date
+
+TAB: Reports
+  Sub-tabs: Burndown | Velocity | Time Log | Budget | Defect Trends
+
+  Burndown (live from DB):
+    Sprint selector | Ideal line (gray dashed) | Actual remaining (blue) | Added mid-sprint (red dotted)
+    Points remaining on Y-axis, sprint days on X-axis
+    Summary: committed / completed / velocity / scope change count
+
+  Velocity (all sprints bar chart):
+    Committed (gray) vs Completed (blue) per sprint bar
+    Rolling 3-sprint average line (red dashed)
+    Current velocity chip: "Velocity: 38 pts avg"
+
+  Time Log:
+    Filter: member | date range | type | sprint
+    DataTable: Date | Member | Task | Type | Hours | Billable | Comment
+    Summary: total hrs | billable hrs | non-billable hrs
+    Pie chart by type
+    Export CSV / PDF
+
+  Budget:
+    Budget vs Actual line chart over time
+    Category breakdown table
+    Burn rate: projected completion cost
+
+  Defect Trends:
+    Opened vs Closed per sprint (line chart)
+    Defect density (defects / story points per sprint)
+    Root cause breakdown (pie)
+
+--- SCREEN 4: EnhancedMyTasksView ---
+
+PageHeader: "My Tasks" + badge count
+
+Filter bar: Project multi-select | Type | Priority | Sprint | Due Date range | Status multi-select
+Save filter / Saved filters dropdown
+
+View toggle: List / Kanban / Calendar
+
+Group By selector: Project (default) | Due Date | Priority | Sprint | Status
+
+Overdue section (always pinned at top, red-50 bg):
+  Count badge | items with red "Overdue Xd" chip on due date
+
+List view (grouped):
+  GroupHeader: project chip + count + expand/collapse
+  Row: Type icon | ID | Title | Priority badge | Due date | Status dropdown | Story Points | [Open]
+
+Calendar view:
+  Month/Week toggle
+  Tasks placed on due date squares
+  Color by priority (red/orange/blue/gray)
+  Overdue shown in red
+
+Kanban view (personal, all projects):
+  Columns: To Do | In Progress | In Review | Done
+  Card shows: title | project chip | priority dot | due date
+
+--- SCREEN 5: Sprint Planning Modal ---
+
+Full-screen modal (or split view):
+  Header: "Sprint Planning — Sprint 4" | Project name
+
+  Left (40%): Available Backlog
+    Filter: Epic | Type | Priority | Unassigned to sprint
+    Search backlog items
+    Item rows: priority | type icon | title | story points chip | [+ Add] button
+
+  Right (60%): Sprint Items
+    Sprint Goal input (required)
+    Date range picker (start - end)
+    Capacity indicator: X pts / Y pts (committed / team capacity)
+    Capacity calculation: member count × (sprint days ÷ 5) × avg pts/day
+    Items list (draggable to reorder): same columns + [Remove] button
+
+    Team Capacity breakdown (expandable):
+      Member | Availability (hrs) | Points Capacity | Allocated (pts)
+
+  Footer: [Cancel] | [Save as Draft] | [Start Sprint]
+
+--- SCREEN 6: Create/Edit Project Modal ---
+
+Steps (3-step wizard):
+
+Step 1 — Basic Info:
+  Project Name (required) | Category (required, from PM_PROJECT_CATEGORIES)
+  Description (rich text) | Methodology (from PM_METHODOLOGIES)
+  Status | Priority | RAG (default Amber)
+
+Step 2 — Dates & Budget:
+  Start Date | Target End Date | Actual End Date (edit only)
+  Budget Total | Budget Currency | Budget Categories breakdown (optional table)
+  Story Points scale (if methodology has points)
+  Sprint Length (if methodology has sprints, default from methodology config)
+
+Step 3 — Team:
+  Project Manager (required, user picker)
+  Add Members: employee search → role assignment (admin/manager/employee)
+  Members list with role chips, remove button
+
+
+================================================================================
+SECTION 5 — VALIDATION & BUSINESS RULES
+================================================================================
+
+PROJECT CREATION:
+  - Name: required, 3-100 chars, unique within org
+  - Start Date must be ≤ End Date
+  - Manager: required
+  - Budget if entered: must be > 0, max 999,999,999
+  - Cannot delete project with active sprint (must complete or cancel sprint first)
+  - Only admin can delete projects
+
+SPRINT RULES:
+  - Only one sprint can be Active per project at a time
+  - Cannot start sprint without sprint goal (required)
+  - Sprint dates cannot overlap with another sprint in same project
+  - Sprint must have at least 1 backlog item committed before it can be started
+  - Complete Sprint: all In Progress items must be moved (next sprint or backlog) — cannot abandon mid-item
+  - Velocity = story points of items moved to Done status before sprint end
+  - Reopening a completed sprint: admin only, requires reason
+
+BACKLOG ITEMS:
+  - Story points: must be from selected PM_STORY_POINT_SCALES values (not free text)
+  - Epic link: one item can only belong to one epic
+  - Moving item from Active sprint: allowed only for manager/admin with confirmation dialog
+  - Adding item to Active sprint (mid-sprint): allowed, flagged as "Added mid-sprint" for velocity accuracy
+  - Closing a Story: requires all child Sub-tasks to be Done first
+  - Closing an Epic: requires all linked stories to be Done or Won't Do
+
+TASKS:
+  - Due date cannot be before project start date
+  - Sub-task due date cannot exceed parent task due date
+  - Estimated hours: max 200 per task
+  - Logged hours: cannot log future date (only today or past)
+  - Deleting a task with logged hours: soft delete only (archive flag), not physical delete
+  - Assigning a task: notifies assignee
+
+MILESTONES:
+  - Due date must be within project start/end range
+  - Cannot mark Achieved before due date without confirmation ("Early completion confirmed?")
+  - Missed is auto-flagged when due date passes and status is still Pending/At Risk
+  - Auto-flag job runs daily: sets status = 'At Risk' when 7 days before due and status = 'Pending'
+
+RISKS:
+  - Risk Score = PM_RISK_LIKELIHOODS.value × PM_RISK_IMPACTS.value
+  - Status cannot go back to 'Identified' from 'Mitigated' or 'Closed'
+  - 'Triggered' status: notify project manager and risk owner immediately
+
+BUDGET:
+  - Alert at 70%: notify project manager
+  - Alert at 90%: notify project manager + admin
+  - Alert at 100%: block further time logging with billable=true (warn, allow override for manager)
+  - Burn rate = (spent / days elapsed) × total sprint days remaining = projected spend
+
+RAG STATUS:
+  - Manual change only (not auto-calculated, but health score can suggest)
+  - Every change logged: who | old | new | timestamp
+  - Red RAG: triggers notification to admin
+
+ROLE ENFORCEMENT:
+  employee:
+    - View projects they are a member of (not all projects)
+    - Log time on assigned tasks only
+    - Cannot change project RAG, status, budget, dates
+    - Cannot add/remove team members
+    - Can create tasks (assigned to self) in sprints they are part of
+  manager:
+    - All of above plus: create/edit projects, manage team, start/complete sprints
+    - Can change RAG, status, milestone status
+    - Cannot delete projects
+  admin:
+    - Full CRUD including delete
+    - Can force-complete sprints, reopen milestones
+    - Can override budget alerts
+
+
+================================================================================
+SECTION 6 — FIGMA DESIGN PROMPTS
+================================================================================
+
+NOTE: Run each prompt independently in Figma AI.
+App accent: #6366F1 (indigo — existing Projects app color)
+Existing design system components must be reused (buttons, badges, avatars, cards from Batch 1).
+
+--- PROMPT PM-1: Dashboard View ---
+
+Design the Project Management Dashboard at 1440x900px using indigo (#6366F1) accent.
+SideNav (240px, dark): Projects icon | My Tasks icon | Dashboard icon (active, indigo highlight) | bottom: Settings.
+
+TopNav: "Project Management" title | search icon | notifications bell (badge 3) | user avatar.
+
+KPI Row (4 white cards, border, radius-12, shadow-sm, equal width):
+  Active Projects: 12 | +2 from last month (blue trend chip)
+  Tasks Due Today: 8  | (orange, warning)
+  Overdue Tasks: 14   | (red, +badge)
+  At Risk Projects: 3 | (amber)
+
+Section: "My Tasks" (white card, full width, h=200px):
+  Tab row: Today (3) | This Week (8) | Overdue (3 red)
+  Table rows (Today): task name | [Phoenix API] project chip | P1 red | "Due Today" | In Progress badge | [Open →]
+  4 visible rows, "View All My Tasks →" link bottom right
+
+Section: "Active Projects" (white card, h=auto, grid 3-col inside):
+  ProjectMiniCard (each): color bar top (category color) | green health dot | "Phoenix API" name | "🔴 A" RAG dot
+  ProgressBar 68% | "Sprint 12 · 8 days left" chip | manager avatar | "Mar 15 – Jun 30" dates
+  Click area, hover shadow
+
+Section row (2-col, h=280px):
+  LEFT "Team Workload" (50%): stacked bar per person, colors by task status. Members: Raj, Tom, Asha, Maria, Dev
+  RIGHT "Sprint Burndown" (50%): line chart — "Sprint 12: 14 days, 55 pts" — ideal line (gray dashed) vs actual (indigo solid). Days on X, pts on Y.
+
+Section: "Gantt Timeline" (white card, full width, h=200px):
+  Header: "All Projects Timeline" | Zoom: Month (active) / Quarter / Year buttons
+  Projects listed left (120px): Phoenix API, Nirmaan Portal, ACM Fiori v2, Data Pipeline, Mobile App
+  Timeline grid right: horizontal bars colored by RAG (green/amber/red), milestone diamond markers
+  Current date red vertical line
+
+---
+
+--- PROMPT PM-2: Projects List View + New Project Modal ---
+
+SCREEN A: Projects List (1440x900px)
+PageHeader: "Projects" (H1 28px) | right: [Grid view icon (active)] [Table view icon] | [+ New Project] indigo primary button
+
+Filter bar (white card, border-b):
+  Search input (240px, placeholder "Search projects...") | Status multi-chip filter | Category filter | Manager filter | [Clear Filters]
+
+GRID VIEW — 3-col project cards (white, border, radius-12, hover shadow, pointer):
+  Card structure (280px w):
+    Top: color bar 6px (category color) | Health badge (top-right corner): "Healthy" green / "At Risk" amber / "Critical" red
+    Body: RAG dot (left, colored) | Project name bold | Category text-sm gray
+    Progress bar (h=8px, indigo fill, gray track, labeled "68% complete")
+    Sprint chip: "Sprint 12 · 8 days left" indigo-50 text-indigo
+    Row: manager avatar + name | dates small gray
+    Bottom row: member avatars (overlap) | S1 defect badge (red, pulsing if >0)
+
+Sample cards: Phoenix API (Healthy, Green, Sprint 12), Nirmaan Portal (At Risk, Amber, Sprint 5), ACM Fiori v2 (Healthy, Green, Sprint 8), Data Pipeline (Critical, Red, No active sprint), Mobile App (At Risk, Amber, Sprint 3)
+
+TABLE VIEW (toggled, same page):
+  Table columns: Name | Category | Status | Health | RAG | Manager | Sprint | Progress bar | Budget % | Defects | Actions(3-dot)
+
+SCREEN B: New Project Wizard Modal (600px wide, 3-step)
+Step indicator: [1 Basic Info] —— [2 Dates & Budget] —— [3 Team] (indigo active step, gray completed checkmark, gray future)
+
+STEP 1 (Basic Info):
+  Project Name input (full width, required asterisk)
+  Description textarea (rich text, 120px)
+  Row: Category select | Methodology select
+  Row: Status select (Active default) | Priority select | RAG selector (R/A/G radio pills, Amber default)
+  Footer: [Cancel] ghost | [Next →] indigo
+
+STEP 2 (Dates & Budget):
+  Row: Start Date picker | Target End Date picker
+  Budget Total input + currency select
+  Story Point Scale radio: Fibonacci / T-Shirt / Linear (shown only if methodology has sprints)
+  Sprint Length number input (shown only if methodology has sprints, default 14)
+  Footer: [← Back] ghost | [Next →] indigo
+
+STEP 3 (Team):
+  Project Manager (UserPicker, required)
+  "Add Team Members" section: employee search autocomplete → [Add to Team] → role select (Manager/Employee)
+  Members list: avatar | name | role chip | [× Remove]
+  Footer: [← Back] ghost | [Create Project] indigo primary
+
+---
+
+--- PROMPT PM-3: Project Detail — Overview + Backlog Tabs ---
+
+SCREEN A: ProjectDetailPanel — Overview Tab (1440x900px)
+Breadcrumb: "Projects › Phoenix API" (indigo links)
+
+Header band (white, border-b, px32, py20):
+  [Phoenix API H2 bold] [Active green badge] [🔴 Red dot selector — click R/A/G] [Health: Healthy green badge]
+  Actions right: [Edit pencil] [Delete trash gray ghost] [Open in full ↗]
+  Sprint pill: "Sprint 12 · 8 days left" indigo chip
+
+Tabs: Overview(active underline) | Backlog | Tasks | Sprints | Milestones | Defects | Risks | Reports
+
+Content 65/35 split:
+
+LEFT (scrollable):
+  Description card (white, border, radius-12):
+    Rich text paragraph about project
+    [Edit inline] pencil icon on hover
+
+  Key Metrics row (4 mini-cards inline):
+    Total Tasks: 84 | Open Defects: 7 | Sprint Points: 38/45 | Budget Used: 68%
+
+  Milestones timeline strip (white card):
+    Horizontal line with diamond markers at dates:
+    ◇ "API Design" Apr 1 ✓ green | ◇ "Beta Release" May 15 🔴 Missed | ◇ "Go Live" Jun 30 ◻ Pending
+
+  Recent Activity (white card):
+    10 rows: avatar | "Raj changed task status to Done" | time ago
+    Each row type has icon: task=checkbox, comment=bubble, sprint=lightning, member=user
+
+RIGHT (360px):
+  Project Info card: Start | End | Category | Methodology | Manager
+  Budget card: Budget $450K | Spent $306K (68%) | Remaining $144K | Burn rate: $25K/sprint
+    Mini donut split by category
+  Team card: avatars grid 3×2 | "View Team →" link
+  Health card: 5 dimension bars (Schedule/Scope/Quality/Velocity/Budget) each with percent and color
+
+SCREEN B: Backlog Tab (same page, tab switched)
+Epic filter bar (horizontal pill row):
+  [All] (active) | [Epic: Payment Flow] purple chip | [Epic: Auth] blue chip | [+ Add Epic] ghost
+
+Filter bar: Sprint select | Type multi-chip | Priority multi-chip | Assignee picker | Status | [More Filters] | [Save View ▼]
+View toggle: Table (active) | Kanban | Dependencies
+"+ Add Item" button (right)
+
+Table (full width, white card):
+  Columns: Type icon(40) | ID(80) | Title(flex) | Epic(120) | Sprint(120) | Status(120) | Priority(100) | Points(80) | Assignee(120) | Actions(60)
+  Type icons: story=book-open, bug=bug, task=check-circle, epic=bolt, spike=zap
+  Priority: P1 red filled | P2 orange | P3 blue | P4 gray chips
+  Points: "5" gray chip small
+
+  Sample rows:
+  📖 BI-234 | "Implement retry logic for payment API" | [Payment Flow] chip | [Sprint 12] | In Progress | P1 | 8 | Raj | •••
+  🐛 BI-235 | "Fix auth token expiry handling" | [Auth] | [Sprint 12] | To Do | P1 | 3 | Tom | •••
+  📖 BI-240 | "Add product search autocomplete" | [Search] | Backlog | Product Backlog | P2 | 5 | — | •••
+  ⚡ BI-241 | "Spike: evaluate Redis caching" | — | — | Product Backlog | P3 | 2 | Maria | •••
+
+---
+
+--- PROMPT PM-4: Sprint Planning + Active Sprint ---
+
+SCREEN A: Sprint Planning (1440x900px — full-screen modal overlay)
+Dark overlay 50% behind. Modal 95vw × 90vh white, radius-16.
+
+Header: "Sprint Planning — Sprint 4" | [Phoenix API] chip | [× Close]
+
+Two-panel layout (40/60):
+
+LEFT PANEL — Available Backlog (white, border-r):
+  Filter: [All] [Stories] [Bugs] [Tasks] chips | Priority filter | Epic filter
+  Search input
+  Item rows (scrollable):
+    P2 orange dot | 📖 BI-240 | "Add product search" | 5 pts | Backlog chip | [+] indigo icon button
+    P1 red dot | 🐛 BI-250 | "Fix login redirect" | 3 pts | — | [+]
+    P3 | 📖 BI-255 | "Dashboard charts" | 8 pts | — | [+]
+  (dimmed items already in sprint)
+
+RIGHT PANEL — Sprint Items:
+  Sprint header inputs:
+    Sprint Name: "Sprint 4" (editable)
+    Sprint Goal: "Complete payment API and fix critical auth bugs" (textarea)
+    Dates: [Apr 1, 2026] → [Apr 14, 2026] (date range picker)
+
+  Capacity bar (h=40px, full width):
+    "Capacity: 38 / 45 pts committed" (green fill, indigo text)
+    "Team capacity: 45 pts (5 members × 9 pts avg)"
+
+  Items list (draggable):
+    Same rows as backlog items, but with [− Remove] button and drag handle (⠿)
+    Running subtotal: "38 pts committed"
+
+  Team Capacity breakdown (expandable accordion at bottom):
+    Member | Availability | Points Capacity | Allocated
+    Raj: 5d (40hrs) | 9pts | 11pts (⚠ over)
+    Tom: 5d | 9pts | 8pts ✓
+    ...
+
+Footer: [Cancel] ghost | [Save Draft] secondary | [🚀 Start Sprint] indigo primary
+
+SCREEN B: Active Sprint View (within SprintsTab, 1440x900px)
+Sprint selector sidebar (240px left): Sprint list — Sprint 1 ✓ | Sprint 2 ✓ | Sprint 3 ⚡ (Active, indigo) | Sprint 4 📋
+
+Sprint Detail main:
+  Sprint header (white card):
+    "Sprint 3: API Reliability" | Goal: "..." | Start Apr 1 → Apr 14 | 6 days remaining
+    Progress bar: 28 / 45 pts done (62%)
+    Mini burndown (h=80px inline sparkline chart) | Velocity: 28 pts on track
+
+  Kanban board (same as Tasks tab but filtered to sprint):
+    Columns: To Do(8) | In Progress(5) | In Review(3) | Done(12)
+    TaskCards with: type icon | ID | title | points chip | assignee avatar | priority dot
+
+  Footer action: [⏹ Complete Sprint] indigo button (right aligned)
+
+---
+
+--- PROMPT PM-5: Milestones Tab + Risk Register ---
+
+SCREEN A: Milestones Tab (1440x900px)
+Tab header: Milestones | View: [Timeline (active)] [Table]
+"+ Add Milestone" button right
+
+TIMELINE VIEW (white card, full width, h=300px):
+  Horizontal line spanning project timeline (Mar 15 → Jun 30)
+  Milestone diamonds at date positions:
+    ◆ "Kickoff" Mar 15 ✓ green label below
+    ◆ "API Design" Apr 1 ✓ green
+    ◆ "Beta Release" May 15 🔴 red label "Missed" with strikethrough date
+    ◆ "UAT" Jun 1 🟡 amber "At Risk"
+    ◆ "Go Live" Jun 30 ◻ gray "Pending"
+  Red vertical "Today" line
+  Hover state on diamond: tooltip card showing all milestone details
+
+TABLE VIEW (white card):
+  Columns: Milestone | Type chip | Due Date | Status badge | Owner avatar | Linked Tasks count | Days | Notes icon
+  Status badges: Achieved(green) | Pending(gray) | At Risk(amber pulse) | Missed(red)
+  "Days" column: "+5 Overdue" red | "12 days left" gray | "Early by 2d" green
+
+Milestone slide-over (360px right panel, slide from right):
+  Title input (editable H2) | Status dropdown | Type chip
+  Due Date | Completion Date (auto-filled when Achieved)
+  Owner UserPicker
+  Description textarea
+  "Linked Backlog Items": search and link items, mini progress bar of linked items
+  Comments section (3 rows)
+  [Save] primary | [Delete] danger ghost
+
+SCREEN B: Risks Tab (1440x900px)
+KPI row (3 cards): Total Risks: 8 | High: 3 red | Mitigated: 2 green
+
+Risk Matrix (white card, 40% width left):
+  4×3 grid: Impact (Critical/High/Med/Low) on X, Likelihood (High/Med/Low) on Y
+  Color fill: red (score≥6) | amber (3-5) | green (1-2)
+  Cell count badges: "3" red in High×Critical cell
+  Labels on axes (small gray text)
+
+Risk Table (white card, right 60% / full width below matrix):
+  Columns: # | Title | Category chip | Score badge | Likelihood | Impact | Status | Owner | Due | Actions
+  Score badge: 9 red / 6 amber / 2 green (Likelihood×Impact value)
+  Status chips: Identified(gray) | Assessed(blue) | Mitigated(green) | Accepted(orange) | Triggered(red pulse)
+
+  Sample rows:
+  R001 | "Key developer attrition risk" | Resource | 9🔴 | High | Critical | Assessed | Raj | Apr 30 | •••
+  R002 | "Third-party API rate limits" | Technical | 6🟡 | Med | Critical | Identified | Tom | — | •••
+  R003 | "Scope creep from stakeholders" | Scope | 4🟡 | High | Medium | Mitigated | PM | — | •••
+
+"+ Add Risk" button
+
+Add Risk slide-over (360px):
+  Title input | Category select | Description textarea
+  Row: Likelihood (High/Med/Low radio pills) | Impact (Critical/High/Med/Low radio pills)
+  Risk Score (auto-calculated, live: "Score: 9 — HIGH RISK" red)
+  Status | Owner UserPicker | Mitigation Plan textarea | Contingency Plan textarea | Due Date
+  [Save Risk] indigo primary
+
+---
+
+--- PROMPT PM-6: Reports Tab + My Tasks View ---
+
+SCREEN A: Reports Tab — Burndown + Velocity (1440x900px)
+Tab row inside Reports: Burndown(active) | Velocity | Time Log | Budget | Defect Trends
+
+BURNDOWN:
+  Header: Sprint selector dropdown "Sprint 3 (Active)" | Export PDF button
+
+  White card chart (full width, h=320px):
+    X-axis: Sprint days 1–14 (labeled Day 1, Day 2... Day 14)
+    Y-axis: Story Points (0–55)
+    3 lines:
+      Gray dashed: "Ideal Burndown" (straight diagonal from 45 to 0)
+      Indigo solid: "Actual Remaining" (current line, dips, plateau, dips)
+      Red dotted: "Scope Added" line (starts at 0, slight upward bump mid-sprint)
+    Tooltip on hover: "Day 8: 22 pts remaining (ideal: 19)"
+    Today marker: vertical dotted line
+
+  Summary row below chart (4 mini cards):
+    Committed: 45pts | Completed: 23pts | Remaining: 22pts | Scope Added: 3pts
+
+VELOCITY (below burndown):
+  White card chart (full width, h=260px):
+    Grouped bars per sprint (Sprint 1–4):
+      Gray bar: committed pts | Indigo bar: completed pts
+      Labels above bars: "32/40" etc.
+    Red dashed line: rolling 3-sprint average
+    Current velocity chip: "Avg Velocity: 36 pts"
+
+SCREEN B: My Tasks View (1440x900px)
+PageHeader: "My Tasks" | badge "26 tasks" | View: [List(active)] [Kanban] [Calendar]
+
+Filter bar: Project multi | Type multi-chip | Priority multi-chip | Sprint | Due Date range | [Clear]
+Group By: [Project ▼] (dropdown: Due Date / Priority / Sprint / Status)
+
+Overdue section (red-50 bg, red border-l-4, radius-8, padding 16):
+  "3 overdue tasks" heading red | items show "3 days overdue" red chip on due date
+
+Group: "Phoenix API" (indigo chip + "12 tasks") + expand/collapse arrow:
+  Rows (indigo left border):
+    🐛 DEF-089 | "Fix payment retry 500" | P1 red | "Apr 8" red ("Overdue 2d") | In Progress
+    📖 BI-234 | "Implement retry logic" | P1 | "Apr 12" | In Progress
+    ✓ TASK-45 | "Code review auth PR" | P2 | "Apr 14" | To Do
+
+Group: "Nirmaan Portal" (orange chip + "8 tasks") collapsed
+
+Kanban toggle (same width, my tasks across all projects):
+  Columns: To Do(8) | In Progress(6) | In Review(4) | Done this week(8)
+  Cards: title | project chip | priority | due date
+
+Calendar toggle:
+  Month view, April 2026
+  Task chips on date cells (priority-colored: red/orange/blue)
+  Overdue dates: gray-50 bg past dates with red chips
+
+---
+
+--- PROMPT PM-7: Defect Detail Inside Project + Gantt Enhancements ---
+
+SCREEN A: Defect Detail Slide-over within ProjectDetailPanel Defects Tab (1440x900px)
+(Defects tab loaded in ProjectDetailPanel, slide-over on right 640px)
+
+Defects Tab main area:
+  KPI row: Total:24 | Open:7 | SLA Breached:2 | Fixed This Sprint:5
+  [+ Log Defect] button | [Open in Defect Tracker ↗] link
+  Filter: Severity | Status | Assignee | Sprint | Regression flag
+  View: Table(active) | Kanban
+  Table (same columns as Defect Tracker, but no Project column since we're inside a project)
+
+Slide-over (640px, from right, dark overlay):
+  Header: "DEF-089" badge | "S1 Blocker" red badge | "Regression" R chip
+  Title "Payment API 500 on retry" H2 | Status dropdown | [Open in Defect Tracker ↗] link
+
+  SLA bar (3 inline progress bars — same as Defect Tracker spec)
+
+  Two-col content:
+  LEFT:
+    Description + Steps to Reproduce
+    Environment card: Production | v2.1.0 | Sprint 12 | Regression: Yes
+    Fix Details (visible when Fixed): description | version | PR link
+    Activity timeline (last 5 events)
+
+  RIGHT (200px):
+    Severity | Status | Priority
+    Assignee | Reporter
+    SLA countdown
+    Sprint chip
+    [View Full Detail] → opens Defect Tracker app
+
+SCREEN B: Enhanced Gantt Timeline (1440x900px)
+Header: "Project Timelines" | Zoom: [Week] [Month(active)] [Quarter] | Date range picker | [Export]
+
+LEFT column (200px): Project names + expand toggles
+  Phoenix API (Green dot) ▼
+    Sprint 12 (sub-row, indented, lighter)
+    Sprint 13 (sub-row)
+  Nirmaan Portal (Amber dot) ▼
+  ACM Fiori v2 (Green dot)
+  Data Pipeline (Red dot) ▼
+  Mobile App (Amber dot)
+
+GRID (right, scrollable horizontal):
+  Month columns: Mar | Apr | May | Jun | Jul (each divided into weeks)
+  Today: red vertical line
+
+  Project bars:
+    Phoenix API: indigo bar (thick 20px, green-50 fill, green border)
+    Milestone diamonds on bar: ◆ at correct date positions
+    Hover: tooltip "Phoenix API | Apr 1 – Jun 30 | 68% complete | Manager: Raj"
+
+  Sprint sub-rows (lighter, 12px height):
+    Sprint 12: Apr 1–14 light indigo strip
+    Sprint 13: Apr 15–28 lighter strip
+
+  Dependency arrows: thin curved lines between milestone diamonds (dashed gray)
+
+  Click on bar → opens ProjectDetailPanel for that project
+
+End of Figma prompts for Project Management App.
+
+================================================================================
+SECTION 7 — INTEGRATION POINTS
+================================================================================
+
+WITH DEFECT TRACKER APP:
+  - project_defects table shared (same entity, same row)
+  - SLA owned by Defect Tracker, read by Projects app
+  - S1/S2 defect count badge shown on project card and detail header
+  - "Open in Defect Tracker ↗" link in Defects tab header
+  - Defect Tracker "By Project" accordion pulls project name/color from projects table
+
+WITH IT SERVICES APP:
+  - "Linked IT Tickets" on backlog items and tasks (stored as array of ticket IDs)
+  - IT ticket status shown inline (resolved/open)
+  - "Open in IT Services ↗" deep link
+  - IT tickets referencing a project auto-appear in project's activity feed
+
+WITH ASSET MANAGEMENT APP:
+  - Projects can have linked assets (server, laptop assigned for duration)
+  - Asset assignment stored in project_assets junction table
+  - Asset status visible in project overview
+
+WITH NOTIFICATIONS (portal-wide):
+  - All PM_NOTIFICATION_EVENTS feed into portal notification queue
+  - Red badge on PM SideNav for overdue tasks + at-risk projects
+
+================================================================================
+END OF PROJECT MANAGEMENT APP SPECIFICATION
+================================================================================

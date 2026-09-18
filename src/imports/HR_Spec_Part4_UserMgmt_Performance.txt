@@ -1,0 +1,1617 @@
+================================================================================
+SECTION D — USER MANAGEMENT & PERFORMANCE TRACKER
+HR PORTAL ENTERPRISE SPECIFICATION
+Tech Stack: React + Supabase + Tailwind CSS v4
+Auth: Supabase Auth | Permissions: Permissions App (RBAC) | Notifications: Web Push API (VAPID)
+Accent Color: #6366F1 (Indigo)
+Date: 2026-09-04
+================================================================================
+
+
+================================================================================
+APP 5: USER MANAGEMENT
+================================================================================
+Current File   : UserManagement.tsx
+Current DB     : app_users, audit_logs
+Current Tabs   : Users | Audit
+Current Features: create user, edit, deactivate/delete, bulk role assignment,
+                  password reset, audit log viewer
+================================================================================
+
+--------------------------------------------------------------------------------
+D5.1  KNOWN GAPS — FIX PLAN
+--------------------------------------------------------------------------------
+
+G1 — MFA / 2FA Configuration Panel (Priority: Medium)
+  Problem  : No multi-factor authentication management for admins or users.
+  Solution : Add a dedicated "MFA" section within the user detail slide-over and
+             a global MFA policy panel in Settings.
+  Implementation:
+    - Call supabase.auth.mfa.enroll() to generate a TOTP secret and QR code URI.
+    - Render QR code on-screen using a lightweight library (e.g., qrcode.react).
+    - Generate and display 10 single-use backup codes; allow admin to regenerate.
+    - Per-role "Enforce MFA" toggle stored in Permissions App role config.
+    - On next login, if MFA is enforced for the user's role and mfa_enrolled = false,
+      redirect user to mandatory enrollment screen before dashboard access is granted.
+    - Admin can reset MFA for a user (wipes mfa_enrolled = false, clears factors
+      via supabase.auth.admin.mfa.deleteFactor(userId, factorId)).
+
+G2 — Audit Log CSV Export (Priority: Low)
+  Problem  : Audit log has no export capability.
+  Solution : Add "Export CSV" button in the Audit Log tab toolbar.
+  Implementation:
+    - Apply current active filters (user, date range, action type) to the query.
+    - Fetch all matching rows (not paginated) up to a configurable limit (default 10,000).
+    - Convert to CSV client-side using papaparse or a simple manual serialiser.
+    - Trigger browser download with filename: audit_log_YYYY-MM-DD.csv
+    - Columns exported: timestamp, user_name, user_email, action, entity_type,
+      entity_id, old_value, new_value, reason, ip_address, session_id.
+
+G3 — Deactivate vs Delete UX (Priority: Medium)
+  Problem  : The two actions look and behave identically, causing admin confusion.
+  Solution : Visually and functionally distinguish Deactivate and Delete everywhere.
+  Implementation:
+    Deactivate:
+      - Sets app_users.status = 'inactive'; does NOT touch Supabase Auth user.
+      - User cannot log in (app-level guard checks status on every authenticated request).
+      - Data fully retained; user remains visible in admin list with "Inactive" badge.
+      - Row visually dimmed (opacity-50, gray text, gray badge).
+      - Reversible via [Reactivate] action.
+    Delete (Soft):
+      - Sets app_users.status = 'deleted', app_users.deleted_at = NOW().
+      - Hidden from all non-admin views; admin filter "Show Deleted" reveals them.
+      - Data retained for 90 days, then purged by a scheduled Supabase Edge Function
+        (cron: 0 2 * * * — runs daily at 02:00 UTC).
+      - Supabase Auth account is also disabled at delete time.
+      - Send admin warning notification 7 days before permanent purge.
+    Confirmation dialogs:
+      - Deactivate dialog: "Deactivate {name}? They will lose access but their data
+        is retained. You can reactivate them at any time." [Cancel] [Deactivate]
+      - Delete dialog: two-step — step 1 shows a warning summary; step 2 requires
+        admin to type the user's email address to confirm. Clearly states:
+        "This will be permanently purged in 90 days."
+
+G4 — Session Management / Force Logout (Priority: Medium)
+  Problem  : No visibility into active sessions; cannot terminate a session remotely.
+  Solution : Add "Sessions" tab; implement force-logout capability.
+  Implementation:
+    - Query active sessions from Supabase Auth via
+      supabase.auth.admin.listUserSessions(userId) per user, or aggregate across all
+      users for the global sessions view.
+    - [Force Logout] calls supabase.auth.admin.signOut(userId, { scope: 'global' })
+      to invalidate all refresh tokens for that user.
+    - Single-session force logout: invalidate specific session by session_id if
+      Supabase Admin API supports per-session revocation; otherwise force global
+      logout and notify user.
+    - Force logout requires admin confirmation dialog with mandatory reason field;
+      action is written to audit_logs with reason, admin id, session_id.
+
+G5 — Last Login Column (Priority: Low)
+  Problem  : User list does not show when a user last logged in.
+  Solution : Surface last_sign_in_at from Supabase Auth in the user list table.
+  Implementation:
+    - Supabase Auth stores last_sign_in_at on the auth.users record.
+    - On each successful login, sync this value to app_users.last_sign_in_at via
+      an Auth webhook (or a Supabase DB trigger on auth.users update).
+    - Display as relative time (e.g. "2 hours ago") with full timestamp in tooltip.
+    - Column is sortable; default sort order: most recently active first.
+
+G6 — Self-Service Profile Edit (Priority: Medium)
+  Problem  : Employees have no way to update their own profile information.
+  Solution : Add "My Profile" page accessible from the top navigation user avatar.
+  Implementation:
+    - Fields employee CAN edit: profile_picture_url (upload to Supabase Storage
+      bucket: profile-pictures/{user_id}/avatar.jpg), mobile_number,
+      personal_email, linkedin_url.
+    - Fields locked (read-only, editable only by admin/HR): role, department,
+      employee_id, work_email, display_name.
+    - Profile picture upload: client-side preview, resize to max 256x256 before
+      upload, store public URL back to app_users.profile_picture_url.
+    - Changes write to app_users and create an audit_log entry (action: 'profile_update',
+      changed_by: self).
+
+G7 — Invitation by Email Flow (Priority: Medium)
+  Problem  : New users can only be created by admin entering all details manually.
+  Solution : Add [Invite User] button with guided invite flow.
+  Implementation:
+    - Admin enters: email, role, optional department.
+    - System calls supabase.auth.admin.generateLink({ type: 'invite', email }).
+    - Supabase sends invitation email; system also stores:
+        app_users.invitation_sent_at = NOW()
+        app_users.invitation_expires_at = NOW() + 72h
+        app_users.status = 'pending'
+        app_users.invited_by = current_admin_id
+    - User table shows "Pending" status badge with [Resend Invite] action.
+    - Resend: regenerate link + update invitation_sent_at; max 3 resends before
+      requiring admin to delete and recreate the invitation.
+    - On user completing setup: Supabase Auth webhook fires → status → 'active',
+      linked to employee record by email match against employee_directory.
+
+
+--------------------------------------------------------------------------------
+D5.2  FEATURE ENHANCEMENTS
+--------------------------------------------------------------------------------
+
+D5.2.1  User Lifecycle Management
+---------------------------------------
+User States (ordered lifecycle):
+  1. Pending   — Invited but setup not yet completed.
+                 Supabase Auth account exists; app_users.status = 'pending'.
+  2. Active    — Normal operational state; full access per assigned role.
+                 app_users.status = 'active'.
+  3. Inactive  — Deactivated by admin; login blocked at app-layer guard.
+                 app_users.status = 'inactive'.
+                 Reversible → Active.
+  4. Deleted   — Soft-deleted; hidden from standard views; data retained 90 days.
+                 app_users.status = 'deleted', deleted_at populated.
+                 Irreversible (no reactivation after soft delete).
+
+Visual State Indicators (user list rows):
+  - Active  : Normal row; green "Active" badge (bg-green-100 text-green-700).
+  - Pending : Blue "Awaiting Setup" badge (bg-blue-100 text-blue-700).
+  - Inactive: Row dimmed (opacity-50); gray "Inactive" badge; italic text.
+  - Deleted : Only shown when admin enables "Show Deleted" filter; red-tinted row;
+              red "Deleted" badge; deletion date shown.
+
+Bulk State Actions (multi-select toolbar, appears when ≥1 row selected):
+  [Deactivate]           — Sets selected Active users to Inactive.
+  [Reactivate]           — Sets selected Inactive users to Active.
+  [Force Password Reset] — Triggers supabase.auth.admin.generateLink({ type: 'recovery' })
+                           for each selected user; sends password reset email.
+  [Assign Role]          — Opens role assignment modal; applies same role to all
+                           selected users; requires reason; logs in audit.
+  Validation: bulk actions skip any user for which the action is not valid (e.g.,
+  cannot deactivate a Deleted user); summary toast shows X succeeded, Y skipped.
+
+
+D5.2.2  Role Management Integration with Permissions App
+----------------------------------------------------------
+  - Roles are NOT hardcoded in User Management; they are read from the Permissions
+    App via internal API: GET /api/permissions/roles?include=description,permissions
+  - Role selector in user forms shows: Role Name | Brief description |
+    Permission summary chip list (e.g. "Can view payroll", "Can approve leave").
+  - Role assignment UI includes a permission diff preview when changing an existing
+    role: "Gaining: [list] | Losing: [list]".
+  - Role change flow:
+      1. Admin selects new role from dropdown (permission diff shown).
+      2. Reason field (required, min 10 characters).
+      3. [Confirm Change] button.
+      4. On confirm: app_users.role updated; audit_log entry created with:
+           action        : 'role_change'
+           old_value     : { role: previousRole }
+           new_value     : { role: newRole }
+           reason        : admin-entered reason
+           changed_by    : admin user id
+           timestamp     : NOW()
+  - Role hierarchy enforcement: an admin cannot assign a role with a higher permission
+    level than their own role level (see Validation Rules, D5.4).
+
+
+D5.2.3  Session Management Tab
+---------------------------------------
+  Location: "Sessions" tab in User Management (new tab, 4th position).
+
+  Table Columns:
+    User        — Avatar + name + email link to user detail.
+    Device      — Chip: "Desktop Chrome" / "Mobile Safari" / "Tablet Firefox"
+                  (parsed from user_agent).
+    IP Address  — Displayed; click to copy.
+    Location    — Geo-resolved city/country from IP (via ip-api.com or similar,
+                  server-side to avoid CORS).
+    Session Start — Relative + absolute timestamp.
+    Last Active   — Relative timestamp; green dot if < 5 min ago.
+    Actions       — [Force Logout] red ghost button (text-red-600 border-red-300).
+
+  Filters:
+    - Toggle: "Active sessions only" (default on).
+    - User search/filter dropdown.
+    - Date range filter on Session Start.
+
+  Suspicious Login Detection:
+    - A session is flagged "Suspicious" when:
+        a) New device fingerprint for that user (no prior session from same
+           user_agent + device_type combination).
+        b) New country/region compared to last 10 sessions.
+        c) Login within 1 hour from a geographically impossible second location
+           (velocity check: distance / time > ~1000 km/h).
+    - Suspicious sessions show a red "⚠ Suspicious" chip in the Device column.
+    - Admin receives in-app warning notification; event written to audit_log with
+      action: 'suspicious_login'.
+    - User also receives a "New device login" warning push notification.
+
+
+D5.2.4  MFA Configuration Panel
+---------------------------------------
+  Accessible from: user detail slide-over → "Security" section; also from a global
+  MFA Policy panel in Settings → Security.
+
+  Per-User MFA Statuses:
+    - Not Enrolled  : mfa_enrolled = false; no factors registered.
+    - Enrolled      : mfa_enrolled = true; at least one active TOTP factor.
+    - Enforced      : mfa_enrolled = true AND user's role has enforce_mfa = true.
+
+  Admin Actions:
+    Enforce MFA for a Role:
+      - Toggle in Permissions App role config: enforce_mfa (boolean).
+      - When enabled, all users with that role and mfa_enrolled = false are
+        intercepted at login with a mandatory enrollment screen.
+      - Existing enrolled users are unaffected.
+    Reset MFA for a User (e.g. lost device):
+      - Admin clicks [Reset MFA] in user security panel.
+      - System calls supabase.auth.admin.mfa.deleteAllFactors(userId).
+      - Sets app_users.mfa_enrolled = false.
+      - Sends "MFA Reset" info notification to the user.
+      - Writes to audit_log: action: 'mfa_reset', changed_by: admin id.
+    MFA Enrollment (user-initiated from My Profile):
+      - Call supabase.auth.mfa.enroll({ factorType: 'totp' }).
+      - Display returned QR code URI rendered as QR image.
+      - Display 10 backup codes (generated server-side, stored hashed in Supabase
+        Auth; shown only once — user must download/copy before proceeding).
+      - User enters TOTP code from authenticator app to verify.
+      - On success: supabase.auth.mfa.challengeAndVerify() → sets mfa_enrolled = true.
+
+
+D5.2.5  Login History Tab
+---------------------------------------
+  Location: "Login History" tab in User Management (new, 5th position).
+  Data source: login_history table (populated by Supabase Auth webhook on sign-in
+  events + application-layer logging for failed attempts).
+
+  Table Columns:
+    User      — Avatar + name.
+    Timestamp — Full date/time; relative in secondary text.
+    IP        — With copy action.
+    Location  — City, Country (geo-resolved).
+    Device    — User agent summary chip.
+    Status    — Badge: Success (green) | Failed (red) | Suspicious (amber).
+
+  Filters:
+    - Search by user name or email.
+    - Date range picker (default: last 7 days).
+    - Status filter: Success | Failed | Suspicious | All.
+
+  Automated Alert — Brute Force Detection:
+    - If ≥5 failed login attempts for the same account within any rolling 60-minute
+      window, an alert is triggered:
+        * In-app urgent notification to all admins.
+        * Account automatically set to 'locked' (sub-state of Inactive) for 30 minutes.
+        * audit_log entry: action: 'account_locked_brute_force'.
+        * User receives email notification: "Your account has been temporarily locked
+          due to multiple failed sign-in attempts."
+
+
+D5.2.6  Self-Service Profile (My Profile)
+------------------------------------------
+  Accessible from: top navigation bar → user avatar → "My Profile".
+
+  Editable Fields:
+    - Profile picture (upload; stored in Supabase Storage bucket 'profile-pictures';
+      max 5 MB; accepted types: image/jpeg, image/png, image/webp;
+      auto-resized to 256x256 on client before upload).
+    - Mobile number (E.164 format validation).
+    - Personal email (RFC 5322 validation; cannot match an existing work email).
+    - LinkedIn URL (must match https://linkedin.com/in/... pattern).
+
+  Read-Only Fields (shown but not editable):
+    - Role, Department, Employee ID, Work Email, Display Name.
+    - A small lock icon (LockClosedIcon) and tooltip "Managed by HR" appears next
+      to each locked field.
+
+  Save behavior:
+    - Optimistic update with rollback on error.
+    - audit_log entry created on save: action: 'profile_update', changed_by: self.
+    - Toast confirmation: "Profile updated successfully."
+
+
+D5.2.7  Invitation Flow
+---------------------------------------
+  Trigger: [Invite User] button (top-right of Users tab, secondary to [+ Create User]).
+
+  Slide-over panel fields:
+    - Email address (required; validated; must not already exist in app_users).
+    - Role (required; dropdown from Permissions App; shows permission summary).
+    - Department (optional; dropdown from Master Data App).
+    - Personal note (optional; appended to invitation email body).
+
+  On [Send Invitation]:
+    1. supabase.auth.admin.generateLink({ type: 'invite', email: enteredEmail }).
+    2. Insert row to app_users:
+         email                  = enteredEmail
+         role                   = selectedRole
+         department_id          = selectedDepartment (nullable)
+         status                 = 'pending'
+         invitation_sent_at     = NOW()
+         invitation_expires_at  = NOW() + interval '72 hours'
+         invited_by             = currentAdminId
+    3. Send in-app notification to invitee (info): "You've been invited to the HR Portal."
+    4. audit_log entry: action: 'user_invited', entity_id: new user id.
+
+  Pending user row actions:
+    [Resend Invite]  — Only available when invitation_expires_at < NOW() OR within
+                       72h window. Increments resend_count. Blocked when resend_count >= 3
+                       (show tooltip: "Max resend attempts reached. Delete and recreate
+                       the invitation.").
+    [Cancel Invite]  — Sets status = 'deleted' (soft), marks invitation void.
+
+  On invitation completion by user:
+    - Supabase Auth webhook (event: USER_UPDATED, email_confirmed_at populated) fires.
+    - Edge Function: update app_users.status = 'active', cleared invitation fields.
+    - Attempt to match employee_directory record by email; if found, link
+      app_users.employee_id = matched employee.id.
+    - Send welcome info push notification to user.
+
+
+D5.2.8  Access Review Tab
+---------------------------------------
+  Location: "Access Review" tab in User Management (new, last tab).
+  Trigger: Quarterly schedule (cron: 0 9 1 1,4,7,10 * — 09:00 UTC on 1 Jan, Apr, Jul, Oct).
+           Admin can also manually initiate a review cycle.
+
+  Access Review Cycle record:
+    - review_period  : e.g. "Q3 2026"
+    - initiated_by   : admin user id
+    - initiated_at   : timestamp
+    - due_date       : initiated_at + 30 days
+    - status         : In Progress | Completed
+
+  Review table (one row per active/inactive user):
+    Columns: User | Current Role | Department | Last Login | Days Since Review |
+             Reviewer (HR/Admin assigned) | Action | Notes | Review Status
+
+  Review Actions per user row:
+    [Confirm Access]  — Role and access confirmed as appropriate.
+    [Revoke Access]   — Deactivates user; reason required.
+    [Change Role]     — Opens role change modal; reason required.
+
+  Flagging Logic:
+    - Users not reviewed for >90 days are flagged with an amber "Overdue Review" badge.
+    - Users with status = 'inactive' for >180 days flagged with "Consider Deletion".
+
+  Access Review Record stored in user_access_reviews:
+    id           | reviewed_by (user_id) | review_date | user_id | action
+    (confirmed / revoked / role_changed) | notes | cycle_id
+
+  Export:
+    - [Export PDF] button generates a formatted access review report:
+        Cover page: review period, initiated by, completion date.
+        Summary table: total users, confirmed, revoked, role changes.
+        Detail table: full review log.
+    - PDF generated server-side via a Supabase Edge Function using a headless
+      HTML-to-PDF approach (e.g., Puppeteer or a PDF generation library).
+
+
+--------------------------------------------------------------------------------
+D5.3  DATA MODEL ADDITIONS
+--------------------------------------------------------------------------------
+
+Table: app_users  (additions to existing schema)
+  Column                   Type          Description
+  -----------------------------------------------------------------------
+  last_sign_in_at          TIMESTAMPTZ   Synced from Supabase Auth on each login.
+  invitation_sent_at       TIMESTAMPTZ   Timestamp of last invitation send.
+  invitation_expires_at    TIMESTAMPTZ   Invitation expiry (sent_at + 72h).
+  resend_count             SMALLINT      Count of invitation resends (max 3).
+  mfa_enrolled             BOOLEAN       TRUE when user has active TOTP factor.
+  profile_picture_url      TEXT          Public URL in Supabase Storage.
+  invited_by               UUID          FK → app_users.id (inviting admin).
+  deactivated_at           TIMESTAMPTZ   Timestamp when status set to 'inactive'.
+  deactivated_by           UUID          FK → app_users.id (admin who deactivated).
+  deactivation_reason      TEXT          Reason entered by admin.
+  deleted_at               TIMESTAMPTZ   Timestamp of soft delete.
+  purge_scheduled_at       TIMESTAMPTZ   deleted_at + 90 days; used by purge cron.
+  personal_email           TEXT          Self-entered personal email.
+  mobile_number            TEXT          E.164 format mobile number.
+  linkedin_url             TEXT          LinkedIn profile URL.
+
+Table: user_sessions  (read-only view from Supabase Auth; do NOT write directly)
+  Managed entirely by Supabase Auth infrastructure.
+  Expose via Supabase Admin API for Sessions tab display only.
+  Note: Supabase does not expose a queryable sessions table via the public schema;
+  session data is retrieved per-user via supabase.auth.admin.getUserById() or via
+  Auth Admin API. For the global Sessions tab, call listUsers and aggregate, or
+  implement a custom session-tracking table populated by Auth webhooks.
+
+  Custom session tracking (if Supabase Admin API is insufficient):
+  Table: app_user_sessions
+    id               UUID PK
+    user_id          UUID FK → app_users.id
+    session_token    TEXT (hashed)
+    user_agent       TEXT
+    device_type      TEXT    (Desktop / Mobile / Tablet — parsed)
+    browser          TEXT    (parsed)
+    ip_address       INET
+    location_city    TEXT
+    location_country TEXT
+    started_at       TIMESTAMPTZ
+    last_active_at   TIMESTAMPTZ
+    is_suspicious    BOOLEAN DEFAULT FALSE
+    ended_at         TIMESTAMPTZ (null = still active)
+
+Table: user_access_reviews  (new)
+  id               UUID PK DEFAULT gen_random_uuid()
+  cycle_id         UUID FK → access_review_cycles.id
+  reviewed_by      UUID FK → app_users.id
+  review_date      TIMESTAMPTZ
+  user_id          UUID FK → app_users.id
+  action           TEXT CHECK (action IN ('confirmed','revoked','role_changed'))
+  notes            TEXT
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+
+Table: access_review_cycles  (new)
+  id               UUID PK DEFAULT gen_random_uuid()
+  review_period    TEXT        (e.g. "Q3 2026")
+  initiated_by     UUID FK → app_users.id
+  initiated_at     TIMESTAMPTZ DEFAULT NOW()
+  due_date         DATE
+  status           TEXT CHECK (status IN ('in_progress','completed'))
+
+Table: login_history  (new)
+  id               UUID PK DEFAULT gen_random_uuid()
+  user_id          UUID FK → app_users.id
+  timestamp        TIMESTAMPTZ DEFAULT NOW()
+  ip_address       INET
+  user_agent       TEXT
+  location_city    TEXT
+  location_country TEXT
+  device_type      TEXT
+  browser          TEXT
+  status           TEXT CHECK (status IN ('success','failed','suspicious'))
+  failure_reason   TEXT    (null for success; e.g. 'invalid_password', 'account_inactive')
+
+Table: audit_logs  (additions to existing schema)
+  Column           Type          Description
+  -----------------------------------------------------------------------
+  reason           TEXT          Admin-entered reason for sensitive actions.
+  session_id       UUID          FK → app_user_sessions.id (nullable).
+  ip_address       INET          IP address of the action performer.
+
+Row-Level Security (RLS) policies:
+  - app_users: SELECT allowed for own row (self); admin role can SELECT all.
+  - login_history: SELECT allowed for own rows (self) and admin role.
+  - user_access_reviews: SELECT/INSERT for admin and HR Manager roles only.
+  - audit_logs: SELECT for admin only; INSERT via service role only.
+
+
+--------------------------------------------------------------------------------
+D5.4  VALIDATION RULES
+--------------------------------------------------------------------------------
+
+V-UM-01  Cannot delete a user who has been active (last_sign_in_at or any audit
+         event) within the last 30 days. The delete action is blocked with a
+         message: "This user was active within the last 30 days. Deactivate them
+         first, then delete after 30 days of inactivity."
+
+V-UM-02  Role elevation guard: an admin cannot assign a role with a permission
+         level higher than their own role's permission_level integer. Enforced
+         server-side in the role assignment endpoint. Client hides ineligible roles
+         from the dropdown but server rejects the request regardless.
+
+V-UM-03  Self-deactivation guard: an admin cannot deactivate their own account.
+         Enforced both client-side (hide action on own row) and server-side
+         (403 Forbidden if user_id === requester_id in deactivate endpoint).
+
+V-UM-04  Invitation link expiry: link expires 72 hours after invitation_sent_at.
+         Maximum 3 resend attempts (resend_count <= 3); 4th attempt returns HTTP 409
+         with message requiring manual recreation.
+
+V-UM-05  Password requirements (configurable per org in Master Data App → Security Settings):
+         Default: min 12 characters, at least 1 uppercase, 1 lowercase, 1 numeric,
+         1 special character (!@#$%^&*()-_+=). Supabase password policy configured
+         via Supabase Dashboard or Management API. Client-side zxcvbn strength meter
+         displayed during password creation.
+
+V-UM-06  MFA enforcement: if a user's role has enforce_mfa = true and mfa_enrolled
+         = false, the user is redirected to MFA enrollment immediately after successful
+         password authentication. Session is issued a restricted 'mfa_pending' scope
+         that blocks all app routes except /mfa-enrollment. No bypass or "skip"
+         option is presented.
+
+V-UM-07  Force logout requires: admin must enter a reason (min 5 characters) in the
+         confirmation dialog. Action logged in audit_logs with reason, target user id,
+         admin id, session_id.
+
+V-UM-08  Bulk actions: a single bulk action request is limited to 100 users at a time
+         to prevent timeout. Client enforces selection cap and shows warning if user
+         attempts to select more.
+
+V-UM-09  Profile picture upload: max 5 MB, accepted MIME types image/jpeg, image/png,
+         image/webp only. Client-side validation before upload; server-side Storage
+         policy rejects non-conforming uploads.
+
+V-UM-10  Access review: each user must have a review action recorded (confirmed /
+         revoked / role_changed) before the cycle can be marked Completed. Cycle
+         "Complete" button is disabled until 100% of users are reviewed; progress
+         counter shown: "142 / 157 reviewed".
+
+
+--------------------------------------------------------------------------------
+D5.5  CROSS-APP INTEGRATIONS
+--------------------------------------------------------------------------------
+
+INT-UM-01  Employee Directory → User Management
+  Trigger  : Employee status set to 'terminated' or 'inactive' in Employee Directory.
+  Action   : Automatically set linked app_users.status = 'inactive';
+             terminate all active sessions via force logout;
+             write audit_log entry: action: 'auto_deactivated', reason: 'employee_terminated'.
+  Mechanism: Supabase DB trigger on employee_directory.status update OR event via
+             internal message bus.
+
+INT-UM-02  Onboarding → User Management
+  Trigger  : Onboarding "Enable System Access" step completed for a new hire.
+  Action   : Create app_users record (or link existing pending record) with role =
+             'Employee'; send invitation email with welcome message.
+  Mechanism: Onboarding app calls POST /api/user-management/provision-from-onboarding
+             with employee_id payload.
+
+INT-UM-03  User Management → All Apps
+  Trigger  : User deactivated or deleted.
+  Action   : All active sessions terminated (force logout); all pending push
+             notification subscriptions for that user removed from Web Push VAPID
+             subscriber list; active workflow tasks assigned to user flagged for
+             reassignment.
+  Mechanism: On status change, emit internal event 'user.deactivated' consumed by
+             each app's subscription service.
+
+INT-UM-04  Recruitment → User Management
+  Trigger  : Candidate status set to 'Hired' AND 'Enable Access' confirmed by HR.
+  Action   : Auto-create app_users record with role = 'Employee', linked by email;
+             send invitation email.
+  Mechanism: Recruitment app calls POST /api/user-management/provision-from-recruitment.
+
+
+--------------------------------------------------------------------------------
+D5.6  PUSH NOTIFICATIONS
+--------------------------------------------------------------------------------
+
+NOTIF-UM-01
+  Event    : User invited.
+  Recipients: Invitee (email + in-app notification).
+  Type     : Info.
+  Message  : "You have been invited to the HR Portal. Click the link in your email
+              to set up your account. The link expires in 72 hours."
+
+NOTIF-UM-02
+  Event    : Role changed.
+  Recipients: Affected user.
+  Type     : Info.
+  Message  : "Your role has been updated from {oldRole} to {newRole}. Contact HR
+              if you have questions."
+
+NOTIF-UM-03
+  Event    : Account deactivated.
+  Recipients: Affected user.
+  Type     : Warning.
+  Message  : "Your HR Portal account has been deactivated. Contact your HR
+              administrator for assistance."
+
+NOTIF-UM-04
+  Event    : New login from unknown device or location.
+  Recipients: Affected user (warning) + all system admins (info).
+  Type     : User: Warning. Admin: Info.
+  User Message  : "A new sign-in was detected from {location} on {device}.
+                   If this wasn't you, contact your administrator immediately."
+  Admin Message : "{userName} logged in from an unrecognised device/location:
+                   {location}, {device}, IP: {ip}."
+
+NOTIF-UM-05
+  Event    : Password reset requested.
+  Recipients: Affected user.
+  Type     : Action Required.
+  Message  : "A password reset has been requested for your account. Check your
+              email for the reset link."
+
+NOTIF-UM-06
+  Event    : MFA enrollment required (role enforce_mfa enabled for user's role).
+  Recipients: Affected user.
+  Type     : Action Required.
+  Message  : "Multi-factor authentication is now required for your role. You will
+              be prompted to enrol at your next login."
+
+NOTIF-UM-07
+  Event    : Quarterly access review due.
+  Recipients: All admin and HR Manager roles.
+  Type     : Action Required.
+  Message  : "The quarterly access review for {reviewPeriod} is due by {dueDate}.
+              {unreviewedCount} users are pending review."
+
+NOTIF-UM-08
+  Event    : Account scheduled for permanent deletion in 7 days (purge_scheduled_at
+             - NOW() <= 7 days).
+  Recipients: All system admins.
+  Type     : Warning.
+  Message  : "{userName}'s account data will be permanently purged on {purgeDate}.
+              Restore the account if this data needs to be retained."
+
+NOTIF-UM-09
+  Event    : Brute force lockout triggered (≥5 failed logins in 60 minutes).
+  Recipients: Affected user (email) + all admins (in-app).
+  Type     : Urgent.
+  Message  : "Account {email} has been temporarily locked due to multiple failed
+              sign-in attempts. It will unlock automatically in 30 minutes."
+
+NOTIF-UM-10
+  Event    : Invitation about to expire (12 hours before invitation_expires_at).
+  Recipients: Inviting admin.
+  Type     : Warning.
+  Message  : "The invitation sent to {email} will expire in 12 hours and has not
+              been accepted. You can resend the invitation from User Management."
+
+
+--------------------------------------------------------------------------------
+D5.7  FIGMA DESIGN SPECIFICATION
+--------------------------------------------------------------------------------
+
+Canvas: 1440 x 900 px. Accent: #6366F1 (Indigo). Font: Inter.
+
+Global Layout:
+  Left sidebar (240 px): HR Portal navigation.
+  Main content area (1200 px): User Management module.
+  Top bar: page title "User Management" | breadcrumb | action buttons.
+
+Tab Bar:
+  [ Users ] [ Sessions ] [ Login History ] [ Access Review ] [ Audit Log ]
+  Active tab: indigo underline border-b-2 border-indigo-500, text-indigo-600.
+  Inactive: text-gray-500 hover:text-gray-800.
+
+----- USERS TAB -----
+
+Action Bar (top-right):
+  [+ Create User]  — outlined button (border-indigo-500 text-indigo-600).
+  [+ Invite User]  — filled button (bg-indigo-600 text-white hover:bg-indigo-700).
+
+Filter Bar (below tab bar):
+  [ Search name or email... ]  |  [ Role ▾ ]  |  [ Status ▾ ]  |  [ Department ▾ ]
+  |  [ MFA ▾ ]
+  Filters appear as pill dropdowns with clear (×) option per filter when active.
+  Active filter count badge shown on each dropdown.
+
+User Table:
+  Columns (left to right):
+    ☐ (checkbox)  |  Avatar+Name+Email (combined cell)  |  Role Badge  |  Department
+    |  Status Badge  |  MFA Icon  |  Last Login  |  ⋯ (actions)
+
+  Avatar+Name cell:
+    - 36x36 circular avatar (profile_picture_url or initials fallback).
+    - Name in font-medium text-gray-900.
+    - Email in text-sm text-gray-500 below name.
+
+  Role Badge: rounded-full pill, color by role family:
+    Admin       → bg-purple-100 text-purple-700
+    HR Manager  → bg-indigo-100 text-indigo-700
+    Manager     → bg-blue-100 text-blue-700
+    Employee    → bg-gray-100 text-gray-600
+
+  Status Badge:
+    Active        → bg-green-100 text-green-700
+    Pending       → bg-blue-100 text-blue-700 text: "Awaiting Setup"
+    Inactive      → bg-gray-100 text-gray-500 (full row: opacity-60, italic)
+    Suspended     → bg-red-100 text-red-700
+    Deleted       → bg-red-50 text-red-400 (row: opacity-40, strike-through name)
+
+  MFA Icon column:
+    Enrolled  → green checkmark icon (CheckCircleIcon text-green-500)
+    Not enrolled (role enforces MFA) → amber warning icon (ExclamationTriangleIcon text-amber-500)
+    Not enrolled (MFA optional) → dash (text-gray-300)
+
+  Last Login column:
+    Relative time string; full timestamp in Tooltip on hover.
+    Never logged in → "Never" in text-gray-400.
+
+  Row hover: bg-gray-50.
+  Selected row (checkbox checked): bg-indigo-50 border-l-2 border-indigo-500.
+
+Bulk Action Toolbar (appears above table when ≥1 row selected):
+  "3 selected" | [Deactivate] [Reactivate] [Force Password Reset] [Assign Role]
+  | [Clear Selection]
+  Background: bg-indigo-50 border border-indigo-200 rounded-md p-2.
+
+Three-dot (⋯) Actions Menu per row:
+  Edit User
+  Reset Password
+  View Sessions
+  ─────────────
+  Deactivate  (grayed out if already Inactive)
+  Reactivate  (grayed out if Active)
+  ─────────────
+  View Audit Trail
+  Delete User  (text-red-600)
+
+[+ Invite User] Slide-over (right side, 480 px wide):
+  Title: "Invite User" with close ×
+  ──────────────────────────
+  Email Address *
+  [ email input field ]
+  ──────────────────────────
+  Role *
+  [ Role dropdown ]
+  Below dropdown: Permission summary box (bg-gray-50 border rounded p-3):
+    Small chips: "Can view employee records" | "Can submit leave requests" | ...
+  ──────────────────────────
+  Department (optional)
+  [ Department dropdown ]
+  ──────────────────────────
+  Personal Note (optional)
+  [ textarea 3 rows ]
+  ──────────────────────────
+  ⓘ "Invitation link expires 72 hours after sending. Max 3 resends."
+  ──────────────────────────
+  [Cancel]   [Send Invitation] (bg-indigo-600)
+
+[+ Create User] Modal (centered, 560 px wide):
+  Title: "Create User Account"
+  ──────────────────────────
+  Select Employee *
+  [ Searchable dropdown — unactivated employees from Employee Directory ]
+  Below: auto-fills Name, Email, Department from employee record.
+  ──────────────────────────
+  Role *
+  [ Role dropdown with permission summary ]
+  ──────────────────────────
+  Password
+  ○ Auto-generate (recommended)
+  ○ Set manually  → reveals password input with strength meter
+  ──────────────────────────
+  [Cancel]   [Create User] (bg-indigo-600)
+
+Role Change Modal (centered, 480 px wide):
+  Title: "Change Role — {UserName}"
+  ──────────────────────────
+  Current Role: [Senior HR Manager badge]
+  New Role *: [ Role dropdown ]
+  ──────────────────────────
+  Permission Changes:
+  [ Green section ] Gaining: "Approve payroll runs" | "Access org chart"
+  [ Red section ]   Losing:  "View salary bands"
+  ──────────────────────────
+  Reason for change *
+  [ textarea — required, min 10 chars ]
+  ──────────────────────────
+  [Cancel]   [Confirm Change] (bg-indigo-600)
+
+Deactivate Confirmation Dialog:
+  Icon: ExclamationTriangleIcon (amber)
+  Title: "Deactivate {Name}?"
+  Body: "They will lose access to the HR Portal immediately. Their data is fully
+         retained and you can reactivate them at any time."
+  [Cancel]   [Deactivate] (bg-amber-600)
+
+Delete Confirmation Dialog (two-step):
+  Step 1:
+    Icon: TrashIcon (red)
+    Title: "Delete {Name}?"
+    Body: "This will soft-delete the account. The user's data will be permanently
+           purged after 90 days and cannot be recovered."
+    [ Warning box: "This action cannot be undone after the 90-day retention period." ]
+    [Cancel]   [Continue →]
+  Step 2:
+    Title: "Confirm deletion"
+    Body: "To confirm, type the user's email address below:"
+    [ text input ]
+    [Back]   [Delete Account] (bg-red-600, disabled until email matches)
+
+----- SESSIONS TAB -----
+
+Filter Bar:
+  [Active sessions only toggle — on by default] | [Filter by user dropdown] | [Date range]
+
+Sessions Table:
+  User | Device Chip | IP Address | Location | Session Start | Last Active | Actions
+
+  Device Chip: rounded pill with icon — 💻 Desktop Chrome / 📱 Mobile Safari / etc.
+  Suspicious flag: red "⚠ Suspicious" chip appended to Device Chip cell.
+  [Force Logout] button: border border-red-300 text-red-600 rounded px-2 py-1 text-sm
+                          hover:bg-red-50.
+
+Force Logout Confirmation Dialog:
+  Title: "Force Logout — {UserName}"
+  Body: "This will immediately invalidate all sessions for this user. They will be
+         required to sign in again."
+  Reason *: [ text input — required ]
+  [Cancel]   [Force Logout] (bg-red-600)
+
+
+================================================================================
+APP 6: PERFORMANCE TRACKER
+================================================================================
+Current File   : PerformanceTrackerEnhancedV2.tsx
+Current DB     : performance_reviews, performance_goals, performance_feedback,
+                 performance_pips
+Current Tabs   : Reviews | Goals | Feedback | PIPs | Analytics | Cycles
+================================================================================
+
+--------------------------------------------------------------------------------
+D6.1  KNOWN GAPS — FIX PLAN
+--------------------------------------------------------------------------------
+
+G1 — Calibration Finalize Cycle (Priority: Medium)
+  Problem  : No [Finalize Cycle] action; calibration rows cannot be bulk-submitted.
+  Solution : Add [Finalize Cycle] button to cycle detail view.
+  Implementation:
+    - Button is enabled only when ALL employees in the cycle have a calibrated_rating
+      (null check on performance_reviews.calibrated_rating for all rows in cycle).
+    - On click: confirmation dialog shows summary statistics (rating distribution,
+      unreviewed count).
+    - On confirm: batch update all performance_reviews.status = 'finalized',
+      set review_cycle.status = 'finalized'.
+    - Trigger bulk notifications to all reviewed employees (see NOTIF-PT-10).
+    - Write final_rating and competency_scores to employee profile via
+      INT-PT-03 (Employee Directory integration).
+
+G2 — PIP Creation Notification (Priority: Medium)
+  Problem  : PIP created but employee and HR Manager not notified.
+  Solution : On successful POST to performance_pips (after workflow approval),
+             immediately call notifications service endpoint for:
+               - Employee: Action Required — "A Performance Improvement Plan has been
+                 created for you. Click to review."
+               - HR Manager (assigned): Action Required — "A new PIP requires your
+                 review: {employeeName}."
+
+G3 — 360 Feedback Workflow Gating (Priority: Medium)
+  Problem  : Any user can submit feedback on any colleague without a formal request.
+  Solution : Introduce performance_feedback_requests table; feedback can only be
+             submitted against an existing request record.
+  Implementation:
+    - Manager or HR creates a feedback request specifying reviewee + list of
+      reviewer user IDs + deadline.
+    - Reviewer can only submit feedback (POST to performance_feedback) if a
+      feedback_request record exists with: reviewer_id = current_user,
+      status = 'pending', deadline >= NOW().
+    - Endpoint validates: if no matching request found → HTTP 403 "No feedback
+      request found for this reviewee/reviewer combination."
+
+G4 — Bell-Curve Forced Distribution (Priority: Low)
+  Problem  : Calibration has no target distribution guidance.
+  Solution : Add bell-curve overlay to calibration grid.
+  Implementation:
+    - Admin configures target distribution percentages in Master Data App →
+      Performance Settings → Rating Distribution:
+        Outstanding: 10% | Exceeds Expectations: 20% | Meets Expectations: 50%
+        Below Expectations: 15% | Unsatisfactory: 5%
+    - Calibration grid shows: current actual % vs target % per rating bucket.
+    - If actual % exceeds target: over-allocation warning badge in that rating column.
+    - Forced distribution mode (optional, configurable): block saving a calibration
+      that exceeds the cap for any rating bucket until redistributed.
+
+G5 — Rating History Trend Chart (Priority: Medium)
+  Problem  : No visual trend of an employee's ratings across cycles.
+  Solution : Add "Rating Trend" widget to Analytics tab and employee detail panel.
+  Implementation:
+    - Employee selector dropdown → query performance_reviews WHERE employee_id =
+      selected, ORDER BY cycle start_date ASC.
+    - Render multi-line chart (Recharts LineChart):
+        Series 1: self_rating (dashed indigo line)
+        Series 2: manager_rating (solid blue line)
+        Series 3: calibrated_rating (solid green line)
+    - X-axis: cycle labels (e.g. "H1 2025", "H2 2025", "H1 2026").
+    - Y-axis: 1–5 rating scale.
+    - Tooltip: shows all three values for hovered cycle point.
+
+G6 — Structured Self-Assessment (Priority: Medium)
+  Problem  : Self-assessment is a single free-text field, not per-competency.
+  Solution : Replace with a structured competency form loaded from COMPETENCY_FRAMEWORKS.
+  Implementation:
+    - On self-assessment form open: query Master Data App for competency framework
+      matching employee's role (GET /api/master-data/competency-frameworks?role_id=...).
+    - Render one section per competency: competency name | description |
+      self-rating selector (1–5 with label descriptors) | evidence textarea
+      (min 50 characters, enforced on submit).
+    - Footer: overall self-summary rich text field (min 100 characters).
+    - On submit: store structured JSON in performance_reviews.self_assessment_data
+      (JSONB column: { competency_id, self_rating, evidence }[]).
+    - Lock form after submission deadline (performance_reviews.self_assessment_locked = true).
+
+G7 — Analytics Export (Priority: Low)
+  Problem  : Analytics tab data cannot be exported.
+  Solution : Add [Export CSV] button to Analytics tab.
+  Implementation:
+    - Export covers: all visible metrics for the selected cycle and filters.
+    - Columns: employee_name, department, role, cycle, self_rating, manager_rating,
+      calibrated_rating, goal_completion_%, pip_active (boolean).
+    - Download filename: performance_analytics_{cycle}_{date}.csv.
+    - Also add [Export PDF] for charts/visual analytics (server-side render via
+      Edge Function; include charts as base64 PNG images in the PDF).
+
+G8 — Peer Feedback Queue (Priority: HIGH)
+  Problem  : No "Pending My Feedback" queue; reviewers don't know what feedback is
+             awaiting them.
+  Solution : Add "My Feedback Queue" tab (new, visible to all users).
+  Implementation:
+    - Query: performance_feedback_requests WHERE reviewer_id = current_user
+      AND status = 'pending' ORDER BY deadline ASC.
+    - Show cards per pending request; each card has [Submit Feedback] button.
+    - Completed section (collapsible): requests WHERE status = 'completed'.
+    - Tab shows badge count of pending items in the tab label: "My Feedback Queue (2)".
+
+
+--------------------------------------------------------------------------------
+D6.2  FEATURE ENHANCEMENTS
+--------------------------------------------------------------------------------
+
+D6.2.1  OKR Tracking (New Tab)
+---------------------------------------
+  OKR Hierarchy:
+    Company OKRs  → Department OKRs  → Individual OKRs
+    Individual OKRs can optionally be linked (aligned) to a parent Department or
+    Company OKR via parent_okr_id FK.
+
+  Objective record (performance_okrs):
+    title         — Clear, aspirational statement.
+    description   — Optional elaboration.
+    owner         — FK to app_users.id (individual) or department_id (dept-level).
+    type          — 'Company' | 'Department' | 'Individual'
+    time_period   — FK to review_cycle or free text (e.g. "Q3 2026").
+    status        — 'On Track' | 'At Risk' | 'Behind' | 'Completed'
+    parent_okr_id — FK → performance_okrs.id (nullable; for alignment).
+
+  Key Result record (performance_key_results):
+    title         — Measurable outcome description.
+    target_value  — Numeric target (must be > 0).
+    current_value — Latest check-in value (updated weekly).
+    unit          — Unit label: %, ms, $, count, etc.
+    due_date      — Deadline for this key result.
+    status        — 'On Track' | 'At Risk' | 'Behind' | 'Completed'
+    progress_%    — Computed: (current_value / target_value) * 100.
+
+  Progress calculation:
+    - Objective progress % = average of all child key result progress %.
+    - Status auto-suggested based on progress vs time elapsed:
+        > 70% of expected progress → On Track
+        50–70% → At Risk
+        < 50%  → Behind
+        100%   → Completed
+    - Owner can override status with a written reason.
+
+  Weekly Check-In (required):
+    - On Monday, push notification sent to each OKR owner.
+    - Check-in form: update current_value for each key result + optional notes.
+    - If no check-in submitted by Wednesday: second reminder notification.
+    - OKRs with no check-in for >14 days flagged "Stale" in amber.
+
+
+D6.2.2  Continuous Feedback (within Feedback Tab)
+---------------------------------------------------
+  Concept: Ad-hoc, lightweight feedback outside formal review cycles.
+           Any employee can give feedback to any colleague at any time
+           (contrast with 360 feedback, which is cycle-gated and manager-initiated).
+
+  Feedback Types:
+    Recognition  — Public; visible to recipient and optionally shared to
+                   Communications Hub feed (with employee consent).
+    Coaching     — Private; visible only to recipient and their manager/HR.
+    Gratitude    — Public; similar to Recognition but less formal.
+
+  Quick Feedback Form (SBI Model — Situation, Behavior, Impact):
+    Receiver Name  — Searchable employee selector.
+    Type           — [Recognition] [Coaching] [Gratitude] toggle.
+    Situation      — "What was the context?" (min 20 chars).
+    Behavior       — "What did they do specifically?" (min 20 chars).
+    Impact         — "What was the result or effect?" (min 20 chars).
+    [Submit Feedback]
+
+  On submit (Recognition / Gratitude types):
+    - Recipient receives Success push notification: "{SenderName} gave you recognition!"
+    - If employee has consent_share_recognition = true: post to Communications Hub
+      feed as an announcement (type: recognition) via INT-PT-04.
+
+  Feedback is stored in performance_continuous_feedback; visible to:
+    - Giver: always.
+    - Receiver: always.
+    - Receiver's manager: always.
+    - HR Manager: always.
+    - Others: never (unless is_public = true for Recognition/Gratitude type).
+
+
+D6.2.3  Structured Self-Assessment (Detailed specification of G6 fix)
+-----------------------------------------------------------------------
+  Rendered Form Structure:
+    Page 1 — Competency Ratings:
+      For each competency in the framework (ordered by display_order):
+        [ Competency Name (bold) ]
+        [ Brief competency description — text-gray-500 ]
+        Rating: [ 1 ] [ 2 ] [ 3 ] [ 4 ] [ 5 ]  (radio buttons with label descriptors)
+          1=Developing | 2=Approaching | 3=Meeting | 4=Exceeding | 5=Exceptional
+        Evidence / Example:
+          [ textarea — placeholder: "Describe a specific example demonstrating
+            this competency (min 50 characters)" ]
+        ─────────────────────────────────────────
+    Page 2 — Summary:
+        Overall Self-Summary (rich text editor — bold/italic/bullet list)
+          min 100 characters enforced on submit.
+        Development Goals:
+          [ textarea ] "What are 2-3 development goals for the next cycle?"
+        Support Needed:
+          [ textarea ] "What support or resources would help you achieve these goals?"
+
+  Submission Logic:
+    - Progress saved automatically every 30 seconds (draft state).
+    - [Save Draft] button saves without validation.
+    - [Submit Assessment] triggers full validation; if any competency rating or
+      evidence is missing: inline error per field + scroll to first error.
+    - After deadline: form is read-only; submit button is hidden; banner shown:
+      "Self-assessment period has closed. Your submission is locked."
+
+
+D6.2.4  360 Feedback Workflow
+---------------------------------------
+  Initiation (Manager or HR only):
+    1. Manager opens employee detail → [Request 360 Feedback] button.
+    2. Form: Select cycle | Select employee (reviewee) | Select peer reviewers
+       (3–5 employees from searchable list) | Select direct report reviewers (optional) |
+       Set deadline (must be ≥ 7 days from today; enforce V-PT-03).
+    3. On submit: insert row to performance_feedback_requests per reviewer.
+    4. Notification sent to each reviewer: NOTIF-PT-07.
+
+  Reviewer Experience:
+    - "My Feedback Queue" tab shows pending requests.
+    - [Submit Feedback] opens structured feedback form:
+        Overall rating: 1–5 per competency (same framework as self-assessment).
+        Strengths: textarea (min 50 chars).
+        Areas for development: textarea (min 50 chars).
+        Overall recommendation: text (min 30 chars).
+    - On submit: performance_feedback_requests.status = 'completed',
+      performance_feedback_requests.submitted_at = NOW().
+
+  Anonymization:
+    - Employee view of aggregated 360 results:
+        Shows average score per competency across all reviewer submissions.
+        Shows anonymized comment excerpts (reviewer names replaced with "Reviewer 1",
+        "Reviewer 2", etc.).
+        Minimum 3 submitted responses required before results are shown; otherwise
+        "Results will be visible once at least 3 reviewers have submitted."
+    - Manager view: can see individual reviewer responses with names.
+
+
+D6.2.5  Calibration Enhancements
+---------------------------------------
+  Calibration Grid:
+    - Table with columns: Employee | Department | Manager | Self Rating | Manager Rating
+      | Calibrated Rating | Notes | Changed By | Change Reason.
+    - Sortable: click column headers to sort ascending/descending.
+    - Department group-by: collapsible department sections with department subtotals.
+
+  Bell Curve Overlay:
+    - Below calibration grid: stacked horizontal bar chart showing:
+        Target distribution (configure in Master Data → Performance Settings).
+        Current actual distribution (live, recalculated on each calibration save).
+    - Example display:
+        Rating            Target   Actual   Δ
+        Outstanding        10%      14%    +4% ⚠
+        Exceeds            20%      18%    -2%
+        Meets              50%      51%    +1%
+        Below              15%      13%    -2%
+        Unsatisfactory      5%       4%    -1%
+    - Over-limit ratings show amber warning.
+    - Forced Distribution Mode (configurable toggle):
+        When enabled: cannot save a calibration row with a rating that would push
+        actual% > target% + tolerance (default tolerance: 2%). Show error:
+        "Rating limit reached for 'Outstanding'. Adjust another rating first."
+
+  Manager Override:
+    - Manager can edit their submitted rating during calibration (before finalize).
+    - Change requires: reason field (min 10 chars); change logged with old/new value,
+      changed_by, reason, timestamp.
+
+  [Finalize Cycle] Button:
+    - Located: Cycle detail header, top-right.
+    - Enabled only when: all employees in cycle have calibrated_rating IS NOT NULL.
+    - Disabled state: tooltip shows "X employees still pending calibration."
+    - On click: confirmation modal (see Figma spec, D6.7).
+    - On confirm: see G1 fix plan.
+
+
+D6.2.6  Rating History Trend Widget
+---------------------------------------
+  Placement: Analytics tab → "Employee Rating Trend" section; also accessible from
+  employee detail slide-over → "Performance History" tab.
+
+  Chart specification:
+    Type     : Recharts <LineChart>.
+    X-axis   : Cycle labels chronologically.
+    Y-axis   : 1–5 integer scale; tick marks at each integer.
+    Series   :
+      Self Rating      — dashed indigo line (#6366F1, strokeDasharray="4 2").
+      Manager Rating   — solid blue line (#3B82F6).
+      Calibrated Rating— solid green line (#10B981).
+    Legend   : Below chart; clickable to toggle series visibility.
+    Tooltip  : On hover: cycle name | Self: 3 | Manager: 4 | Calibrated: 4.
+    Empty state: "No rating history found. Complete at least one review cycle."
+
+
+D6.2.7  PIP Enhancements
+---------------------------------------
+  PIP Milestones:
+    - Stored as JSONB array in performance_pips.milestones:
+        [{ id, title, description, due_date, status: 'Pending'|'Met'|'Missed' }]
+    - Add Milestone form: title (required), description, due_date (required).
+    - Milestone status updated by manager in weekly check-in or directly.
+    - Milestone missed → NOTIF-PT-08 to HR + senior manager.
+
+  Weekly Manager Check-In Log:
+    - Stored as JSONB array in performance_pips.weekly_checkins:
+        [{ date, manager_id, notes, milestone_updates: [{ id, new_status }] }]
+    - Manager opens PIP → [Log Check-In] button → form: date (auto-filled today),
+      notes, milestone status updates.
+
+  PIP Escalation:
+    - Automated check: Edge Function runs daily; if any milestone.status = 'Missed'
+      AND performance_pips.escalated = false:
+        Set performance_pips.escalated = true.
+        Write audit_log entry.
+        Trigger NOTIF-PT-08.
+
+  PIP Closure:
+    - HR Manager clicks [Close PIP] in PIP detail.
+    - Outcome options: 'Completed' | 'Extended' | 'Terminated'.
+    - HR sign-off: date + digital signature (initials + timestamp).
+    - If Extended: new end_date required; new milestone set mandatory.
+    - Closure written to performance_pips.closed_at, closed_by, outcome,
+      closure_notes.
+    - Employee and manager notified (info/warning per outcome).
+
+
+--------------------------------------------------------------------------------
+D6.3  DATA MODEL ADDITIONS
+--------------------------------------------------------------------------------
+
+Table: performance_okrs  (new)
+  id               UUID PK DEFAULT gen_random_uuid()
+  employee_id      UUID FK → app_users.id   (null if type = 'Company'/'Department')
+  department_id    UUID FK → departments.id (null if type = 'Individual'/'Company')
+  cycle_id         UUID FK → review_cycles.id
+  type             TEXT CHECK (type IN ('Company','Department','Individual'))
+  title            TEXT NOT NULL
+  description      TEXT
+  status           TEXT CHECK (status IN ('On Track','At Risk','Behind','Completed'))
+                   DEFAULT 'On Track'
+  parent_okr_id    UUID FK → performance_okrs.id (nullable; for alignment)
+  last_checkin_at  TIMESTAMPTZ
+  created_by       UUID FK → app_users.id
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+  updated_at       TIMESTAMPTZ DEFAULT NOW()
+
+Table: performance_key_results  (new)
+  id               UUID PK DEFAULT gen_random_uuid()
+  okr_id           UUID FK → performance_okrs.id ON DELETE CASCADE
+  title            TEXT NOT NULL
+  target_value     NUMERIC NOT NULL CHECK (target_value > 0)
+  current_value    NUMERIC DEFAULT 0
+  unit             TEXT    (e.g. '%', 'ms', '$', 'count')
+  due_date         DATE
+  status           TEXT CHECK (status IN ('On Track','At Risk','Behind','Completed'))
+                   DEFAULT 'On Track'
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+  updated_at       TIMESTAMPTZ DEFAULT NOW()
+
+Table: performance_feedback_requests  (new)
+  id               UUID PK DEFAULT gen_random_uuid()
+  cycle_id         UUID FK → review_cycles.id
+  requested_by     UUID FK → app_users.id (manager or HR who created the request)
+  reviewee_id      UUID FK → app_users.id (subject of the feedback)
+  reviewer_id      UUID FK → app_users.id (person asked to give feedback)
+  status           TEXT CHECK (status IN ('pending','completed','expired'))
+                   DEFAULT 'pending'
+  deadline         DATE NOT NULL
+  submitted_at     TIMESTAMPTZ
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+  UNIQUE (cycle_id, reviewee_id, reviewer_id)  -- prevent duplicate requests
+
+Table: performance_continuous_feedback  (new)
+  id               UUID PK DEFAULT gen_random_uuid()
+  giver_id         UUID FK → app_users.id
+  receiver_id      UUID FK → app_users.id
+  type             TEXT CHECK (type IN ('Recognition','Coaching','Gratitude'))
+  situation        TEXT NOT NULL
+  behavior         TEXT NOT NULL
+  impact           TEXT NOT NULL
+  is_public        BOOLEAN DEFAULT FALSE
+  shared_to_comms  BOOLEAN DEFAULT FALSE
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+
+Table: performance_reviews  (additions to existing schema)
+  Column                     Type     Description
+  -----------------------------------------------------------------------
+  self_assessment_data       JSONB    Structured: [{competency_id, self_rating, evidence}]
+  self_assessment_locked     BOOLEAN  TRUE after deadline passes
+  competency_scores          JSONB    Final scores per competency (written on finalize)
+  skill_gap_notes            TEXT     Notes from manager on skill gaps (triggers training suggestion)
+
+Table: performance_pips  (additions to existing schema)
+  Column            Type     Description
+  -----------------------------------------------------------------------
+  milestones        JSONB    Array of milestone objects (see D6.2.7)
+  weekly_checkins   JSONB    Array of check-in log objects
+  escalated         BOOLEAN  DEFAULT FALSE; set TRUE on missed milestone
+  outcome           TEXT     CHECK (outcome IN ('Completed','Extended','Terminated'))
+  closed_at         TIMESTAMPTZ
+  closed_by         UUID FK → app_users.id
+  closure_notes     TEXT
+  hr_signoff_at     TIMESTAMPTZ
+  hr_signoff_by     UUID FK → app_users.id
+
+RLS policies:
+  - performance_okrs: SELECT for owner (employee_id = auth.uid()) and manager of
+    that employee and HR Manager role and Admin. INSERT/UPDATE for owner only
+    (their own OKRs) or admin/HR for company/dept OKRs.
+  - performance_feedback_requests: SELECT for requested_by, reviewee_id, reviewer_id,
+    HR Manager, Admin. INSERT for HR Manager and Manager roles only.
+  - performance_continuous_feedback: SELECT for giver_id, receiver_id, and
+    receiver's manager and HR. INSERT for any authenticated user (self).
+  - performance_pips: SELECT for employee (own PIP), their manager, HR Manager,
+    Admin. INSERT/UPDATE for manager and HR Manager only.
+
+
+--------------------------------------------------------------------------------
+D6.4  VALIDATION RULES
+--------------------------------------------------------------------------------
+
+V-PT-01  Self-assessment: submission deadline enforced server-side (check
+         review_cycle.self_assessment_deadline >= NOW() on submit endpoint).
+         Returns HTTP 400: "Self-assessment deadline has passed."
+         Cannot edit after self_assessment_locked = true.
+         All competency ratings must be filled; evidence min 50 chars each;
+         overall summary min 100 chars.
+
+V-PT-02  Review rating: performance_reviews.manager_rating IS NOT NULL is required
+         for each employee in the cycle before [Finalize Cycle] is permitted.
+         calibrated_rating IS NOT NULL also required (can equal manager_rating if
+         no calibration change made).
+
+V-PT-03  360 Feedback request: min 2 peer reviewers required (reject if
+         peer reviewer count < 2). Deadline must be >= today + 7 days (reject
+         earlier dates). Cannot create a duplicate request:
+         UNIQUE constraint on (cycle_id, reviewee_id, reviewer_id) prevents
+         duplicate reviewer assignments for the same cycle.
+
+V-PT-04  Calibration finalize: ALL employees in the cycle must have a
+         non-null calibrated_rating. Server-side: COUNT(*) WHERE calibrated_rating
+         IS NULL must equal 0. If not, return HTTP 409 with list of employee names
+         pending calibration.
+
+V-PT-05  PIP dates: start_date >= today (no backdating PIPs). end_date must be
+         > start_date + 30 days (minimum 30-day PIP period). Milestone due_dates
+         must be within the PIP start_date–end_date range.
+
+V-PT-06  OKR: each Objective must have at least 1 Key Result before it can be
+         published (status ≠ 'draft'). key_result.target_value > 0 enforced by
+         DB CHECK constraint. Individual OKR owner must be an active employee.
+
+V-PT-07  Continuous feedback self-feedback: giver_id ≠ receiver_id enforced
+         server-side (HTTP 400: "You cannot submit feedback for yourself.").
+
+V-PT-08  PIP closure: outcome must be provided; closure_notes required (min 20
+         chars); hr_signoff_by must be a user with HR Manager or Admin role.
+
+V-PT-09  OKR weekly check-in: if last_checkin_at < NOW() - interval '14 days',
+         OKR is flagged 'Stale' in the application layer (no DB change; computed
+         client-side or via server view).
+
+V-PT-10  Performance cycle: cannot open a new review cycle for a department/group
+         if there is an existing cycle in status 'in_progress' for the same
+         group. Prevents overlapping active cycles.
+
+
+--------------------------------------------------------------------------------
+D6.5  CROSS-APP INTEGRATIONS
+--------------------------------------------------------------------------------
+
+INT-PT-01  Performance → Training
+  Trigger  : performance_reviews.skill_gap_notes IS NOT NULL after manager review
+             submission.
+  Action   : Training app receives POST /api/training/suggest-courses with payload:
+             { employee_id, skill_gap_notes, role_id }. Training app returns and
+             displays suggested course cards in Performance review detail.
+  Display  : "Suggested Training" section in review detail slide-over showing
+             course name, duration, and [Enrol] button linking to Training app.
+
+INT-PT-02  Performance → Workflow
+  Trigger  : PIP creation (POST to performance_pips).
+  Action   : Before employee notification, create an approval workflow task
+             in the Workflow app: approver = HR Manager (derived from department).
+             PIP status = 'pending_approval' until workflow approved.
+             On approval: status → 'active'; trigger NOTIF-PT-04.
+             On rejection: status → 'rejected'; manager notified with comments.
+
+INT-PT-03  Performance → Employee Directory
+  Trigger  : Review cycle finalized (status set to 'finalized').
+  Action   : For each finalized review, write to employee_directory:
+               last_review_cycle    = cycle name
+               last_review_rating   = calibrated_rating
+               competency_scores    = performance_reviews.competency_scores (JSONB)
+               last_reviewed_at     = cycle finalize timestamp
+  Mechanism: Supabase DB function called on cycle finalize endpoint.
+
+INT-PT-04  Performance → Communications
+  Trigger  : Continuous feedback submitted with type = 'Recognition' AND
+             receiver's consent_share_recognition = true.
+  Action   : POST to Communications Hub API: create feed item of type 'recognition'
+             with: sender name, receiver name, recognition message (derived from
+             SBI fields), timestamp.
+  Display  : Appears as a card in the Communications Hub "Recognitions" section.
+
+INT-PT-05  Performance → Notifications (Bell)
+  All performance events route through the central Notifications service.
+  All push notifications use Web Push API (VAPID).
+
+
+--------------------------------------------------------------------------------
+D6.6  PUSH NOTIFICATIONS
+--------------------------------------------------------------------------------
+
+NOTIF-PT-01
+  Event    : Review cycle opened.
+  Recipients: All employees in the cycle.
+  Type     : Action Required.
+  Message  : "Your {cycleName} performance review is now open. Self-assessment
+              is due by {deadline}."
+
+NOTIF-PT-02
+  Event    : Self-assessment deadline 3 days away; self_assessment_locked = false.
+  Recipients: Employees in cycle who have NOT submitted (self_assessment_data IS NULL).
+  Type     : Warning.
+  Message  : "Reminder: Your self-assessment for {cycleName} is due in 3 days
+              ({deadline})."
+
+NOTIF-PT-03
+  Event    : Self-assessment deadline passed without submission.
+  Recipients: Non-submitting employees + their manager.
+  Type     : Urgent.
+  Message  : Employee: "Your self-assessment deadline has passed. Contact your
+              manager or HR immediately."
+             Manager: "{employeeName} has not submitted their self-assessment
+              for {cycleName}. The deadline has passed."
+
+NOTIF-PT-04
+  Event    : PIP created and approved (workflow approved, status → 'active').
+  Recipients: Employee (Action Required) + HR Manager (Action Required).
+  Type     : Action Required.
+  Employee message : "A Performance Improvement Plan has been created for you.
+                      Review the details and milestones in the HR Portal."
+  HR message       : "PIP for {employeeName} is now active and requires your
+                      ongoing oversight."
+
+NOTIF-PT-05
+  Event    : PIP milestone due tomorrow.
+  Recipients: Employee + their manager.
+  Type     : Warning.
+  Message  : "PIP milestone '{milestoneTitle}' for {employeeName} is due tomorrow.
+              Log a check-in to record status."
+
+NOTIF-PT-06
+  Event    : PIP milestone missed (due_date passed, status still 'Pending').
+  Recipients: HR Manager + senior manager (manager's manager).
+  Type     : Warning.
+  Message  : "PIP milestone '{milestoneTitle}' for {employeeName} has been missed.
+              The PIP has been escalated."
+
+NOTIF-PT-07
+  Event    : 360 feedback request received.
+  Recipients: Reviewer (person asked to give feedback).
+  Type     : Action Required.
+  Message  : "You have been asked to provide 360 feedback for {revieweeName}.
+              Deadline: {deadline}. Click to submit feedback."
+
+NOTIF-PT-08
+  Event    : 360 feedback deadline 2 days away; reviewer has not submitted.
+  Recipients: Reviewer.
+  Type     : Warning.
+  Message  : "Reminder: Your feedback for {revieweeName} is due in 2 days
+              ({deadline})."
+
+NOTIF-PT-09
+  Event    : Manager review submitted for employee.
+  Recipients: Employee.
+  Type     : Info.
+  Message  : "Your manager has submitted your {cycleName} performance review.
+              View your review once the calibration period ends."
+
+NOTIF-PT-10
+  Event    : Review cycle finalized.
+  Recipients: All reviewed employees.
+  Type     : Info.
+  Message  : "Your {cycleName} performance review has been finalised. You can
+              now view your results in the HR Portal."
+
+NOTIF-PT-11
+  Event    : OKR weekly check-in due (Monday morning, cron-triggered).
+  Recipients: OKR owners with OKRs in current active cycle.
+  Type     : Info.
+  Message  : "Weekly OKR check-in due. Update your key result values for this
+              week to keep your progress current."
+
+NOTIF-PT-12
+  Event    : Recognition received (continuous feedback, type = Recognition).
+  Recipients: Feedback receiver.
+  Type     : Success.
+  Message  : "{giverName} recognised you: '{situationExcerpt}'"
+
+
+--------------------------------------------------------------------------------
+D6.7  FIGMA DESIGN SPECIFICATION
+--------------------------------------------------------------------------------
+
+Canvas: 1440 x 900 px. Accent: #6366F1 (Indigo). Font: Inter.
+
+Tab Bar:
+  [ Dashboard ] [ Reviews ] [ Goals / OKRs ] [ My Feedback Queue (N) ]
+  [ 360 Feedback ] [ PIPs ] [ Cycles ] [ Analytics ]
+
+----- DASHBOARD TAB -----
+
+Layout: 2-column grid (main content 840px + right sidebar 320px)
+        + row of 4 stat cards at top.
+
+Top stat cards (4 cards, equal width):
+  Card 1: "My Review"
+    Title badge: cycle name (e.g. "Annual Review 2026")
+    Status rows:
+      Self-assessment: ✓ Submitted (text-green-600)
+      Manager review:  ⏳ Pending  (text-amber-500)
+      Calibration:     🔒 Locked   (text-gray-400)
+    [View Review] link.
+
+  Card 2: "My OKRs"
+    "3 Objectives | 7 Key Results"
+    Large progress ring: 72% (indigo fill, gray track)
+    Below ring: "On Track" (green text)
+    [View All OKRs] link.
+
+  Card 3: "Feedback Queue"
+    Badge: "2 Pending" (bg-amber-100 text-amber-700)
+    Mini list (up to 2 items):
+      "John Smith  — due Apr 15 (3 days)" | [Submit]
+      "Priya Patel — due Apr 20 (8 days)" | [Submit]
+    [View All Pending] link.
+
+  Card 4: "My Goals"
+    Progress ring: 65%
+    "4 on track · 1 at risk"
+    [View Goals] link.
+
+----- REVIEWS TAB -----
+
+Filter Bar:
+  [ Cycle ▾ ] [ Department ▾ ] [ Rating ▾ ] [ Status ▾ ] [ Search employee... ]
+
+Reviews Table:
+  Columns: Employee | Department | Cycle | Self-Assess | Mgr Rating | Calibrated |
+           Status | Actions
+
+  Status badges:
+    Not Started      → bg-gray-100 text-gray-500
+    Self-Assess Done → bg-blue-100 text-blue-600
+    Manager Review   → bg-amber-100 text-amber-600
+    Calibration      → bg-purple-100 text-purple-600
+    Finalized        → bg-green-100 text-green-700
+
+  Rating cells: show numeric value 1–5 in colored pill:
+    5 → bg-green-100 text-green-700
+    4 → bg-blue-100 text-blue-700
+    3 → bg-gray-100 text-gray-600
+    2 → bg-amber-100 text-amber-700
+    1 → bg-red-100 text-red-700
+
+  Review Detail Slide-over (480 px, right side):
+    Employee header: avatar | name | role | department
+    Tabs within slide-over: Overview | Competencies | Comments | History
+    Competencies grid:
+      Row per competency: Competency Name | Self Rating | Manager Rating | delta arrow
+    Comments section: manager review comment (rich text display)
+    History tab: rating trend mini-chart (line chart, 3 series)
+
+----- MY FEEDBACK QUEUE TAB -----
+
+Empty state (no pending):
+  Centered illustration + "You're all caught up!" (text-gray-500)
+  Subtext: "You have no pending feedback requests."
+
+Pending requests section (when items exist):
+  Section header: "Pending Feedback ({count})"
+  Feedback Request Cards (one per request):
+    ┌─────────────────────────────────────────────────────────┐
+    │  [Avatar] Feedback for John Smith                        │
+    │           Role: Senior Engineer  |  Cycle: Annual 2026  │
+    │           Due: Apr 15, 2026  (3 days left — amber text) │
+    │                          [Submit Feedback] (indigo btn)  │
+    └─────────────────────────────────────────────────────────┘
+  Deadline urgency:
+    > 7 days → text-gray-600
+    3–7 days → text-amber-600
+    < 3 days → text-red-600 "Urgent:"
+
+Completed section (collapsible, default collapsed):
+  Header: "Completed ({count})" with chevron.
+  Simple list: reviewer name | submitted date | [View Submitted].
+
+----- OKR TAB -----
+
+Sub-tabs within OKR tab: [ Company OKRs ] [ Department OKRs ] [ My OKRs ]
+
+Company OKRs section (collapsible by default):
+  Objective card:
+    ┌─────────────────────────────────────────────────────────┐
+    │  [On Track ●] Achieve 99.9% product uptime              │
+    │  Q3 2026  |  Owner: CTO  |  Progress: 84%               │
+    │  ████████████████░░░░  84%                               │
+    │  ▼ Key Results (3)                                       │
+    │    KR1: Reduce P1 incidents to < 2/month  8/10  80%     │
+    │    KR2: Deploy to 3 new regions           2/3   67%     │
+    │    KR3: Achieve SOC2 Type II              ✓     100%    │
+    └─────────────────────────────────────────────────────────┘
+
+  Status badge colors:
+    On Track  → bg-green-100 text-green-700  ● green dot
+    At Risk   → bg-amber-100 text-amber-700  ● amber dot
+    Behind    → bg-red-100 text-red-700      ● red dot
+    Completed → bg-indigo-100 text-indigo-700 ✓
+
+  [+ Add OKR] button (top-right, bg-indigo-600).
+  OKR create/edit slide-over: Objective fields + [+ Add Key Result] repeater.
+  [Check In] button on each OKR card: opens check-in modal (update current_value
+  per KR + optional note).
+
+----- PIPs TAB -----
+
+Active PIPs list:
+  Each PIP row: Employee | Start Date | End Date | Milestones progress chip
+  (e.g. "3/5 Met") | Escalated badge (red if escalated) | [View Progress]
+
+PIP Detail Slide-over (600 px, wider):
+  Header: Employee name | PIP period | Status badge
+
+  Section 1: Milestones
+    Checklist-style:
+      ○ Milestone 1 — Complete sales training (Due: Mar 15) — Pending
+      ✓ Milestone 2 — Achieve 80% call score   (Due: Mar 1)  — Met
+      ✗ Milestone 3 — Submit daily reports     (Due: Mar 10) — Missed (red text)
+    [+ Add Milestone] link.
+
+  Section 2: Weekly Check-In Log
+    Chronological log entries (most recent first):
+      Mar 11 — Manager: "Discussed progress on calls. Training completed."
+      Mar 4  — Manager: "Report submission still inconsistent."
+    [Log Check-In] button.
+
+  Section 3: HR Sign-Off (visible to HR role only)
+    Status: "Pending HR sign-off"
+    [Sign Off & Close PIP] → opens outcome modal.
+
+  Escalation banner (if escalated = true):
+    Red banner: "⚠ This PIP has been escalated due to a missed milestone. HR
+    and senior management have been notified."
+
+----- ANALYTICS TAB -----
+
+Layout: full-width charts + filter bar at top.
+
+Filter Bar:
+  [ Cycle ▾ ] [ Department ▾ ] [ Role ▾ ] | [Export CSV] [Export PDF] (right-aligned)
+
+Charts grid (2 columns):
+  Row 1:
+    Rating Distribution (bar chart): count per rating per department.
+    Review Completion Rate (donut): % completed vs pending vs overdue.
+  Row 2:
+    Employee Rating Trend (full width):
+      Employee selector dropdown → renders 3-series line chart (see D6.2.6).
+  Row 3:
+    OKR Progress by Department (horizontal bar chart).
+    PIP Activity (stacked bar: active / completed / extended / terminated per quarter).
+
+Finalize Cycle Confirmation Modal (centered, 560 px):
+  Title: "Finalize {cycleName}?"
+  Stats summary box (bg-gray-50 border rounded p-4):
+    Total reviewed: 157 employees
+    Rating distribution:
+      Outstanding:    14  (9%)
+      Exceeds:        32  (20%)
+      Meets:          79  (50%)
+      Below:          25  (16%)
+      Unsatisfactory:  7  (4%)
+  Warning: "This action is irreversible. All ratings will be locked and employees
+            will be notified of their results."
+  [Cancel]   [Finalize Cycle] (bg-indigo-600)
+
+
+================================================================================
+END OF SECTION D
+================================================================================
