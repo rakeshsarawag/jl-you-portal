@@ -45,6 +45,60 @@ app.use("/*", cors({
   maxAge: 600,
 }));
 
+// Decode a JWT payload without verifying the signature.
+// Used to inspect the `role` claim before making a network call.
+function decodeJwtRole(token: string): string | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    // base64url → base64 → JSON
+    const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(padded.padEnd(padded.length + (4 - padded.length % 4) % 4, "="));
+    const payload = JSON.parse(json);
+    return typeof payload.role === "string" ? payload.role : null;
+  } catch {
+    return null;
+  }
+}
+
+// JWT authentication middleware — every route under ${base}/* requires a
+// valid Supabase user session. The frontend sends the user's access_token
+// (not the anon key) via the Authorization header.
+app.use(`${base}/*`, async (c, next) => {
+  // Preflight requests carry no auth — let CORS handle them.
+  if (c.req.method === "OPTIONS") return next();
+
+  const authHeader = c.req.header("Authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return c.json({ error: "Unauthorized: missing bearer token" }, 401);
+  }
+
+  const token = authHeader.slice(7);
+
+  // Fast path: decode the JWT payload locally to check the role claim.
+  // Supabase anon/service keys carry role="anon" or role="service_role".
+  // Only user session tokens carry role="authenticated".
+  const role = decodeJwtRole(token);
+  if (role !== "authenticated") {
+    return c.json({ error: "Unauthorized: user session required" }, 401);
+  }
+
+  // Verify the token is an active session against Supabase Auth.
+  // This catches expired tokens and revoked sessions.
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  const client = createClient(supabaseUrl, serviceKey, {
+    auth: { persistSession: false },
+  });
+  const { data: { user }, error } = await client.auth.getUser(token);
+
+  if (error || !user) {
+    return c.json({ error: "Unauthorized: invalid or expired session" }, 401);
+  }
+
+  return next();
+});
+
 app.get(`${base}/health`, (c) =>
   c.json({ status: "ok", version: "2026-09-04-DEFECT-TRACKER" })
 );

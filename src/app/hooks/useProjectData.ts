@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
-import { API_BASE, publicAnonKey } from '../utils/constants';
+import { API_BASE, apiHeaders } from '../utils/constants';
 
-const PM_HEADERS = () => ({ 'Content-Type': 'application/json', apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` });
+const PM_HEADERS = () => apiHeaders();
 
 async function pmApi(path: string, body?: unknown) {
   const isDelete = body === null;
@@ -62,6 +62,8 @@ export interface ProjectTask {
   estimatedHours?: number;
   loggedHours?: number;
   sprintId?: string;
+  sprintChangeReason?: string;
+  sprintChangeHistory?: Array<{ from: string | null; to: string | null; reason: string; changedAt: string; changedBy?: string }>;
   createdAt?: string;
   startedAt?: string;
   completedDate?: string;
@@ -116,6 +118,9 @@ function normalizeTask(t: any): ProjectTask {
     startedAt: t.started_at ?? t.startedAt,
     completedDate: t.completed_date ?? t.completedDate,
     closedAt: t.closed_at ?? t.closedAt,
+    sprintId: t.sprint_id ?? t.sprintId,
+    sprintChangeReason: t.sprint_change_reason ?? t.sprintChangeReason,
+    sprintChangeHistory: t.sprint_change_history ?? t.sprintChangeHistory ?? [],
   };
 }
 
@@ -176,17 +181,22 @@ export function useProjectData(_userEmail?: string) {
     };
   };
 
-  const loadAll = useCallback(async (userId?: string, userRole?: string) => {
+  const loadAll = useCallback(async (userId?: string, userRole?: string, employeeId?: string, userName?: string) => {
     setLoading(true);
     setError(null);
     try {
       const json = await pmApi('/all');
       let data = (json.data ?? []).map((p: any) => normalizeProject(p, p.project_members ?? [], p.project_tasks ?? []));
 
+      // Non-admin users only see projects they are assigned to.
+      // Match by employee UUID (employees table), auth UUID (fallback), or name (last resort).
       const isEmployee = userRole === 'employee';
-      if (userId && isEmployee) {
+      if (isEmployee) {
+        const nameLower = (userName ?? '').toLowerCase();
         data = data.filter((p: Project) =>
-          p.managerId === userId || p.members.some(m => m.employeeId === userId)
+          (employeeId && (p.managerId === employeeId || p.members.some(m => m.employeeId === employeeId))) ||
+          (userId && (p.managerId === userId || p.members.some(m => m.employeeId === userId))) ||
+          (nameLower && p.members.some(m => m.employeeName?.toLowerCase() === nameLower))
         );
       }
       setProjects(data);
@@ -314,6 +324,8 @@ export function useProjectData(_userEmail?: string) {
       startDate: updates.startDate,
       estimatedHours: updates.estimatedHours,
       actualHours: updates.loggedHours,
+      sprintId: (updates as any).sprintId,
+      sprintChangeReason: (updates as any).sprintChangeReason,
       // Audit timestamps driven by status transitions
       startedAt: updates.status === 'In Progress' ? now : undefined,
       completedAt: updates.status === 'Done' ? now : undefined,

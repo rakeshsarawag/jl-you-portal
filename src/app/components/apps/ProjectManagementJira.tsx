@@ -887,9 +887,10 @@ function TaskForm({ onSubmit, onCancel, sprintOptions = [], initialData }: TaskF
 interface LogTimeModalProps {
   onSubmit: (hours: number, type: string, description: string, logDate: string, billable: boolean) => Promise<void>;
   onClose: () => void;
+  task?: { title?: string; estimatedHours?: number; loggedHours?: number };
 }
 
-function LogTimeModal({ onSubmit, onClose }: LogTimeModalProps) {
+function LogTimeModal({ onSubmit, onClose, task }: LogTimeModalProps) {
   const today = new Date().toISOString().split('T')[0];
   const [hours, setHours] = useState("");
   const [type, setType] = useState(TIME_LOG_TYPES[0]);
@@ -898,6 +899,11 @@ function LogTimeModal({ onSubmit, onClose }: LogTimeModalProps) {
   const [billable, setBillable] = useState(true);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
+
+  const logged = task?.loggedHours ?? 0;
+  const estimated = task?.estimatedHours ?? 0;
+  const remaining = Math.max(0, estimated - logged);
+  const pct = estimated > 0 ? Math.min(100, Math.round((logged / estimated) * 100)) : 0;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -930,6 +936,30 @@ function LogTimeModal({ onSubmit, onClose }: LogTimeModalProps) {
           </button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Existing hours summary */}
+          {(estimated > 0 || logged > 0) && (
+            <div className="bg-muted/50 rounded-lg px-3 py-2.5 space-y-1.5">
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Logged so far</span>
+                <span className="font-medium text-foreground">{logged}h{estimated > 0 ? ` / ${estimated}h estimated` : ''}</span>
+              </div>
+              {estimated > 0 && (
+                <>
+                  <div className="w-full bg-muted rounded-full h-1.5">
+                    <div
+                      className={`h-1.5 rounded-full ${pct >= 100 ? 'bg-red-500' : 'bg-blue-500'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {pct >= 100
+                      ? `${logged - estimated}h over estimate`
+                      : `${remaining}h remaining`}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
           {/* Hours + Log Date */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -1046,6 +1076,7 @@ interface TaskDetailProps {
   onUpdate: (updates: Partial<ProjectTask>) => Promise<void>;
   onLogTime: (hours: number, type: string, desc: string, logDate: string, billable: boolean) => Promise<void>;
   onClose: () => void;
+  sprintOptions?: { id: string; name: string }[];
 }
 
 function TaskDetailModal({
@@ -1054,19 +1085,34 @@ function TaskDetailModal({
   onUpdate,
   onLogTime,
   onClose,
+  sprintOptions = [],
 }: TaskDetailProps) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
   const [assigneeName, setAssigneeName] = useState(task.assigneeName ?? "");
   const [dueDate, setDueDate] = useState(task.dueDate ?? "");
   const [status, setStatus] = useState(task.status);
+  const [sprintId, setSprintId] = useState(task.sprintId ?? "");
+  const [originalSprintId] = useState(task.sprintId ?? "");
+  const [sprintChangeReason, setSprintChangeReason] = useState("");
   const [showLogTime, setShowLogTime] = useState(false);
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
+    if (sprintId !== originalSprintId && !sprintChangeReason.trim()) {
+      toast.error("Sprint change reason is required");
+      return;
+    }
     setSaving(true);
     try {
-      await onUpdate({ title, assigneeName, dueDate, status });
+      await onUpdate({
+        title,
+        assigneeName,
+        dueDate,
+        status,
+        sprintId: sprintId || undefined,
+        sprintChangeReason: sprintId !== originalSprintId ? sprintChangeReason : undefined,
+      });
       toast.success(t("project.taskUpdated"));
       setEditing(false);
     } catch {
@@ -1119,6 +1165,31 @@ function TaskDetailModal({
                   {TASK_STATUSES.map((s) => <option key={s}>{s}</option>)}
                 </select>
               </div>
+              {sprintOptions.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">Sprint</label>
+                  <select
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={sprintId}
+                    onChange={(e) => setSprintId(e.target.value)}
+                  >
+                    <option value="">Unassigned</option>
+                    {sprintOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                  {sprintId !== originalSprintId && (
+                    <div className="mt-2">
+                      <label className="block text-sm font-medium text-foreground mb-1">Reason for sprint change *</label>
+                      <textarea
+                        className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        rows={2}
+                        value={sprintChangeReason}
+                        onChange={(e) => setSprintChangeReason(e.target.value)}
+                        placeholder="Explain why this task is being moved to a different sprint…"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex justify-end gap-2">
                 <button
                   onClick={() => setEditing(false)}
@@ -1166,6 +1237,42 @@ function TaskDetailModal({
                   </span>
                 </div>
               )}
+              {task.sprintId && sprintOptions.length > 0 && (
+                <div className="flex items-center gap-1 text-muted-foreground">
+                  <span className="font-medium text-foreground">Sprint:</span>
+                  <span>{sprintOptions.find(s => s.id === task.sprintId)?.name ?? task.sprintId}</span>
+                </div>
+              )}
+              {task.sprintChangeReason && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-800">
+                  <span className="font-medium">Last sprint change note:</span> {task.sprintChangeReason}
+                </div>
+              )}
+              {Array.isArray(task.sprintChangeHistory) && task.sprintChangeHistory.length > 0 && (
+                <div className="border border-border rounded-lg overflow-hidden">
+                  <div className="px-3 py-2 bg-muted/50 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Sprint Change History ({task.sprintChangeHistory.length})
+                  </div>
+                  <div className="divide-y divide-border">
+                    {[...task.sprintChangeHistory].reverse().map((h: any, i: number) => {
+                      const fromName = sprintOptions.find(s => s.id === h.from)?.name ?? h.from ?? 'Unassigned';
+                      const toName = sprintOptions.find(s => s.id === h.to)?.name ?? h.to ?? 'Unassigned';
+                      return (
+                        <div key={i} className="px-3 py-2 text-xs">
+                          <div className="flex items-center gap-1 text-muted-foreground mb-0.5">
+                            <span className="font-medium text-foreground">{fromName}</span>
+                            <span>→</span>
+                            <span className="font-medium text-foreground">{toName}</span>
+                            <span className="ml-auto text-muted-foreground">{h.changedAt ? new Date(h.changedAt).toLocaleDateString() : ''}</span>
+                          </div>
+                          <p className="text-muted-foreground">{h.reason}</p>
+                          {h.changedBy && <p className="text-muted-foreground/60 mt-0.5">by {h.changedBy}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           <div className="flex gap-2 pt-2 border-t">
@@ -1188,6 +1295,7 @@ function TaskDetailModal({
       </Modal>
       {showLogTime && (
         <LogTimeModal
+          task={{ title: task.title, estimatedHours: task.estimatedHours, loggedHours: task.loggedHours }}
           onSubmit={async (h, type, desc, logDate, billable) => {
             await onLogTime(h, type, desc, logDate, billable);
             toast.success(t("project.timeLogged"));
@@ -1654,6 +1762,7 @@ function KanbanBoard({
           }}
           onLogTime={(h, type, desc, logDate, billable) => onLogTime(selectedTask.id, h, type, desc, logDate, billable)}
           onClose={() => setSelectedTask(null)}
+          sprintOptions={sprintOptions}
         />
       )}
     </div>
@@ -5206,6 +5315,7 @@ interface ProjectDetailProps {
 
 function ReportsTab({ projectId, project }: { projectId: string; project: Project }) {
   const [reportTab, setReportTab] = useState<"burndown" | "velocity" | "timelog" | "budget" | "defects">("burndown");
+  const { options: empOptions } = useEmployeeOptions();
 
   // ── Burndown state ──
   const [sprints, setSprints] = useState<any[]>([]);
@@ -5291,10 +5401,15 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
     pmFetch(`/budget?projectId=${projectId}`).then(data => { if (data) setBudgetItems(data); });
   }, [projectId, reportTab]);
 
-  // Load defects via edge function
+  // Load defects via direct Supabase
   useEffect(() => {
     if (reportTab !== "defects") return;
-    pmFetch(`/defects?projectId=${projectId}`).then(data => { if (data) setDefects(data); });
+    supabase
+      .from("project_defects")
+      .select("*")
+      .eq("project_id", projectId)
+      .order("created_at", { ascending: false })
+      .then(({ data: rows }) => { if (rows) setDefects(rows); });
   }, [projectId, reportTab]);
 
   // ── SVG chart helpers ──
@@ -5353,8 +5468,28 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
   const barW = allSprints.length > 0 ? Math.floor((CW - 8 * allSprints.length) / (allSprints.length * 2 + 1)) : 20;
 
   // ── Time log filtering ──
-  const filteredLogs = timeLogs.filter(l => {
-    if (tlMember && !l.employee_name?.toLowerCase().includes(tlMember.toLowerCase())) return false;
+  // Fallback: derive entries from tasks with loggedHours when no DB time logs exist
+  const taskDerivedLogs: any[] = timeLogs.length === 0
+    ? (project.tasks ?? [])
+        .filter(t => (t.loggedHours ?? 0) > 0)
+        .map(t => ({
+          id: `task-${t.id}`,
+          task_id: t.id,
+          task_title: t.title,
+          employee_name: t.assigneeName ?? "",
+          log_date: (t as any).completedDate ?? (t as any).closedAt ?? (t as any).createdAt?.slice(0, 10) ?? "",
+          hours: t.loggedHours,
+          log_type: "Development",
+          billable: true,
+          comment: `Logged on task: ${t.title}`,
+          _derived: true,
+        }))
+    : [];
+
+  const allLogs = [...timeLogs, ...taskDerivedLogs];
+
+  const filteredLogs = allLogs.filter(l => {
+    if (tlMember && l.employee_name !== tlMember) return false;
     if (tlType && l.log_type !== tlType) return false;
     if (tlFrom && l.log_date < tlFrom) return false;
     if (tlTo && l.log_date > tlTo) return false;
@@ -5661,10 +5796,10 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
 
           {/* Filter bar */}
           <div className="flex flex-wrap gap-2 items-center">
-            <input
-              type="text" placeholder="Member name…" value={tlMember} onChange={e => setTlMember(e.target.value)}
-              className="border rounded-md px-3 py-1.5 text-sm bg-card w-36"
-            />
+            <select value={tlMember} onChange={e => setTlMember(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-card w-44">
+              <option value="">All members</option>
+              {empOptions.map(e => <option key={e.value} value={e.label}>{e.label}</option>)}
+            </select>
             <select value={tlType} onChange={e => setTlType(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-card">
               <option value="">All types</option>
               {["Development", "Review", "Testing", "Meeting", "Documentation", "Other"].map(t => (
@@ -5701,8 +5836,8 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
                       <tr key={i} className="border-b last:border-0 hover:bg-muted/30">
                         <td className="px-3 py-2 whitespace-nowrap">{l.log_date}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{l.employee_name ?? "—"}</td>
-                        <td className="px-3 py-2"><span className="px-1.5 py-0.5 rounded text-xs bg-muted">{l.log_type ?? "—"}</span></td>
-                        <td className="px-3 py-2 font-medium">{l.hours ?? 0}h</td>
+                        <td className="px-3 py-2"><div><span className="text-xs text-foreground">{l.task_title ?? ""}</span><span className="ml-1 px-1.5 py-0.5 rounded text-xs bg-muted">{l.log_type ?? "—"}</span></div></td>
+                        <td className="px-3 py-2 font-medium">{l.hours ?? 0}h{l._derived && <span className="ml-1 text-xs text-muted-foreground italic">(estimated)</span>}</td>
                         <td className="px-3 py-2">{l.billable ? <span className="text-green-600 font-medium">✓</span> : <span className="text-muted-foreground">✗</span>}</td>
                         <td className="px-3 py-2 text-muted-foreground max-w-xs truncate">{l.comment ?? ""}</td>
                       </tr>
@@ -7569,8 +7704,10 @@ export function ProjectManagementJira({
 
   // SideNav badge computations
   const today = new Date().toISOString().split("T")[0];
+  const currentUserName = currentUser?.name ?? currentUser?.fullName ?? "";
   const allTasks = projects.flatMap((p) => (p.tasks ?? []).map((t) => ({ ...t, projectId: p.id })));
-  const overdueTaskCount = allTasks.filter((t) => t.dueDate && t.dueDate < today && t.status !== "Done").length;
+  const myAssignedTasks = allTasks.filter((t) => t.assigneeId === userId || (currentUserName && t.assigneeName === currentUserName));
+  const overdueTaskCount = myAssignedTasks.filter((t) => t.dueDate && t.dueDate < today && t.status !== "Done").length;
   const atRiskProjectCount = projects.filter((p) => p.ragStatus === "Red" || p.ragStatus === "Amber").length;
 
   function handleExportCSV(data: Record<string, unknown>[], filename: string) {
@@ -7587,8 +7724,10 @@ export function ProjectManagementJira({
   }
 
   useEffect(() => {
-    loadAll(userId, role);
-  }, [userId, role]);
+    const employeeId = currentUser?.employeeId ?? undefined;
+    const userName = currentUser?.name ?? currentUser?.fullName ?? undefined;
+    loadAll(userId, role, employeeId, userName);
+  }, [userId, role, currentUser?.employeeId, currentUser?.name]);
 
   useEffect(() => {
     fetch(`${API_BASE}/master-data/project-methodologies`, { headers: apiHeaders() })

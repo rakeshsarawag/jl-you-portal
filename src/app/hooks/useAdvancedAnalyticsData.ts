@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE, publicAnonKey, safeJson } from '../utils/constants';
+import { API_BASE, apiHeaders, safeJson } from '../utils/constants';
 
 const BASE = `${API_BASE}`;
 
@@ -18,12 +18,7 @@ async function api(path: string, opts?: AnalyticsDataOptions): Promise<unknown> 
   if (opts?.dateRange === 'custom' && opts.endDate) params.set('endDate', opts.endDate);
   const qs = params.toString();
   const url = `${BASE}/${path}${qs ? `?${qs}` : ''}`;
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${publicAnonKey}`,
-      'Content-Type': 'application/json',
-    },
-  });
+  const res = await fetch(url, { headers: apiHeaders() });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return safeJson(res);
 }

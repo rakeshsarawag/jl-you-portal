@@ -146,6 +146,7 @@ app.put('/sprints/:id', async (c) => {
   return c.json({ success: true, data });
 });
 
+// Sprint backlog management
 app.post('/sprints/:sprintId/backlog', async (c) => {
   const body = await c.req.json();
   const supabase = getSupabase();
@@ -162,7 +163,10 @@ app.post('/sprints/:sprintId/backlog', async (c) => {
 
 app.delete('/sprints/:sprintId/backlog/:itemId', async (c) => {
   const supabase = getSupabase();
-  const { error } = await supabase.from('project_sprint_backlog').delete().eq('id', c.req.param('itemId'));
+  const { error } = await supabase
+    .from('project_sprint_backlog')
+    .delete()
+    .eq('id', c.req.param('itemId'));
   if (error && isTableMissing(error)) return c.json({ success: true });
   if (error) return c.json({ success: false, error: error.message }, 500);
   return c.json({ success: true });
@@ -186,6 +190,7 @@ app.patch('/backlog-items/:id', async (c) => {
 });
 
 app.patch('/backlog-items', async (c) => {
+  // Bulk update
   const body = await c.req.json();
   const supabase = getSupabase();
   const { ids, updates: upd } = body;
@@ -196,71 +201,6 @@ app.patch('/backlog-items', async (c) => {
   const { error } = await supabase.from('project_backlog_items').update(updates).in('id', ids);
   if (error) return c.json({ success: false, error: error.message }, 500);
   return c.json({ success: true });
-});
-
-// ==================== PROJECTS ====================
-
-// ==================== TIME LOGS (must be before /:id wildcard) ====================
-
-app.post('/time-logs', async (c) => {
-  try {
-    const supabase = getSupabase();
-    const body = await c.req.json();
-    const today = new Date().toISOString().split('T')[0];
-
-    const { data, error } = await supabase
-      .from('project_time_logs')
-      .insert([{
-        task_id: body.taskId,
-        project_id: body.projectId || null,
-        hours: body.hours,
-        log_type: body.logType || 'Development',
-        comment: body.comment || '',
-        log_date: body.logDate || today,
-        billable: body.billable ?? true,
-        employee_name: body.employeeName || '',
-        logged_by: body.loggedBy || null,
-      }])
-      .select()
-      .single();
-
-    if (error) {
-      if (error.message?.includes('does not exist')) return c.json({ success: true, data: { id: crypto.randomUUID(), ...body } }, 201);
-      return c.json({ success: false, error: error.message }, 500);
-    }
-
-    // Auto-transition task to In Progress if still Todo
-    await supabase
-      .from('project_tasks')
-      .update({ status: 'In Progress', started_at: new Date().toISOString() })
-      .eq('id', body.taskId)
-      .eq('status', 'Todo');
-
-    return c.json({ success: true, data }, 201);
-  } catch (error) {
-    return c.json({ success: false, error: 'Failed to log time' }, 500);
-  }
-});
-
-app.get('/time-logs', async (c) => {
-  try {
-    const supabase = getSupabase();
-    const taskId = c.req.query('taskId');
-    const projectId = c.req.query('projectId');
-
-    let query = supabase.from('project_time_logs').select('*').order('log_date', { ascending: false });
-    if (taskId) query = query.eq('task_id', taskId);
-    if (projectId) query = query.eq('project_id', projectId);
-
-    const { data, error } = await query;
-    if (error) {
-      if (error.message?.includes('does not exist')) return c.json({ success: true, data: [] });
-      return c.json({ success: false, error: error.message }, 500);
-    }
-    return c.json({ success: true, data: data ?? [] });
-  } catch (error) {
-    return c.json({ success: false, error: 'Failed to fetch time logs' }, 500);
-  }
 });
 
 // ==================== PROJECTS ====================
@@ -280,7 +220,79 @@ app.get('/all', async (c) => {
   }
 });
 
-// ==================== BUDGET LINE ITEMS ====================
+// ==================== TIME LOGS (must be before /:id wildcard) ====================
+
+app.post('/time-logs', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const body = await c.req.json();
+
+    const { data, error } = await supabase
+      .from('project_time_logs')
+      .insert([{
+        project_id: body.projectId || null,
+        task_id: body.taskId || null,
+        sprint_id: body.sprintId || null,
+        employee_name: body.employeeName || '',
+        log_date: body.logDate || new Date().toISOString().split('T')[0],
+        hours: body.hours,
+        log_type: body.logType || 'Development',
+        billable: body.billable ?? true,
+        comment: body.comment || '',
+        ...auditCreate(c),
+      }])
+      .select()
+      .single();
+
+    if (error) return c.json({ success: false, error: error.message }, 500);
+
+    // Auto-transition task to In Progress if still Todo
+    if (body.taskId) {
+      const { data: task } = await supabase.from('project_tasks').select('status, started_at').eq('id', body.taskId).single();
+      if (task && task.status === 'Todo' && !task.started_at) {
+        await supabase.from('project_tasks').update({ status: 'In Progress', started_at: new Date().toISOString() }).eq('id', body.taskId);
+      }
+    }
+
+    return c.json({ success: true, data }, 201);
+  } catch (error) {
+    return c.json({ success: false, error: 'Failed to log time' }, 500);
+  }
+});
+
+app.get('/time-logs', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const projectId = c.req.query('projectId');
+    const taskId = c.req.query('taskId');
+    let query = supabase.from('project_time_logs').select('*').order('log_date', { ascending: false });
+    if (projectId) query = query.eq('project_id', projectId);
+    if (taskId) query = query.eq('task_id', taskId);
+    const { data, error } = await query;
+    if (error) return c.json({ success: false, error: error.message }, 500);
+    return c.json({ success: true, data: data || [] });
+  } catch (error) {
+    return c.json({ success: false, error: 'Failed to fetch time logs' }, 500);
+  }
+});
+
+// ==================== DEFECTS (must be before /:id wildcard) ====================
+
+app.get('/defects', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const projectId = c.req.query('projectId');
+    let query = supabase.from('project_defects').select('*').order('created_at', { ascending: false });
+    if (projectId) query = query.eq('project_id', projectId);
+    const { data, error } = await query;
+    if (error) return c.json({ success: false, error: error.message }, 500);
+    return c.json({ success: true, data: data || [] });
+  } catch (error) {
+    return c.json({ success: false, error: 'Failed to fetch defects' }, 500);
+  }
+});
+
+// ==================== BUDGET LINE ITEMS (must be before /:id wildcard) ====================
 
 app.get('/budget', async (c) => {
   try {
@@ -299,6 +311,8 @@ app.get('/budget', async (c) => {
     return c.json({ success: false, error: 'Failed to fetch budget items' }, 500);
   }
 });
+
+// ==================== SPRINTS BACKLOG (must be before /:id wildcard) ====================
 
 app.get('/sprints/:sprintId/backlog', async (c) => {
   try {
@@ -499,6 +513,7 @@ app.post('/create', async (c) => {
       );
     }
 
+    // Return project with members so the client can populate team state
     const { data: full } = await supabase
       .from('projects')
       .select('*, project_members(id, employee_id, employee_name, role, joined_at), project_tasks(*)')
@@ -606,6 +621,9 @@ app.post('/tasks/create', async (c) => {
     const supabase = getSupabase();
     const body = await c.req.json();
 
+    // Build insert using only guaranteed base-schema columns.
+    // Columns added by later ALTER TABLE migrations (task_type, start_date, sprint_id)
+    // are included conditionally so the insert works even on older schemas.
     const taskRecord: any = {
       project_id: body.projectId,
       title: body.title,
@@ -619,6 +637,7 @@ app.post('/tasks/create', async (c) => {
       tags: body.tags || [],
       ...auditCreate(c),
     };
+    // Conditionally include migration-added columns (safe to omit if column missing)
     if (body.taskType) taskRecord.task_type = body.taskType;
     if (body.startDate) taskRecord.start_date = body.startDate;
     if (body.sprintId) taskRecord.sprint_id = body.sprintId;
@@ -659,42 +678,64 @@ app.put('/tasks/:id', async (c) => {
   try {
     const supabase = getSupabase();
     const body = await c.req.json();
-    const now = new Date().toISOString();
 
-    const updates: Record<string, unknown> = { ...auditUpdate(c) };
+    // Fetch current task to accumulate actual_hours if additionalHours given
+    let actualHours = body.actualHours;
+    if (body.additionalHours) {
+      const { data: cur } = await supabase.from('project_tasks').select('actual_hours').eq('id', c.req.param('id')).single();
+      actualHours = (Number(cur?.actual_hours ?? 0) + Number(body.additionalHours));
+    }
+
+    const updates: Record<string, unknown> = {
+      ...auditUpdate(c),
+    };
     if (body.title !== undefined) updates.title = body.title;
     if (body.description !== undefined) updates.description = body.description;
+    if (body.taskType !== undefined) updates.task_type = body.taskType;
     if (body.assigneeId !== undefined) updates.assignee_id = body.assigneeId || null;
-    if (body.assigneeName !== undefined) updates.assignee_name = body.assigneeName;
+    if (body.assigneeName !== undefined) updates.assignee_name = body.assigneeName || body.assignee;
     if (body.status !== undefined) updates.status = body.status;
     if (body.priority !== undefined) updates.priority = body.priority;
-    if (body.taskType !== undefined) updates.task_type = body.taskType;
     if (body.dueDate !== undefined) updates.due_date = body.dueDate;
     if (body.startDate !== undefined) updates.start_date = body.startDate;
     if (body.estimatedHours !== undefined) updates.estimated_hours = body.estimatedHours;
-    if (body.actualHours !== undefined) updates.actual_hours = body.actualHours;
+    if (actualHours !== undefined) updates.actual_hours = actualHours;
     if (body.tags !== undefined) updates.tags = body.tags;
-    // Audit timestamps driven by status transitions
+    if (body.sprintId !== undefined) updates.sprint_id = body.sprintId || null;
+    if (body.sprintChangeReason !== undefined) updates.sprint_change_reason = body.sprintChangeReason;
+    // Audit date tracking
     if (body.startedAt) updates.started_at = body.startedAt;
-    else if (body.status === 'In Progress') updates.started_at = now;
     if (body.completedAt) updates.completed_at = body.completedAt;
-    else if (body.status === 'Done') updates.completed_at = now;
     if (body.closedAt) updates.closed_at = body.closedAt;
-    else if (body.status === 'Cancelled') updates.closed_at = now;
-    // Accumulate logged hours
-    if (body.additionalHours) {
-      const { data: cur } = await supabase.from('project_tasks').select('actual_hours').eq('id', c.req.param('id')).single();
-      updates.actual_hours = (cur?.actual_hours ?? 0) + Number(body.additionalHours);
-    }
 
     const { data, error } = await supabase
       .from('project_tasks')
       .update(updates)
       .eq('id', c.req.param('id'))
       .select()
-      .maybeSingle();
+      .single();
 
     if (error) return c.json({ success: false, error: error.message }, 404);
+
+    // Write time log entry if provided alongside the task update
+    if (body.logEntry) {
+      const today = new Date().toISOString().split('T')[0];
+      await supabase.from('project_time_logs').insert([{
+        task_id: c.req.param('id'),
+        project_id: body.logEntry.projectId || null,
+        hours: body.logEntry.hours,
+        log_type: body.logEntry.logType || 'Development',
+        comment: body.logEntry.comment || '',
+        log_date: body.logEntry.logDate || today,
+        billable: body.logEntry.billable ?? true,
+        employee_name: body.logEntry.employeeName || '',
+        ...auditCreate(c),
+      }]);
+      // Auto-transition to In Progress if task was still Todo
+      if (data?.status === 'Todo') {
+        await supabase.from('project_tasks').update({ status: 'In Progress', started_at: new Date().toISOString() }).eq('id', c.req.param('id'));
+      }
+    }
 
     // Notify new assignee when the assignee field is being set/changed
     if (body.assigneeId && data?.assignee_id) {

@@ -239,7 +239,7 @@ app.post('/time-logs', async (c) => {
         log_type: body.logType || 'Development',
         billable: body.billable ?? true,
         comment: body.comment || '',
-        ...auditCreate(c),
+        created_by: getUserEmail(c),
       }])
       .select()
       .single();
@@ -273,6 +273,22 @@ app.get('/time-logs', async (c) => {
     return c.json({ success: true, data: data || [] });
   } catch (error) {
     return c.json({ success: false, error: 'Failed to fetch time logs' }, 500);
+  }
+});
+
+// ==================== DEFECTS (must be before /:id wildcard) ====================
+
+app.get('/defects', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const projectId = c.req.query('projectId');
+    let query = supabase.from('project_defects').select('*').order('created_at', { ascending: false });
+    if (projectId) query = query.eq('project_id', projectId);
+    const { data, error } = await query;
+    if (error) return c.json({ success: false, error: error.message }, 500);
+    return c.json({ success: true, data: data || [] });
+  } catch (error) {
+    return c.json({ success: false, error: 'Failed to fetch defects' }, 500);
   }
 });
 
@@ -663,11 +679,33 @@ app.put('/tasks/:id', async (c) => {
     const supabase = getSupabase();
     const body = await c.req.json();
 
-    // Fetch current task to accumulate actual_hours if additionalHours given
+    // Fetch current task to accumulate actual_hours and existing sprint change history
     let actualHours = body.actualHours;
-    if (body.additionalHours) {
-      const { data: cur } = await supabase.from('project_tasks').select('actual_hours').eq('id', c.req.param('id')).single();
-      actualHours = (Number(cur?.actual_hours ?? 0) + Number(body.additionalHours));
+    let sprintChangeHistory: unknown[] = [];
+    const needCurrentTask = body.additionalHours || (body.sprintId !== undefined && body.sprintChangeReason);
+    if (needCurrentTask) {
+      const { data: cur } = await supabase
+        .from('project_tasks')
+        .select('actual_hours, sprint_id, sprint_change_history')
+        .eq('id', c.req.param('id'))
+        .single();
+      if (body.additionalHours) {
+        actualHours = (Number(cur?.actual_hours ?? 0) + Number(body.additionalHours));
+      }
+      // Append to sprint change history when sprint is being changed
+      if (body.sprintId !== undefined && body.sprintChangeReason && cur?.sprint_id !== body.sprintId) {
+        const existing = Array.isArray(cur?.sprint_change_history) ? cur.sprint_change_history : [];
+        sprintChangeHistory = [
+          ...existing,
+          {
+            from: cur?.sprint_id ?? null,
+            to: body.sprintId || null,
+            reason: body.sprintChangeReason,
+            changedAt: new Date().toISOString(),
+            changedBy: getUserEmail(c),
+          },
+        ];
+      }
     }
 
     const updates: Record<string, unknown> = {
@@ -685,6 +723,9 @@ app.put('/tasks/:id', async (c) => {
     if (body.estimatedHours !== undefined) updates.estimated_hours = body.estimatedHours;
     if (actualHours !== undefined) updates.actual_hours = actualHours;
     if (body.tags !== undefined) updates.tags = body.tags;
+    if (body.sprintId !== undefined) updates.sprint_id = body.sprintId || null;
+    if (body.sprintChangeReason !== undefined) updates.sprint_change_reason = body.sprintChangeReason;
+    if (sprintChangeHistory.length > 0) updates.sprint_change_history = sprintChangeHistory;
     // Audit date tracking
     if (body.startedAt) updates.started_at = body.startedAt;
     if (body.completedAt) updates.completed_at = body.completedAt;
@@ -711,7 +752,7 @@ app.put('/tasks/:id', async (c) => {
         log_date: body.logEntry.logDate || today,
         billable: body.logEntry.billable ?? true,
         employee_name: body.logEntry.employeeName || '',
-        ...auditCreate(c),
+        created_by: getUserEmail(c),
       }]);
       // Auto-transition to In Progress if task was still Todo
       if (data?.status === 'Todo') {

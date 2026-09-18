@@ -204,8 +204,8 @@ export const APP_REGISTRY: AppEntry[] = [
   {
     appId: 'executive-dashboard',
     path: '/executive-dashboard',
-    label: 'Executive Dashboard',
-    description: 'Company-wide KPIs and executive analytics',
+    label: 'Analytics Dashboard',
+    description: 'Company-wide KPIs, deep-dive reports, predictive, cohort and funnel analytics',
     icon: 'BarChart3',
     requiredRoles: ['admin', 'manager', 'finance', 'hr'],
     category: 'analytics',
@@ -220,16 +220,6 @@ export const APP_REGISTRY: AppEntry[] = [
     requiredRoles: ['admin', 'manager', 'hr', 'finance'],
     category: 'analytics',
     color: 'from-purple-500 to-violet-600',
-  },
-  {
-    appId: 'advanced-analytics',
-    path: '/advanced-analytics',
-    label: 'Advanced Analytics',
-    description: 'Deep-dive reports and data visualisations',
-    icon: 'LineChart',
-    requiredRoles: ['admin', 'manager', 'hr', 'finance'],
-    category: 'analytics',
-    color: 'from-cyan-600 to-blue-600',
   },
   {
     appId: 'collaboration-hub',

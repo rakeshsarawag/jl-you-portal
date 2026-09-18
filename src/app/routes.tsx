@@ -18,9 +18,8 @@ const LinkedInPostManager = React.lazy(() => import("./components/apps/LinkedInP
 const UserManagement = React.lazy(() => import("./components/apps/UserManagement").then(m => ({ default: m.UserManagement })));
 const PermissionManager = React.lazy(() => import("./components/apps/PermissionManagerSuperEnhanced").then(m => ({ default: m.PermissionManager })));
 const CommunicationsHubDB = React.lazy(() => import("./components/apps/InternalCommunicationsHubEnhanced").then(m => ({ default: m.CommunicationsHubDB })));
-const ExecutiveDashboard = React.lazy(() => import("./components/analytics/ExecutiveDashboardEnhanced").then(m => ({ default: m.ExecutiveDashboard })));
+const UnifiedAnalyticsDashboard = React.lazy(() => import("./components/analytics/UnifiedAnalyticsDashboard").then(m => ({ default: m.UnifiedAnalyticsDashboard })));
 const WorkflowDashboard = React.lazy(() => import("./components/workflows/WorkflowDashboard").then(m => ({ default: m.WorkflowDashboard })));
-const AdvancedAnalyticsDashboard = React.lazy(() => import("./components/analytics/AdvancedAnalyticsDashboard").then(m => ({ default: m.AdvancedAnalyticsDashboard })));
 const CollaborationHub = React.lazy(() => import("./components/collaboration/CollaborationHub").then(m => ({ default: m.CollaborationHub })));
 const SecurityComplianceDashboard = React.lazy(() => import("./components/security/SecurityComplianceDashboard"));
 const AdvancedFeaturesDashboard = React.lazy(() => import("./components/advanced/AdvancedFeaturesDashboard").then(m => ({ default: m.AdvancedFeaturesDashboard })));
@@ -189,8 +188,8 @@ export const createAppRouter = ({ accessToken, onLogout }: RouteParams) => {
         {
           path: "/executive-dashboard",
           element: (
-            <ProtectedRoute requiredRoles={roles("/executive-dashboard")} appName="Executive Dashboard">
-              <Suspense><ExecutiveDashboard accessToken={accessToken} onLogout={onLogout} /></Suspense>
+            <ProtectedRoute requiredRoles={roles("/executive-dashboard")} appName="Analytics Dashboard">
+              <Suspense><UnifiedAnalyticsDashboard accessToken={accessToken} onLogout={onLogout} /></Suspense>
             </ProtectedRoute>
           ),
         },
@@ -205,8 +204,8 @@ export const createAppRouter = ({ accessToken, onLogout }: RouteParams) => {
         {
           path: "/advanced-analytics",
           element: (
-            <ProtectedRoute requiredRoles={roles("/advanced-analytics")} appName="Advanced Analytics">
-              <Suspense><AdvancedAnalyticsDashboard accessToken={accessToken} onLogout={onLogout} /></Suspense>
+            <ProtectedRoute requiredRoles={roles("/advanced-analytics")} appName="Analytics Dashboard">
+              <Suspense><UnifiedAnalyticsDashboard accessToken={accessToken} onLogout={onLogout} /></Suspense>
             </ProtectedRoute>
           ),
         },

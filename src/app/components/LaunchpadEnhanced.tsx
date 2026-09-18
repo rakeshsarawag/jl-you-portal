@@ -12,7 +12,7 @@ import {
   Brain, BarChart3, MessageSquare, HardDrive, Share2, Database,
   ChevronRight, Calendar, CheckSquare, ArrowUpRight, Star, Inbox,
   Briefcase, Award, BookOpen, LayoutDashboard, LucideIcon,
-  GitBranch, UsersRound, Lock, Cpu, Bug,
+  GitBranch, UsersRound, Lock, Cpu, Bug, Globe,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useUser } from '../context/UserContext';
@@ -36,33 +36,34 @@ interface AppTile {
   category: 'people' | 'operations' | 'finance' | 'intelligence' | 'admin';
 }
 
-// Tile config — icons, paths, and colours are static; titles/subtitles are translated at render time
+// Tile config — order: Dashboard → Directory → Recruitment → Onboarding → Comms → Collaboration →
+//   Projects → Defect Tracker → IT Services → Assets → Workflow → Security →
+//   Performance → Training → OKR → Finance → Marketing → Intelligence → Admin
 const TILE_CONFIG = [
-  { id: 'dashboard',                 titleKey: 'tile.dashboard',         subKey: 'tile.sub.dashboard',         icon: LayoutDashboard, path: '/dashboard',                  color: 'text-blue-600',   iconBg: 'bg-blue-50',   category: 'people' },
-  { id: 'directory',                 titleKey: 'tile.directory',         subKey: 'tile.sub.directory',         icon: Users,           path: '/directory',                  color: 'text-indigo-600', iconBg: 'bg-indigo-50', category: 'people' },
-  { id: 'recruitment',               titleKey: 'tile.recruitment',       subKey: 'tile.sub.recruitment',       icon: UserPlus,        path: '/recruitment',                color: 'text-violet-600', iconBg: 'bg-violet-50', category: 'people' },
-  { id: 'onboarding',                titleKey: 'tile.onboarding',        subKey: 'tile.sub.onboarding',        icon: Star,            path: '/onboarding',                 color: 'text-pink-600',   iconBg: 'bg-pink-50',   category: 'people' },
-  { id: 'performance',               titleKey: 'tile.performance',       subKey: 'tile.sub.performance',       icon: TrendingUp,      path: '/performance',                color: 'text-orange-600', iconBg: 'bg-orange-50', category: 'people' },
-  { id: 'training',                  titleKey: 'tile.training',          subKey: 'tile.sub.training',          icon: GraduationCap,   path: '/training',                   color: 'text-teal-600',   iconBg: 'bg-teal-50',   category: 'people' },
-  { id: 'it-services',               titleKey: 'tile.itServices',        subKey: 'tile.sub.itServices',        icon: Laptop,          path: '/it-services',                color: 'text-cyan-600',   iconBg: 'bg-cyan-50',   category: 'operations' },
-  { id: 'assets',                    titleKey: 'tile.assets',            subKey: 'tile.sub.assets',            icon: HardDrive,       path: '/assets',                     color: 'text-gray-600',   iconBg: 'bg-gray-50',   category: 'operations' },
-  { id: 'projects',                  titleKey: 'tile.projects',          subKey: 'tile.sub.projects',          icon: Folder,          path: '/projects',                   color: 'text-lime-600',   iconBg: 'bg-lime-50',   category: 'operations' },
-  { id: 'defect-tracker', titleKey: 'tile.defectTracker', subKey: 'tile.sub.defectTracker', icon: Bug, path: '/defect-tracker', color: 'text-red-600', iconBg: 'bg-red-50', category: 'operations' },
-  { id: 'okr',                       titleKey: 'tile.okr',               subKey: 'tile.sub.okr',               icon: Target,          path: '/okr',                        color: 'text-yellow-600', iconBg: 'bg-yellow-50', category: 'operations' },
-  { id: 'communications',            titleKey: 'tile.communications',    subKey: 'tile.sub.communications',    icon: MessageSquare,   path: '/communications',             color: 'text-blue-500',   iconBg: 'bg-blue-50',   category: 'operations' },
-  { id: 'invoices',                  titleKey: 'tile.invoices',          subKey: 'tile.sub.invoices',          icon: FileText,        path: '/invoices',                   color: 'text-green-600',  iconBg: 'bg-green-50',  category: 'finance' },
-  { id: 'payroll',                   titleKey: 'tile.payroll',           subKey: 'tile.sub.payroll',           icon: DollarSign,      path: '/payroll',                    color: 'text-green-700',  iconBg: 'bg-green-50',  category: 'finance' },
-  { id: 'linkedin',                  titleKey: 'tile.linkedin',          subKey: 'tile.sub.linkedin',          icon: Share2,          path: '/linkedin',                   color: 'text-blue-700',   iconBg: 'bg-blue-50',   category: 'operations' },
-  { id: 'executive-dashboard',       titleKey: 'tile.executiveDashboard',subKey: 'tile.sub.executiveDashboard',icon: BarChart3,       path: '/executive-dashboard',        color: 'text-purple-600', iconBg: 'bg-purple-50', category: 'intelligence' },
-  { id: 'advanced-analytics',        titleKey: 'tile.analytics',         subKey: 'tile.sub.analytics',         icon: Brain,           path: '/advanced-analytics',         color: 'text-purple-700', iconBg: 'bg-purple-50', category: 'intelligence' },
-  { id: 'user-management',           titleKey: 'tile.userManagement',    subKey: 'tile.sub.userManagement',    icon: Shield,          path: '/user-management',            color: 'text-red-600',    iconBg: 'bg-red-50',    category: 'admin' },
-  { id: 'permissions',               titleKey: 'tile.permissions',       subKey: 'tile.sub.permissions',       icon: Settings,        path: '/permissions',                color: 'text-red-700',    iconBg: 'bg-red-50',    category: 'admin' },
-  { id: 'master-data',               titleKey: 'tile.masterData',        subKey: 'tile.sub.masterData',        icon: Database,        path: '/master-data',                color: 'text-slate-600',  iconBg: 'bg-slate-50',  category: 'admin' },
-  { id: 'workflow-dashboard',        titleKey: 'tile.workflow',          subKey: 'tile.sub.workflow',          icon: GitBranch,       path: '/workflow-dashboard',         color: 'text-amber-600',  iconBg: 'bg-amber-50',  category: 'intelligence' },
-  { id: 'collaboration-hub',         titleKey: 'tile.collaboration',     subKey: 'tile.sub.collaboration',     icon: UsersRound,      path: '/collaboration-hub',          color: 'text-sky-600',    iconBg: 'bg-sky-50',    category: 'operations' },
-  { id: 'security-compliance',       titleKey: 'tile.security',          subKey: 'tile.sub.security',          icon: Lock,            path: '/security-compliance',        color: 'text-rose-600',   iconBg: 'bg-rose-50',   category: 'admin' },
-  { id: 'advanced-features',         titleKey: 'tile.advancedFeatures',  subKey: 'tile.sub.advancedFeatures',  icon: Zap,             path: '/advanced-features',          color: 'text-fuchsia-600',iconBg: 'bg-fuchsia-50',category: 'admin' },
-  { id: 'documentation',             titleKey: 'tile.documentation',     subKey: 'tile.sub.documentation',     icon: BookOpen,        path: '/documentation',              color: 'text-sky-600',    iconBg: 'bg-sky-50',    category: 'admin' },
+  { id: 'dashboard',           titleKey: 'tile.dashboard',          subKey: 'tile.sub.dashboard',          icon: LayoutDashboard, path: '/dashboard',           color: 'text-blue-600',    iconBg: 'bg-blue-50',    category: 'people' },
+  { id: 'directory',           titleKey: 'tile.directory',          subKey: 'tile.sub.directory',          icon: Users,           path: '/directory',           color: 'text-indigo-600',  iconBg: 'bg-indigo-50',  category: 'people' },
+  { id: 'recruitment',         titleKey: 'tile.recruitment',        subKey: 'tile.sub.recruitment',        icon: UserPlus,        path: '/recruitment',         color: 'text-violet-600',  iconBg: 'bg-violet-50',  category: 'people' },
+  { id: 'onboarding',          titleKey: 'tile.onboarding',         subKey: 'tile.sub.onboarding',         icon: Star,            path: '/onboarding',          color: 'text-pink-600',    iconBg: 'bg-pink-50',    category: 'people' },
+  { id: 'communications',      titleKey: 'tile.communications',     subKey: 'tile.sub.communications',     icon: MessageSquare,   path: '/communications',      color: 'text-blue-500',    iconBg: 'bg-blue-50',    category: 'operations' },
+  { id: 'collaboration-hub',   titleKey: 'tile.collaboration',      subKey: 'tile.sub.collaboration',      icon: UsersRound,      path: '/collaboration-hub',   color: 'text-sky-600',     iconBg: 'bg-sky-50',     category: 'operations' },
+  { id: 'projects',            titleKey: 'tile.projects',           subKey: 'tile.sub.projects',           icon: Folder,          path: '/projects',            color: 'text-lime-600',    iconBg: 'bg-lime-50',    category: 'operations' },
+  { id: 'defect-tracker',      titleKey: 'tile.defectTracker',      subKey: 'tile.sub.defectTracker',      icon: Bug,             path: '/defect-tracker',      color: 'text-red-600',     iconBg: 'bg-red-50',     category: 'operations' },
+  { id: 'it-services',         titleKey: 'tile.itServices',         subKey: 'tile.sub.itServices',         icon: Laptop,          path: '/it-services',         color: 'text-cyan-600',    iconBg: 'bg-cyan-50',    category: 'operations' },
+  { id: 'assets',              titleKey: 'tile.assets',             subKey: 'tile.sub.assets',             icon: HardDrive,       path: '/assets',              color: 'text-gray-600',    iconBg: 'bg-gray-50',    category: 'operations' },
+  { id: 'workflow-dashboard',  titleKey: 'tile.workflow',           subKey: 'tile.sub.workflow',           icon: GitBranch,       path: '/workflow-dashboard',  color: 'text-amber-600',   iconBg: 'bg-amber-50',   category: 'intelligence' },
+  { id: 'security-compliance', titleKey: 'tile.security',           subKey: 'tile.sub.security',           icon: Lock,            path: '/security-compliance', color: 'text-rose-600',    iconBg: 'bg-rose-50',    category: 'admin' },
+  { id: 'performance',         titleKey: 'tile.performance',        subKey: 'tile.sub.performance',        icon: TrendingUp,      path: '/performance',         color: 'text-orange-600',  iconBg: 'bg-orange-50',  category: 'people' },
+  { id: 'training',            titleKey: 'tile.training',           subKey: 'tile.sub.training',           icon: GraduationCap,   path: '/training',            color: 'text-teal-600',    iconBg: 'bg-teal-50',    category: 'people' },
+  { id: 'okr',                 titleKey: 'tile.okr',                subKey: 'tile.sub.okr',                icon: Target,          path: '/okr',                 color: 'text-yellow-600',  iconBg: 'bg-yellow-50',  category: 'operations' },
+  { id: 'invoices',            titleKey: 'tile.invoices',           subKey: 'tile.sub.invoices',           icon: FileText,        path: '/invoices',            color: 'text-green-600',   iconBg: 'bg-green-50',   category: 'finance' },
+  { id: 'payroll',             titleKey: 'tile.payroll',            subKey: 'tile.sub.payroll',            icon: DollarSign,      path: '/payroll',             color: 'text-green-700',   iconBg: 'bg-green-50',   category: 'finance' },
+  { id: 'linkedin',            titleKey: 'tile.linkedin',           subKey: 'tile.sub.linkedin',           icon: Share2,          path: '/linkedin',            color: 'text-blue-700',    iconBg: 'bg-blue-50',    category: 'operations' },
+  { id: 'executive-dashboard', titleKey: 'tile.executiveDashboard', subKey: 'tile.sub.executiveDashboard', icon: BarChart3,       path: '/executive-dashboard', color: 'text-purple-600',  iconBg: 'bg-purple-50',  category: 'intelligence' },
+  { id: 'user-management',     titleKey: 'tile.userManagement',     subKey: 'tile.sub.userManagement',     icon: Shield,          path: '/user-management',     color: 'text-red-600',     iconBg: 'bg-red-50',     category: 'admin' },
+  { id: 'permissions',         titleKey: 'tile.permissions',        subKey: 'tile.sub.permissions',        icon: Settings,        path: '/permissions',         color: 'text-red-700',     iconBg: 'bg-red-50',     category: 'admin' },
+  { id: 'master-data',         titleKey: 'tile.masterData',         subKey: 'tile.sub.masterData',         icon: Database,        path: '/master-data',         color: 'text-slate-600',   iconBg: 'bg-slate-50',   category: 'admin' },
+  { id: 'advanced-features',   titleKey: 'tile.advancedFeatures',   subKey: 'tile.sub.advancedFeatures',   icon: Zap,             path: '/advanced-features',   color: 'text-fuchsia-600', iconBg: 'bg-fuchsia-50', category: 'admin' },
+  { id: 'documentation',       titleKey: 'tile.documentation',      subKey: 'tile.sub.documentation',      icon: BookOpen,        path: '/documentation',       color: 'text-sky-600',     iconBg: 'bg-sky-50',     category: 'admin' },
 ] as const;
 
 // ── Quick action definitions per role ──────────────────────────────────────
@@ -135,7 +136,12 @@ function useLatestStats(keys: StatKey[]) {
   useEffect(() => {
     const fetchers: Record<StatKey, () => Promise<number | string>> = {
       it_open_tickets: () =>
-        fetchStat(`${API_BASE}/it-services/stats`, d => d?.data?.openTickets ?? d?.openTickets ?? '—'),
+        fetchStat(`${API_BASE}/it-services/stats`, d => {
+          const open = d?.data?.openTickets ?? d?.openTickets ?? 0;
+          const inProg = d?.data?.inProgressTickets ?? d?.inProgressTickets ?? 0;
+          const total = Number(open) + Number(inProg);
+          return total;
+        }),
       active_recruitments: () =>
         fetchStat(`${API_BASE}/recruitment/candidates`, d =>
           Array.isArray(d) ? d.filter((c: any) => c.stage !== 'Hired' && c.stage !== 'Rejected').length : '—'),
@@ -700,10 +706,46 @@ function FinanceWidgets({ navigate }: { navigate: Function }) {
 }
 
 
+// ── World Clock widget ─────────────────────────────────────────────────────
+
+const WORLD_CLOCKS = [
+  { label: 'India',  tz: 'Asia/Kolkata',    flag: '🇮🇳' },
+  { label: 'Canada', tz: 'America/Toronto', flag: '🇨🇦' },
+  { label: 'Europe', tz: 'Europe/London',   flag: '🇬🇧' },
+];
+
+function WorldClockTile() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-4 flex items-center gap-4">
+      <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-violet-500 flex-shrink-0">
+        <Globe size={18} className="text-white" />
+      </div>
+      <div className="flex flex-1 items-center justify-around">
+        {WORLD_CLOCKS.map(({ label, tz, flag }) => {
+          const timeStr = now.toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+          return (
+            <div key={tz} className="flex flex-col items-center gap-0.5">
+              <span className="text-base leading-none">{flag}</span>
+              <span className="text-[10px] text-muted-foreground font-medium">{label}</span>
+              <span className="text-xs font-bold text-foreground font-mono tabular-nums">{timeStr}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Admin Widgets ──────────────────────────────────────────────────────────
 
 function AdminWidgets({ dash, navigate, userId }: { dash: ReturnType<typeof useEmployeeDashboard>; navigate: Function; userId: string }) {
-  const { stats, loading: statsLoading } = useLatestStats(['active_users', 'it_open_tickets', 'system_version']);
+  const { stats, loading: statsLoading } = useLatestStats(['active_users', 'it_open_tickets']);
 
   useEffect(() => {
     dash.loadPendingLeaves();
@@ -714,8 +756,8 @@ function AdminWidgets({ dash, navigate, userId }: { dash: ReturnType<typeof useE
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatTile label="Pending Leave Requests" value={dash.pendingLeaves.length} icon={Inbox} color="bg-orange-500" loading={dash.loading} />
         <StatTile label="Active Users" value={stats.active_users ?? '—'} icon={Users} color="bg-blue-500" loading={statsLoading} />
-        <StatTile label="Open IT Tickets" value={stats.it_open_tickets ?? '—'} icon={Laptop} color="bg-cyan-500" loading={statsLoading} />
-        <StatTile label="System Version" value={stats.system_version ?? APP_VERSION} icon={Settings} color="bg-slate-500" loading={statsLoading} />
+        <StatTile label="Active IT Tickets" value={stats.it_open_tickets ?? '—'} icon={Laptop} color="bg-cyan-500" loading={statsLoading} />
+        <WorldClockTile />
       </div>
 
       <WorkflowActivityWidget userId={userId} />

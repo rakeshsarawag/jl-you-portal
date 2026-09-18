@@ -13,15 +13,32 @@ export const supabase = createClient(
 // API Base URL — includes the route prefix used by all hooks and components
 export const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468`;
 
+// Module-level JWT cache — kept in sync by the auth state listener.
+// apiHeaders() reads this synchronously so callers need no async changes.
+let _sessionToken: string | null = null;
+
+// Initialise from the current session immediately (handles page refresh).
+supabase.auth.getSession().then(({ data: { session } }) => {
+  _sessionToken = session?.access_token ?? null;
+});
+
+// Keep the cache fresh across sign-in / sign-out / token-refresh events.
+supabase.auth.onAuthStateChange((_event, session) => {
+  _sessionToken = session?.access_token ?? null;
+});
+
 /**
  * Standard headers for all API requests.
- * Pass userEmail so the backend records created_by / updated_by on every write.
+ * Sends the authenticated user's JWT so the edge function can validate the
+ * session. Falls back to the anon key only when no session exists (should
+ * not happen for authenticated routes — the edge function will return 401).
  */
 export function apiHeaders(userEmail?: string): Record<string, string> {
+  const token = _sessionToken ?? publicAnonKey;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     apikey: publicAnonKey,
-    Authorization: `Bearer ${publicAnonKey}`,
+    Authorization: `Bearer ${token}`,
   };
   if (userEmail) headers['x-user-email'] = userEmail;
   return headers;
