@@ -309,4 +309,114 @@ app.get("/audit-log", async (c) => {
   }
 });
 
+// ── TEMPORARY ACCESS GRANTS ───────────────────────────────────────────────────
+
+// List active grants (admin: all; user: own)
+app.get("/temp-grants", async (c) => {
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .from("temporary_access_grants")
+      .select("*, app_users!user_id(id, name, email, primary_role), granted_by_user:app_users!granted_by(id, name)")
+      .eq("is_revoked", false)
+      .gt("expires_at", new Date().toISOString())
+      .order("created_at", { ascending: false });
+    if (error) {
+      if (isTableMissing(error)) return c.json({ success: true, data: [] });
+      throw error;
+    }
+    return c.json({ success: true, data: data ?? [] });
+  } catch (error) {
+    console.error("Error fetching temp grants:", error);
+    return c.json({ success: false, error: "Failed to fetch temporary grants" }, 500);
+  }
+});
+
+// All grants including expired/revoked (admin only for audit)
+app.get("/temp-grants/all", async (c) => {
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .from("temporary_access_grants")
+      .select("*, app_users!user_id(id, name, email, primary_role), granted_by_user:app_users!granted_by(id, name)")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) {
+      if (isTableMissing(error)) return c.json({ success: true, data: [] });
+      throw error;
+    }
+    return c.json({ success: true, data: data ?? [] });
+  } catch (error) {
+    return c.json({ success: false, error: "Failed to fetch grant history" }, 500);
+  }
+});
+
+// Create a temporary grant
+app.post("/temp-grants", async (c) => {
+  try {
+    const supabase = getSupabase();
+    const body = await c.req.json();
+
+    if (!body.user_id || !body.app_id || !body.expires_at) {
+      return c.json({ success: false, error: "user_id, app_id, and expires_at are required" }, 400);
+    }
+
+    const { data, error } = await supabase
+      .from("temporary_access_grants")
+      .insert([{
+        user_id:    body.user_id,
+        granted_by: body.granted_by ?? null,
+        app_id:     body.app_id,
+        section_id: body.section_id ?? null,
+        reason:     body.reason ?? "",
+        expires_at: body.expires_at,
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    return c.json({ success: true, data }, 201);
+  } catch (error) {
+    console.error("Error creating temp grant:", error);
+    return c.json({ success: false, error: "Failed to create temporary grant" }, 500);
+  }
+});
+
+// Revoke a grant
+app.patch("/temp-grants/:id/revoke", async (c) => {
+  try {
+    const supabase = getSupabase();
+    const body = await c.req.json().catch(() => ({}));
+    const { data, error } = await supabase
+      .from("temporary_access_grants")
+      .update({
+        is_revoked: true,
+        revoked_by: body.revoked_by ?? null,
+        revoked_at: new Date().toISOString(),
+      })
+      .eq("id", c.req.param("id"))
+      .select()
+      .single();
+    if (error) throw error;
+    return c.json({ success: true, data });
+  } catch (error) {
+    return c.json({ success: false, error: "Failed to revoke grant" }, 500);
+  }
+});
+
+// Delete a grant (hard delete, admin only)
+app.delete("/temp-grants/:id", async (c) => {
+  try {
+    const supabase = getSupabase();
+    const { error } = await supabase
+      .from("temporary_access_grants")
+      .delete()
+      .eq("id", c.req.param("id"));
+    if (error) throw error;
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ success: false, error: "Failed to delete grant" }, 500);
+  }
+});
+
 export default app;

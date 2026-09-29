@@ -186,7 +186,7 @@ function NotificationPanel({ onClose, navigate }: { onClose: () => void; navigat
   );
 }
 
-function UserMenu({ currentUser, onLogout }: { currentUser: any; onLogout: () => void }) {
+export function UserMenu({ currentUser, onLogout }: { currentUser: any; onLogout: () => void }) {
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('jl-theme') as Theme) ?? 'light');
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
@@ -363,7 +363,7 @@ export function AppHeader({ onLogout }: AppHeaderProps) {
   return (
     <>
       <header className="fixed top-0 left-0 right-0 z-50 h-12 bg-card border-b border-border shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-full flex items-center gap-2">
+        <div className={`${isHome ? 'w-full px-6 sm:px-10' : 'max-w-7xl mx-auto px-4 sm:px-6'} h-full flex items-center gap-2`}>
 
           {/* Back button */}
           {!isHome && (

@@ -81,7 +81,7 @@ function timeAgo(iso: string) {
 
 export default function NotificationHistoryPage() {
   const navigate = useNavigate();
-  const { user } = useUser();
+  const { currentUser } = useUser();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -104,12 +104,17 @@ export default function NotificationHistoryPage() {
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
 
   const fetchNotifications = useCallback(async () => {
-    if (!user?.id) return;
+    if (!currentUser?.id) { setLoading(false); return; }
     setLoading(true);
+    // Match all IDs the notifications system might use for this user
+    const userIds = [...new Set([
+      currentUser.id,
+      currentUser.appUserId,
+    ].filter(Boolean))] as string[];
     let q = supabase
       .from('notifications')
       .select('*', { count: 'exact' })
-      .eq('user_id', user.id)
+      .in('user_id', userIds)
       .gte('created_at', `${dateFrom}T00:00:00Z`)
       .lte('created_at', `${dateTo}T23:59:59Z`)
       .order('created_at', { ascending: false })
@@ -126,7 +131,7 @@ export default function NotificationHistoryPage() {
     setNotifications((data as Notification[]) ?? []);
     setTotal(count ?? 0);
     setLoading(false);
-  }, [user?.id, appTab, typeFilter, statusFilter, search, dateFrom, dateTo, page]);
+  }, [currentUser?.id, currentUser?.appUserId, appTab, typeFilter, statusFilter, search, dateFrom, dateTo, page]);
 
   useEffect(() => { fetchNotifications(); }, [fetchNotifications]);
 

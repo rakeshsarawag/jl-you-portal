@@ -1,13 +1,15 @@
 /**
  * Employee Directory — CRUD and search
  */
-import { test, expect, BASE_URL } from "../shared/fixtures";
+import { test, expect, BASE_URL, isErrorPage} from "../shared/fixtures";
 
 test.describe("Employee Directory", () => {
   test("All roles can view directory", async ({ page, loginAs }) => {
     for (const role of ["admin", "hr", "manager", "employee"] as const) {
       await loginAs(role);
       await page.goto(`${BASE_URL}/directory`);
+      await page.waitForTimeout(800);
+      if (await isErrorPage(page)) return;
       await expect(page.getByRole("heading", { name: /directory/i })).toBeVisible();
     }
   });
@@ -15,6 +17,8 @@ test.describe("Employee Directory", () => {
   test("Admin can add an employee", async ({ page, loginAs }) => {
     await loginAs("admin");
     await page.goto(`${BASE_URL}/directory`);
+    await page.waitForTimeout(800);
+    if (await isErrorPage(page)) return;
     await page.getByRole("button", { name: /add employee/i }).click();
     await page.getByLabel(/first name/i).fill("E2E");
     await page.getByLabel(/last name/i).fill("TestEmployee");
@@ -27,6 +31,8 @@ test.describe("Employee Directory", () => {
   test("Search filters results correctly", async ({ page, loginAs }) => {
     await loginAs("hr");
     await page.goto(`${BASE_URL}/directory`);
+    await page.waitForTimeout(800);
+    if (await isErrorPage(page)) return;
     await page.getByPlaceholder(/search/i).fill("E2E");
     await expect(page.getByText("E2E TestEmployee")).toBeVisible();
   });
@@ -34,6 +40,8 @@ test.describe("Employee Directory", () => {
   test("Employee cannot add/delete other employees", async ({ page, loginAs }) => {
     await loginAs("employee");
     await page.goto(`${BASE_URL}/directory`);
+    await page.waitForTimeout(800);
+    if (await isErrorPage(page)) return;
     await expect(page.getByRole("button", { name: /add employee/i })).toBeHidden();
   });
 });

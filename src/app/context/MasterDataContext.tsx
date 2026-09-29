@@ -264,6 +264,14 @@ interface MasterDataContextType {
 
 const MasterDataContext = createContext<MasterDataContextType | undefined>(undefined);
 
+// Module-level in-memory cache — shared across provider remounts
+interface MasterDataCache {
+  data: Record<string, any[]>;
+  ts: number;
+}
+let _mdCache: MasterDataCache | null = null;
+const MD_CACHE_TTL = 3 * 60 * 1000; // 3 minutes
+
 // Initialize with comprehensive sample data
 const getInitialData = (): MasterData => ({
   clients: [
@@ -396,21 +404,36 @@ export function MasterDataProvider({ children, accessToken }: { children: ReactN
     loadMasterData();
   }, []);
 
+  // Invalidate in-memory cache when external code signals master data changed
+  useEffect(() => {
+    const handler = () => { _mdCache = null; };
+    window.addEventListener('masterDataUpdated', handler);
+    return () => window.removeEventListener('masterDataUpdated', handler);
+  }, []);
+
   const loadMasterData = async () => {
+    const now = Date.now();
+    if (_mdCache && now - _mdCache.ts < MD_CACHE_TTL) {
+      // Hydrate state from cache, skip network fetch
+      setMasterData(prev => ({ ...prev, ..._mdCache!.data }));
+      return;
+    }
+
     setLoading(true);
     try {
       const response = await fetch(`${API_BASE}/master-data/all`, {
-        headers: { 
+        headers: {
           'Authorization': `Bearer ${accessToken}`,
-          'X-Access-Token': accessToken 
+          'X-Access-Token': accessToken
         },
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         // Merge with defaults if backend data exists
         if (data && Object.keys(data).length > 0) {
           setMasterData(prev => ({ ...prev, ...data }));
+          _mdCache = { data, ts: Date.now() };
         }
       }
     } catch (error) {
@@ -421,6 +444,8 @@ export function MasterDataProvider({ children, accessToken }: { children: ReactN
   };
 
   const refreshMasterData = async () => {
+    // Explicit refresh — invalidate cache first
+    _mdCache = null;
     await loadMasterData();
   };
 

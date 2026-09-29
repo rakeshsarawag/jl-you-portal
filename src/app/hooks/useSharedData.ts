@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import DataService from '../services/dataService';
 import { API_BASE, publicAnonKey, safeJson, apiHeaders } from '../utils/constants';
+import { useEmployees } from '../context/EmployeesContext';
 // Re-export useUser so any stale import from this file still resolves
 export { useUser } from '../context/UserContext';
 
@@ -155,52 +156,32 @@ export function useMasterDataOptions(category: string) {
   return { options, loading };
 }
 
-// Helper to get employees for dropdowns
+// Helper to get employees for dropdowns — delegates to EmployeesContext (cached, deduplicated)
 export function useEmployeeOptions() {
-  const [employees, setEmployees] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { employees, loading } = useEmployees();
 
-  useEffect(() => {
-    async function loadEmployees() {
-      try {
-        const result = await DataService.getEmployees();
-        const employeeArray = Array.isArray(result) ? result : (result?.data || []);
-        setEmployees(employeeArray);
-      } catch {
-        setEmployees([]);
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadEmployees();
-    const handleUpdate = () => loadEmployees();
-    window.addEventListener('masterDataUpdated', handleUpdate);
-    return () => window.removeEventListener('masterDataUpdated', handleUpdate);
-  }, []);
-
-  // Transform employee data to dropdown options format
   const options = employees.map(emp => {
-    // Support multiple field name variations
-    const fullName = emp.name || `${emp.firstName || ''} ${emp.lastName || ''}`.trim();
-    const jobTitle = emp.designation || emp.position || emp.jobTitle || emp.title || '';
-    
+    const fullName = emp.name || `${(emp as any).firstName || ''} ${(emp as any).lastName || ''}`.trim();
+    const jobTitle = emp.designation || emp.position || (emp as any).jobTitle || (emp as any).title || '';
+    const employeeCode = emp.employee_code || (emp as any).employeeCode || '';
+
     return {
       value: emp.id,
-      label: fullName,
+      label: employeeCode ? `${fullName} (${employeeCode})` : fullName,
+      displayLabel: employeeCode ? `${fullName} · ${employeeCode}` : fullName,
       email: emp.email,
       department: emp.department,
-      jobTitle: jobTitle,
-      phone: emp.phone || emp.phoneNumber || '',
+      jobTitle,
+      phone: emp.phone || (emp as any).phoneNumber || '',
       location: emp.location || '',
-      employeeCode: emp.employee_code || emp.employeeCode || '',
+      employeeCode,
     };
-  }).filter(opt => opt.label && opt.label.trim()); // Filter out any with empty labels
+  }).filter(opt => opt.label && opt.label.trim());
 
-  // ✅ DEDUPLICATION: Remove duplicates by email (primary key for employees)
-  const uniqueByEmail = options.filter((opt, index, self) => 
+  const uniqueByEmail = options.filter((opt, index, self) =>
     index === self.findIndex(t => t.email?.toLowerCase() === opt.email?.toLowerCase())
   );
-  
+
   return { options: uniqueByEmail, employees, loading };
 }
 
@@ -239,6 +220,16 @@ export function useLocationOptions() {
   return { options: resolved, loading };
 }
 
+// Module-level in-memory TTL cache for useMasterDataDirect — no localStorage
+interface DirectCacheEntry { data: any[]; ts: number; }
+const _directCache = new Map<string, DirectCacheEntry>();
+const DIRECT_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
+// Invalidate all entries when master data is mutated
+if (typeof window !== 'undefined') {
+  window.addEventListener('masterDataUpdated', () => _directCache.clear());
+}
+
 // Direct hook for master data DB endpoints (Phase 6)
 export function useMasterDataDirect(endpoint: string, userEmail?: string) {
   const [data, setData] = useState<any[]>([]);
@@ -246,32 +237,35 @@ export function useMasterDataDirect(endpoint: string, userEmail?: string) {
 
   const masterDataBase = `${API_BASE}/master-data`;
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
+    const url = `${masterDataBase}/${endpoint}`;
+    const cached = _directCache.get(url);
+    if (!force && cached && Date.now() - cached.ts < DIRECT_CACHE_TTL) {
+      setData(cached.data);
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
-      const url = `${masterDataBase}/${endpoint}`;
-      const response = await fetch(url, {
-        headers: apiHeaders(userEmail),
-      });
-      if (!response.ok) {
-        setData([]);
-        return;
-      }
+      const response = await fetch(url, { headers: apiHeaders(userEmail) });
+      if (!response.ok) { setData([]); return; }
       const result = await safeJson(response);
-      setData(result?.data || result || []);
+      const rows = result?.data || result || [];
+      _directCache.set(url, { data: rows, ts: Date.now() });
+      setData(rows);
     } catch {
       setData([]);
     } finally {
       setLoading(false);
     }
-  }, [endpoint, masterDataBase]);
+  }, [endpoint, masterDataBase, userEmail]);
 
   useEffect(() => {
     load();
-    const handleUpdate = () => load();
+    const handleUpdate = () => load(true);
     window.addEventListener("masterDataUpdated", handleUpdate);
     return () => window.removeEventListener("masterDataUpdated", handleUpdate);
   }, [load]);
 
-  return { data, loading, refresh: load };
+  return { data, loading, refresh: () => load(true) };
 }

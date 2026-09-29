@@ -4,7 +4,7 @@
  * Standards: RBAC (admin-only), i18n, Supabase direct (no Edge Functions),
  * confirm dialogs, form validation, soft-delete, MFA panel, invitation flow
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { usePagination } from '../../hooks/usePagination';
 import Pagination from '../ui/Pagination';
 import { toast } from 'sonner';
@@ -13,7 +13,7 @@ import {
   AlertCircle, Lock, Power, Mail, ChevronDown, User, Eye, EyeOff, Download,
   ClipboardList, RefreshCw, Filter, UserCheck, Link2, CheckSquare, Square,
   Monitor, Smartphone, Tablet, MapPin, Clock, Activity, RotateCcw,
-  ShieldCheck, ShieldOff, ShieldAlert, Calendar, BarChart2, Send,
+  ShieldCheck, ShieldOff, ShieldAlert, Calendar, BarChart2, Send, Upload,
 } from 'lucide-react';
 import { API_BASE, publicAnonKey, safeJson, supabase } from '../../utils/constants';
 import { useNavigate } from 'react-router';
@@ -23,6 +23,7 @@ import { useUserManagement } from '../../hooks/useUserManagement';
 import { ALL_ROLES, ROLE_LABELS, ROLE_COLORS, USER_STATUS_LABELS } from '../../../constants/apps/user-management';
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { t } from '../../../i18n/index';
+import { useEmployees } from '../../context/EmployeesContext';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface AppUserSession {
@@ -583,6 +584,187 @@ function InviteUserModal({ onClose, onDone }: { onClose: () => void; onDone: () 
   );
 }
 
+// ── Bulk CSV Import Modal ───────────────────────────────────────────────────
+const CSV_TEMPLATE_HEADERS = ['email', 'name', 'role', 'department', 'phone'];
+const CSV_TEMPLATE_ROW = ['john.doe@company.com', 'John Doe', 'employee', 'Engineering', '+91-9876543210'];
+
+function BulkCSVImportModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+  const [csvText, setCsvText] = useState('');
+  const [parsed, setParsed] = useState<any[]>([]);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState<{ created: number; skipped: number; failed: number } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const parseCSV = (text: string) => {
+    const lines = text.trim().split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) { setErrors(['CSV must have a header row and at least one data row']); setParsed([]); return; }
+    const headers = lines[0].toLowerCase().split(',').map(h => h.trim().replace(/"/g, ''));
+    const emailIdx = headers.indexOf('email');
+    const nameIdx = headers.indexOf('name');
+    const roleIdx = headers.indexOf('role');
+    const deptIdx = headers.indexOf('department');
+    const phoneIdx = headers.indexOf('phone');
+    if (emailIdx === -1) { setErrors(['CSV must have an "email" column']); setParsed([]); return; }
+    const rows: any[] = [];
+    const errs: string[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
+      const email = cols[emailIdx]?.trim();
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errs.push(`Row ${i + 1}: invalid email "${email}"`); continue; }
+      const role = (roleIdx !== -1 ? cols[roleIdx]?.trim() : '') || 'employee';
+      const validRoles = ['admin', 'hr', 'manager', 'employee', 'finance', 'marketing', 'it'];
+      if (!validRoles.includes(role)) { errs.push(`Row ${i + 1}: invalid role "${role}" (must be one of: ${validRoles.join(', ')})`); continue; }
+      rows.push({ email, name: nameIdx !== -1 ? cols[nameIdx]?.trim() || '' : '', role, department: deptIdx !== -1 ? cols[deptIdx]?.trim() || '' : '', phone: phoneIdx !== -1 ? cols[phoneIdx]?.trim() || '' : '' });
+    }
+    setErrors(errs);
+    setParsed(rows);
+  };
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => { const text = ev.target?.result as string; setCsvText(text); parseCSV(text); };
+    reader.readAsText(file);
+  };
+
+  const handleTextChange = (text: string) => { setCsvText(text); parseCSV(text); };
+
+  const downloadTemplate = () => {
+    const csv = [CSV_TEMPLATE_HEADERS.join(','), CSV_TEMPLATE_ROW.join(',')].join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    a.download = 'user-import-template.csv';
+    a.click();
+  };
+
+  const handleImport = async () => {
+    if (!parsed.length) return;
+    setImporting(true);
+    let created = 0, skipped = 0, failed = 0;
+    for (const row of parsed) {
+      try {
+        const existing = await supabase.from('app_users').select('id').eq('email', row.email).maybeSingle();
+        if (existing.data) { skipped++; continue; }
+        const { error } = await supabase.from('app_users').insert({
+          email: row.email,
+          name: row.name || row.email.split('@')[0],
+          role: row.role,
+          department: row.department,
+          phone: row.phone,
+          status: 'invited',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+        if (error) { failed++; } else { created++; }
+      } catch { failed++; }
+    }
+    setResult({ created, skipped, failed });
+    setImporting(false);
+    if (created > 0) onDone();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+          <div className="flex items-center gap-2">
+            <Upload size={15} className="text-primary" />
+            <h3 className="font-semibold text-foreground">Bulk User Import (CSV)</h3>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"><X size={16} /></button>
+        </div>
+
+        {result ? (
+          <div className="p-8 text-center space-y-4">
+            <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mx-auto">
+              <Check size={28} className="text-green-600" />
+            </div>
+            <h4 className="font-semibold text-lg text-foreground">Import Complete</h4>
+            <div className="flex justify-center gap-6 text-sm">
+              <div><span className="font-bold text-green-600 text-xl">{result.created}</span><p className="text-muted-foreground">Created</p></div>
+              <div><span className="font-bold text-amber-500 text-xl">{result.skipped}</span><p className="text-muted-foreground">Skipped (exists)</p></div>
+              <div><span className="font-bold text-red-500 text-xl">{result.failed}</span><p className="text-muted-foreground">Failed</p></div>
+            </div>
+            <button onClick={onClose} className="px-6 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors">Done</button>
+          </div>
+        ) : (
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">Upload a CSV file with user details. Email is required; role defaults to "employee".</p>
+              <button onClick={downloadTemplate} className="flex items-center gap-1.5 text-xs text-primary hover:underline">
+                <Download size={12} /> Download Template
+              </button>
+            </div>
+
+            <div
+              className="border-2 border-dashed border-border rounded-xl p-6 text-center cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors"
+              onClick={() => fileRef.current?.click()}
+            >
+              <Upload size={24} className="mx-auto mb-2 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">Drop CSV file here or <span className="text-primary">click to browse</span></p>
+              <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFile} />
+            </div>
+
+            <div>
+              <p className="text-xs text-muted-foreground mb-1.5">Or paste CSV content:</p>
+              <textarea
+                value={csvText}
+                onChange={e => handleTextChange(e.target.value)}
+                placeholder={`email,name,role,department\njohn@company.com,John Doe,employee,Engineering`}
+                className="w-full h-28 text-xs font-mono border border-border rounded-lg p-2.5 bg-muted/30 focus:outline-none focus:ring-1 focus:ring-primary/30 resize-none"
+              />
+            </div>
+
+            {errors.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 space-y-1">
+                <p className="text-xs font-medium text-red-700">Validation errors ({errors.length}):</p>
+                {errors.slice(0, 5).map((e, i) => <p key={i} className="text-xs text-red-600">• {e}</p>)}
+                {errors.length > 5 && <p className="text-xs text-red-400">...and {errors.length - 5} more</p>}
+              </div>
+            )}
+
+            {parsed.length > 0 && (
+              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                <p className="text-xs font-medium text-green-700 mb-2">{parsed.length} users ready to import:</p>
+                <div className="overflow-x-auto max-h-36">
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-green-600">{['Email', 'Name', 'Role', 'Department'].map(h => <th key={h} className="text-left pr-3 pb-1">{h}</th>)}</tr></thead>
+                    <tbody>{parsed.slice(0, 10).map((r, i) => (
+                      <tr key={i} className="text-green-800">
+                        <td className="pr-3 py-0.5">{r.email}</td>
+                        <td className="pr-3">{r.name || '—'}</td>
+                        <td className="pr-3">{r.role}</td>
+                        <td>{r.department || '—'}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                  {parsed.length > 10 && <p className="text-xs text-green-600 mt-1">...and {parsed.length - 10} more</p>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {!result && (
+          <div className="flex justify-end gap-2 px-6 py-4 border-t border-border shrink-0">
+            <button onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors">Cancel</button>
+            <button
+              onClick={handleImport}
+              disabled={importing || parsed.length === 0}
+              className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-1.5 disabled:opacity-60"
+            >
+              {importing && <Loader2 size={14} className="animate-spin" />}
+              Import {parsed.length > 0 ? `${parsed.length} Users` : 'Users'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── MFA Modal ──────────────────────────────────────────────────────────────
 function MFAModal({ user, onClose, onDone }: { user: UserWithRole & { mfa_enrolled?: boolean; force_mfa?: boolean }; onClose: () => void; onDone: () => void }) {
   const [forceMfa, setForceMfa] = useState(user.force_mfa ?? false);
@@ -658,8 +840,8 @@ function ProvisionForm({ onClose, onDone, existingUserEmails }: {
   onDone: () => void;
   existingUserEmails: Set<string>;
 }) {
-  const [employees, setEmployees] = useState<any[]>([]);
-  const [loadingEmps, setLoadingEmps] = useState(true);
+  const { employees: allEmployees, loading: loadingEmps } = useEmployees();
+  const employees = allEmployees.filter((e: any) => e.status === 'Active');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [roles, setRoles] = useState<UserRole[]>(['employee']);
@@ -672,17 +854,6 @@ function ProvisionForm({ onClose, onDone, existingUserEmails }: {
   const [results, setResults] = useState<{ email: string; name: string; ok: boolean; password?: string; msg?: string }[]>([]);
   const [resetting, setResetting] = useState<Set<string>>(new Set());
   const [resetDone, setResetDone] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    fetch(`${API_BASE}/directory/employees`, { headers: { Authorization: `Bearer ${publicAnonKey}` } })
-      .then(r => r.json())
-      .then(json => {
-        const list: any[] = Array.isArray(json) ? json : (json?.data ?? []);
-        setEmployees(list.filter((e: any) => e.status === 'Active'));
-      })
-      .catch(() => setEmployees([]))
-      .finally(() => setLoadingEmps(false));
-  }, []);
 
   const filtered = employees.filter(e => {
     const q = search.toLowerCase();
@@ -2205,6 +2376,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
   const [showDeletedUsers, setShowDeletedUsers] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
   const [editingUser, setEditingUser] = useState<UserWithRole | undefined>();
   const [roleModalUser, setRoleModalUser] = useState<UserWithRole | undefined>();
   const [roleChangeUser, setRoleChangeUser] = useState<UserWithRole | undefined>();
@@ -2447,6 +2619,12 @@ export function UserManagement({ accessToken, onLogout }: Props) {
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border rounded-lg hover:bg-muted transition-colors"
                 >
                   <Send size={13} /> Invite User
+                </button>
+                <button
+                  onClick={() => setShowBulkImport(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border rounded-lg hover:bg-muted transition-colors"
+                >
+                  <Upload size={13} /> Bulk Import
                 </button>
                 <button
                   onClick={() => { setEditingUser(undefined); setShowCreateForm(true); }}
@@ -2853,6 +3031,12 @@ export function UserManagement({ accessToken, onLogout }: Props) {
         <InviteUserModal
           onClose={() => setShowInviteModal(false)}
           onDone={() => um.refreshUsers?.()}
+        />
+      )}
+      {showBulkImport && (
+        <BulkCSVImportModal
+          onClose={() => setShowBulkImport(false)}
+          onDone={() => { um.refreshUsers?.(); }}
         />
       )}
       {showCreateForm && !editingUser && (

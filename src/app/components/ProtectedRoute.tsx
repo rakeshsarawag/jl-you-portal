@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useNavigate } from 'react-router';
 import { useUser } from '../context/UserContext';
 import { toast } from 'sonner';
+import { MfaEnrollmentGate } from './MfaEnrollmentGate';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -80,6 +81,11 @@ export function ProtectedRoute({ children, requiredRoles, appName }: ProtectedRo
 
   if (!hasAccess) {
     return null; // Will redirect in useEffect
+  }
+
+  // MFA enforcement: admin has force_mfa=true but user hasn't enrolled yet
+  if (currentUser?.forceMfa && !currentUser?.mfaEnrolled) {
+    return <MfaEnrollmentGate userEmail={currentUser.email} />;
   }
 
   return <>{children}</>;

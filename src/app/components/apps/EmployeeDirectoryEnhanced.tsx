@@ -4,7 +4,8 @@
  * Education/Certifications/Previous Employers tab, Quick Contact hover card,
  * Column Picker, Employee Code display, Audit log on updates.
  */
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { InlineLoader } from '../ui/PageLoader';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
@@ -2205,6 +2206,15 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
     storedCols ? new Set(JSON.parse(storedCols)) : new Set(DEFAULT_COLUMNS)
   );
 
+  // Virtual scrolling for list view
+  const listParentRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: dir.filtered.length,
+    getScrollElement: () => listParentRef.current,
+    estimateSize: () => 64,
+    overscan: 10,
+  });
+
   const openDetail = (emp: DirectoryEmployee) => setSelectedEmployee(emp);
   const closeDetail = () => setSelectedEmployee(null);
   const handleEditFromDetail = () => {
@@ -2455,86 +2465,55 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                         {canEdit && <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Actions</th>}
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-border">
-                      {dir.filtered.map(emp => (
-                        <tr key={emp.id}
-                          className="hover:bg-muted/30 transition-colors group cursor-pointer"
+                  </table>
+                </div>
+                {/* Virtual scroll container for list rows */}
+                <div ref={listParentRef} style={{ height: Math.min(dir.filtered.length * 64, 600), overflowY: 'auto' }}>
+                  <div style={{ height: rowVirtualizer.getTotalSize(), position: 'relative' }}>
+                    {rowVirtualizer.getVirtualItems().map(virtualRow => {
+                      const emp = dir.filtered[virtualRow.index];
+                      return (
+                        <div
+                          key={emp.id}
+                          style={{ position: 'absolute', top: virtualRow.start, left: 0, right: 0, height: virtualRow.size }}
+                          className="flex items-center px-4 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer group"
                           onClick={() => openDetail(emp)}
-                          onMouseEnter={e => handleHoverStart(e, emp)}
+                          onMouseEnter={e => handleHoverStart(e as any, emp)}
                           onMouseLeave={handleHoverEnd}
                         >
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-3">
-                              <Avatar name={emp.name} size="sm" />
-                              <div>
-                                <p className="font-medium text-foreground">{emp.name}</p>
-                                <p className="text-xs text-muted-foreground">{emp.designation}</p>
-                              </div>
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <Avatar name={emp.name} size="sm" />
+                            <div className="min-w-0">
+                              <p className="font-medium text-foreground truncate">{emp.name}</p>
+                              <p className="text-xs text-muted-foreground truncate">{emp.designation}</p>
                             </div>
-                          </td>
-                          {visibleCols.has('employee_code') && (
-                            <td className="px-4 py-3 hidden sm:table-cell">
-                              <span className="text-xs font-mono text-muted-foreground">{(emp as any).employee_code ?? '—'}</span>
-                            </td>
-                          )}
+                          </div>
                           {visibleCols.has('department') && (
-                            <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">
-                              <div className="flex items-center gap-1.5"><Building2 size={12} />{emp.department}</div>
-                              {emp.manager_name && <p className="text-xs text-muted-foreground/70 mt-0.5">↳ {emp.manager_name}</p>}
-                            </td>
-                          )}
-                          {visibleCols.has('email') && (
-                            <td className="px-4 py-3 hidden md:table-cell">
-                              <div className="text-xs text-muted-foreground space-y-0.5">
-                                <div className="flex items-center gap-1"><Mail size={11} />{emp.email}</div>
-                                {emp.phone && <div className="flex items-center gap-1"><Phone size={11} />{emp.phone}</div>}
-                              </div>
-                            </td>
-                          )}
-                          {visibleCols.has('location') && (
-                            <td className="px-4 py-3 hidden lg:table-cell">
-                              <div className="flex items-center gap-1 text-xs text-muted-foreground"><MapPin size={11} />{emp.location}</div>
-                              {emp.join_date && <div className="flex items-center gap-1 text-xs text-muted-foreground mt-0.5"><Calendar size={11} />{new Date(emp.join_date).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}</div>}
-                            </td>
-                          )}
-                          <td className="px-4 py-3">
-                            <div className="flex flex-wrap gap-1">
-                              <StatusBadge status={emp.status} />
-                              {emp.lifecycleStatus && <LifecycleBadge status={emp.lifecycleStatus} />}
-                              {onLeaveIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">🌴 {t('directory.onLeave')}</span>}
-                              {wfhIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">🏠 {t('directory.wfhToday')}</span>}
-                              {(() => {
-                                const today = new Date();
-                                const dob = (emp as any).date_of_birth;
-                                const jd = emp.join_date;
-                                const isBday = dob && new Date(dob).getDate() === today.getDate() && new Date(dob).getMonth() === today.getMonth();
-                                const isAnniv = jd && new Date(jd).getDate() === today.getDate() && new Date(jd).getMonth() === today.getMonth();
-                                const yrs = jd ? today.getFullYear() - new Date(jd).getFullYear() : 0;
-                                return (<>
-                                  {isBday && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-pink-100 text-pink-600">🎂</span>}
-                                  {isAnniv && yrs > 0 && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-purple-100 text-purple-600">🎉 {yrs} yrs</span>}
-                                </>);
-                              })()}
+                            <div className="hidden sm:block w-40 shrink-0 text-xs text-muted-foreground">
+                              <div className="flex items-center gap-1"><Building2 size={11} /><span className="truncate">{emp.department}</span></div>
                             </div>
-                          </td>
-                          {canEdit && (
-                            <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                              <div className="flex justify-end gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
-                                  className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors">
-                                  <Edit2 size={13} className="text-muted-foreground" />
-                                </button>
-                                <button onClick={() => setDeletingId(emp.id)}
-                                  className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 transition-colors">
-                                  <Trash2 size={13} className="text-red-400" />
-                                </button>
-                              </div>
-                            </td>
                           )}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          <div className="flex flex-wrap gap-1 ml-2">
+                            <StatusBadge status={emp.status} />
+                            {onLeaveIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">🌴</span>}
+                            {wfhIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">🏠</span>}
+                          </div>
+                          {canEdit && (
+                            <div className="flex gap-1 ml-2 sm:opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                              <button onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors">
+                                <Edit2 size={13} className="text-muted-foreground" />
+                              </button>
+                              <button onClick={() => setDeletingId(emp.id)}
+                                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 transition-colors">
+                                <Trash2 size={13} className="text-red-400" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             )}

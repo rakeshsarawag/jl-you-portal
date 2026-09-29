@@ -104,10 +104,14 @@ app.put("/read-all", async (c) => {
     }
 
     const supabase = getSupabase();
+    // Support multiple user IDs (auth UUID, app_users.id, employee id)
+    const userIds: string[] = Array.isArray(body.userIds)
+      ? body.userIds.filter(Boolean)
+      : [userId];
     const { error } = await supabase
       .from("notifications")
-      .update({ read: true })
-      .eq("user_id", userId)
+      .update({ read: true, is_read: true, read_at: new Date().toISOString() })
+      .in("user_id", userIds)
       .eq("read", false);
 
     if (error) {
@@ -132,7 +136,7 @@ app.put("/:id/read", async (c) => {
     const supabase = getSupabase();
     const { error } = await supabase
       .from("notifications")
-      .update({ read: true })
+      .update({ read: true, is_read: true, read_at: new Date().toISOString() })
       .eq("id", id);
 
     if (error) {

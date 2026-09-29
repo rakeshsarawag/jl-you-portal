@@ -37,6 +37,7 @@ app.get('/employees', async (c) => {
       joinDate: emp.join_date || '',
       profilePicture: emp.profile_picture || '',
       skills: emp.skills || [],
+      employee_code: emp.employee_code || '',
       status: emp.status || 'Active',
       authUserId: emp.auth_user_id,
       createdAt: emp.created_at,

@@ -10,15 +10,24 @@ import { t } from '../../../i18n';
 import { toast } from 'sonner';
 import { API_BASE, publicAnonKey, safeJson, supabase } from '../../utils/constants';
 import { PAYROLL_MONTHS, PAYROLL_STATUSES } from '../../../constants/apps/payroll';
+import {
+  calculatePF,
+  calculateESI,
+  PF_WAGE_CEILING,
+  ESI_THRESHOLD,
+  ESI_EMPLOYEE_RATE as ESI_EMP_RATE_UTIL,
+  ESI_EMPLOYER_RATE as ESI_EMPLR_RATE_UTIL,
+} from '../../utils/payrollCalculations';
 import { useSectionPermission } from '../SectionGuard';
 import ReportDefectButton from '../ReportDefectButton';
 
 // ==================== CALCULATION CONSTANTS ====================
+// Imported from payrollCalculations.ts utility — do not redefine here
 const PF_RATE = 0.12;
-const PF_CAP = 15000; // PF calculated on max ₹15,000 basic
-const ESI_GROSS_LIMIT = 21000;
-const ESI_EMPLOYEE_RATE = 0.0075; // Employee ESI: 0.75%
-const ESI_RATE = 0.0325; // Employer ESI: 3.25%
+const PF_CAP = PF_WAGE_CEILING;
+const ESI_GROSS_LIMIT = ESI_THRESHOLD;
+const ESI_EMPLOYEE_RATE = ESI_EMP_RATE_UTIL;
+const ESI_RATE = ESI_EMPLR_RATE_UTIL;
 const PROF_TAX = 200; // default if state not in slabs
 const STD_DEDUCTION = 75000; // New regime standard deduction FY 2025-26
 
@@ -167,8 +176,7 @@ function calcDeductions(s: SalaryStructure, ptSlabs?: PtSlab[], stateCode?: stri
   const esiEmpRate = typeof policies?.esi_employee_rate === 'number' ? policies.esi_employee_rate : ESI_EMPLOYEE_RATE;
   const gross = (s.basic_salary || 0) + (s.hra || 0) + (s.transport_allowance || 0) + (s.medical_allowance || 0) + (s.other_allowances || 0);
   const basic = s.basic_salary || 0;
-  const empPF = Math.round(Math.min(basic, pfCap) * PF_RATE);
-  const emplrPF = Math.round(Math.min(basic, pfCap) * PF_RATE);
+  const { employee: empPF, employer: emplrPF } = calculatePF(basic);
   const esi = gross <= esiGrossLimit ? Math.round(gross * esiEmpRate) : 0;
   const profTax = (ptSlabs && ptSlabs.length > 0)
     ? getProfTax(ptSlabs, stateCode ?? null, gross, month ?? (new Date().getMonth() + 1))
@@ -610,19 +618,26 @@ function SalaryStructureModal({ existing, onClose, onSaved }: SalaryStructureMod
                     onMouseDown={() => selectEmployee(e)}
                     className={`w-full text-left px-3 py-2.5 text-sm hover:bg-muted border-b border-border last:border-b-0 transition-colors ${e.value === form.employee_id ? 'bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-400 font-medium' : 'text-foreground'}`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">{e.label}</span>
-                      {(e as any).employeeCode && <span className="text-xs font-mono text-muted-foreground">{(e as any).employeeCode}</span>}
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium flex-1 truncate">{e.label}</span>
+                      {(e as any).employeeCode && (
+                        <span className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-primary/10 text-primary shrink-0">
+                          {(e as any).employeeCode}
+                        </span>
+                      )}
                     </div>
                     {e.department && <span className="text-xs text-muted-foreground">{e.department}</span>}
                   </button>
                 ))}
               </div>
             )}
-            {/* Show selected employee ID as read-only info */}
-            {form.employee_id && (
-              <p className="text-xs text-muted-foreground font-mono mt-0.5">ID: {form.employee_id}</p>
-            )}
+            {/* Show selected employee code as read-only info */}
+            {form.employee_id && (() => {
+              const sel = empOptions.find(e => e.value === form.employee_id);
+              return sel?.employeeCode ? (
+                <p className="text-xs text-muted-foreground font-mono mt-0.5">ID: {sel.employeeCode}</p>
+              ) : null;
+            })()}
           </div>
           <div className="grid grid-cols-2 gap-3">
             {field(t('payroll.basicSalaryInr'), 'basic_salary', 'number')}
@@ -713,9 +728,9 @@ function DetailedPayslipModal({ record, salaryStructures, onClose }: DetailedPay
   const other = record.otherAllowances || struct?.other_allowances || 0;
   const gross = record.grossSalary || (basic + hra + transport + other) || 0;
 
-  const pf = record.pfDeduction || Math.round(Math.min(basic, 15000) * 0.12);
+  const pf = record.pfDeduction || calculatePF(basic).employee;
   const tds = record.taxDeduction || 0;
-  const esiComputed = gross > 0 && gross <= ESI_GROSS_LIMIT ? Math.round(gross * ESI_EMPLOYEE_RATE) : 0;
+  const esiComputed = calculateESI(gross).employee;
   const esi = esiComputed;
   const profTax = record.otherDeductions
     ? Math.max(0, record.otherDeductions - esiComputed)
@@ -730,8 +745,8 @@ function DetailedPayslipModal({ record, salaryStructures, onClose }: DetailedPay
   const ytdMonths = recordMonthIdx >= 0 ? recordMonthIdx + 1 : 1;
 
   // CTC Breakdown
-  const employerPF = Math.round(Math.min(basic, 15000) * 0.0367);
-  const employerESI = gross <= ESI_GROSS_LIMIT ? Math.round(gross * ESI_RATE) : 0;
+  const employerPF = calculatePF(basic).employer;
+  const employerESI = calculateESI(gross).employer;
   const totalCTC = gross + employerPF + employerESI;
 
   const emp = record as any;
@@ -2083,7 +2098,10 @@ export function PayrollManagementEnhanced(_props: Props) {
                           return (
                             <>
                               <tr key={rec.id} className="group hover:bg-muted transition-colors">
-                                <td className="px-4 py-3 font-medium text-foreground">{rec.employeeName}</td>
+                                <td className="px-4 py-3">
+                                  <p className="font-medium text-foreground">{rec.employeeName}</p>
+                                  <p className="text-xs text-muted-foreground font-mono">{`JL-PAY-${rec.id.slice(0, 6).toUpperCase()}`}</p>
+                                </td>
                                 <td className="px-4 py-3 text-right text-foreground hidden md:table-cell">{fmt(rec.basicSalary)}</td>
                                 <td className="px-4 py-3 text-right text-foreground">{fmt(recGross)}</td>
                                 <td className="px-4 py-3 text-right text-red-600 hidden md:table-cell">{fmt(rec.pfDeduction || 0)}</td>

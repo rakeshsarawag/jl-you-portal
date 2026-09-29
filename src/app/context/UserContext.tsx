@@ -62,6 +62,10 @@ export interface CurrentUser {
   permissionOverrides?: any[];
   /** True when the auth user has no provisioned app_users record */
   notProvisioned?: boolean;
+  /** Admin has required this user to enrol TOTP before accessing the portal */
+  forceMfa?: boolean;
+  /** Whether the user has already enrolled in MFA */
+  mfaEnrolled?: boolean;
 }
 
 interface UserContextType {
@@ -101,13 +105,16 @@ export function UserProvider({ children, accessToken }: UserProviderProps) {
       let foundInAppUsers = false;
 
       let dbAppUserId: string | undefined;
+      let dbForceMfa = false;
+      let dbMfaEnrolled = false;
       try {
-        // Fetch app_users row directly — Edge Functions are unavailable
+        // Fetch app_users row — use ilike for case-insensitive email match so users
+        // created with a different casing than what Supabase Auth returns still resolve.
         const { data: row, error: rowError } = await supabase
           .from('app_users')
-          .select('id, name, roles, department, status, employee_id, permission_overrides')
-          .eq('email', authUser.email ?? '')
-          .single();
+          .select('id, name, roles, department, status, employee_id, permission_overrides, force_mfa, mfa_enrolled')
+          .ilike('email', authUser.email ?? '')
+          .maybeSingle();
         console.log('[UserCtx] app_users row:', row?.id, 'error:', rowError?.message);
         if (row) {
           foundInAppUsers = true;
@@ -120,6 +127,8 @@ export function UserProvider({ children, accessToken }: UserProviderProps) {
           dbStatus = (row.status as CurrentUser['status']) || 'active';
           dbEmployeeId = row.employee_id || null;
           dbOverrides = row.permission_overrides ?? [];
+          dbForceMfa = row.force_mfa ?? false;
+          dbMfaEnrolled = row.mfa_enrolled ?? false;
         }
       } catch {
         // Network error — fall through to metadata fallback
@@ -153,6 +162,8 @@ export function UserProvider({ children, accessToken }: UserProviderProps) {
         employeeId: dbEmployeeId,
         permissionOverrides: dbOverrides,
         notProvisioned: !foundInAppUsers,
+        forceMfa: dbForceMfa,
+        mfaEnrolled: dbMfaEnrolled,
       };
 
       setCurrentUser(user);

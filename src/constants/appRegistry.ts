@@ -261,6 +261,26 @@ export const APP_REGISTRY: AppEntry[] = [
     category: 'admin',
     color: 'from-red-700 to-red-500',
   },
+  {
+    appId: 'leave',
+    path: '/leave',
+    label: 'Leave Management',
+    description: 'Org-wide leave approvals, reports, and leave balance overview',
+    icon: 'CalendarCheck',
+    requiredRoles: ['admin', 'hr', 'manager'],
+    category: 'hr',
+    color: 'from-teal-500 to-cyan-600',
+  },
+  {
+    appId: 'audit-logs',
+    path: '/audit-logs',
+    label: 'Audit Logs',
+    description: 'Immutable activity log for compliance and security review',
+    icon: 'Database',
+    requiredRoles: ['admin'],
+    category: 'admin',
+    color: 'from-slate-600 to-slate-800',
+  },
 ];
 
 /** Quick lookup by path */

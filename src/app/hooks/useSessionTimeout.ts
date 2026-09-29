@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const INACTIVITY_MS = 15 * 60 * 1000; // 15 minutes idle before warning
+const INACTIVITY_MS = 28 * 60 * 1000; // 28 minutes idle before warning (FSD: 30 min total)
 const WARNING_MS = 2 * 60 * 1000;     // 2 minutes to respond before auto-logout
 const WARNING_SECONDS = WARNING_MS / 1000;
 

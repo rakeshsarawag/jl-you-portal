@@ -25,7 +25,7 @@ export const TOAST_SUCCESS_DURATION = 3000;
 export const TOAST_ERROR_DURATION = 5000;
 
 // ── Session ───────────────────────────────────────────────────────────────────
-export const SESSION_TIMEOUT_MS = 8 * 60 * 60 * 1000; // 8 hours
+export const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes (FSD requirement)
 
 // ── App version ───────────────────────────────────────────────────────────────
 export const APP_VERSION = "2026-08-24";

@@ -127,7 +127,12 @@ export function useCommunicationsData() {
 
   const createAnnouncement = async (announcement: any) => {
     try {
-      const body = { ...announcement, created_at: new Date().toISOString() };
+      const body = {
+        ...announcement,
+        author_id: announcement.author_id ?? userId,
+        author_name: announcement.author_name ?? currentUser?.name ?? 'System',
+        created_at: new Date().toISOString(),
+      };
       const res = await api('/announcements', { method: 'POST', body: JSON.stringify(body) }, userEmail);
       if (!res.ok) throw new Error(await res.text());
       const data = await safeJson(res);
@@ -190,7 +195,12 @@ export function useCommunicationsData() {
 
   const createEvent = async (event: any) => {
     try {
-      const body = { ...event, created_at: new Date().toISOString() };
+      const body = {
+        ...event,
+        organizer_id: event.organizer_id ?? userId,
+        organizer_name: event.organizer_name ?? currentUser?.name ?? 'System',
+        created_at: new Date().toISOString(),
+      };
       const res = await api('/events', { method: 'POST', body: JSON.stringify(body) }, userEmail);
       if (!res.ok) throw new Error(await res.text());
       const data = await safeJson(res);

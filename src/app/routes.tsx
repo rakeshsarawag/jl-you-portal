@@ -1,5 +1,5 @@
 import React from "react";
-import { createBrowserRouter } from "react-router";
+import { createBrowserRouter, Navigate } from "react-router";
 import { RootLayout } from "./components/RootLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -32,6 +32,8 @@ const EmployeeDirectoryEnhanced = React.lazy(() => import("./components/apps/Emp
 const MasterDataManagementExpanded = React.lazy(() => import("./components/apps/MasterDataManagementExpanded").then(m => ({ default: m.MasterDataManagementExpanded })));
 const DefectTrackerApp = React.lazy(() => import("./components/apps/DefectTrackerApp").then(m => ({ default: m.DefectTrackerApp })));
 const ValidationReferencePage = React.lazy(() => import("./components/apps/ValidationReferencePage"));
+const AuditLogsPage = React.lazy(() => import("./components/apps/AuditLogsPage").then(m => ({ default: m.AuditLogsPage })));
+const LeaveManagementPage = React.lazy(() => import("./components/apps/LeaveManagementPage").then(m => ({ default: m.LeaveManagementPage })));
 const PreboardingPortal = React.lazy(() => import("./components/apps/PreboardingPortal"));
 const NotificationHistoryPage = React.lazy(() => import("./components/NotificationHistoryPage"));
 const NotificationPreferencesPage = React.lazy(() => import("./components/NotificationPreferencesPage"));
@@ -71,6 +73,11 @@ function roles(path: string): UserRole[] {
 
 export const createAppRouter = ({ accessToken, onLogout }: RouteParams) => {
   return createBrowserRouter([
+    // Redirect /login → / when already authenticated (router only mounts when logged in)
+    {
+      path: "/login",
+      element: <Navigate to="/" replace />,
+    },
     // Public routes — no auth required
     {
       path: "/403",
@@ -203,7 +210,7 @@ export const createAppRouter = ({ accessToken, onLogout }: RouteParams) => {
         {
           path: "/advanced-analytics",
           element: (
-            <ProtectedRoute requiredRoles={roles("/advanced-analytics")} appName="Analytics Dashboard">
+            <ProtectedRoute requiredRoles={roles("/executive-dashboard")} appName="Analytics Dashboard">
               <Suspense><UnifiedAnalyticsDashboard accessToken={accessToken} onLogout={onLogout} /></Suspense>
             </ProtectedRoute>
           ),
@@ -285,6 +292,22 @@ export const createAppRouter = ({ accessToken, onLogout }: RouteParams) => {
           element: (
             <ProtectedRoute requiredRoles={roles("/master-data")} appName="Master Data">
               <Suspense><MasterDataManagementExpanded accessToken={accessToken} onLogout={onLogout} /></Suspense>
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: "/audit-logs",
+          element: (
+            <ProtectedRoute requiredRoles={roles("/audit-logs")} appName="Audit Logs">
+              <Suspense><AuditLogsPage accessToken={accessToken} /></Suspense>
+            </ProtectedRoute>
+          ),
+        },
+        {
+          path: "/leave",
+          element: (
+            <ProtectedRoute requiredRoles={roles("/leave")} appName="Leave Management">
+              <Suspense><LeaveManagementPage accessToken={accessToken} /></Suspense>
             </ProtectedRoute>
           ),
         },

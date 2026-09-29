@@ -10,6 +10,7 @@ import { ShieldAlert, Lock, ArrowLeft, Home, Mail } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { UserRole } from '../../types/rbac';
 import { ROLE_DEFINITIONS } from '../../utils/rbac/roleDefinitions';
+import { t } from '../../i18n';
 
 interface AccessDeniedProps {
   requiredRoles?: UserRole[];
@@ -20,7 +21,7 @@ interface AccessDeniedProps {
 export function AccessDenied({ requiredRoles, message, appName }: AccessDeniedProps) {
   const navigate = useNavigate();
 
-  const defaultMessage = message || 'You do not have permission to access this content.';
+  const defaultMessage = message || t('accessDenied.defaultMsg');
 
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
@@ -29,7 +30,7 @@ export function AccessDenied({ requiredRoles, message, appName }: AccessDeniedPr
           <div className="mx-auto mb-4 p-4 bg-red-100 rounded-full w-20 h-20 flex items-center justify-center">
             <ShieldAlert className="h-12 w-12 text-red-600" />
           </div>
-          <CardTitle className="text-3xl text-red-900">Access Denied</CardTitle>
+          <CardTitle className="text-3xl text-red-900">{t('accessDenied.heading')}</CardTitle>
           <CardDescription className="text-lg text-gray-600 mt-2">
             {defaultMessage}
           </CardDescription>
@@ -40,7 +41,7 @@ export function AccessDenied({ requiredRoles, message, appName }: AccessDeniedPr
               <div className="flex items-center gap-3">
                 <Lock className="h-5 w-5 text-red-600" />
                 <div>
-                  <h4 className="font-semibold text-red-900">Restricted Application</h4>
+                  <h4 className="font-semibold text-red-900">{t('accessDenied.title')}</h4>
                   <p className="text-sm text-red-700">
                     {appName} requires special permissions to access.
                   </p>
@@ -51,9 +52,9 @@ export function AccessDenied({ requiredRoles, message, appName }: AccessDeniedPr
 
           {requiredRoles && requiredRoles.length > 0 && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <h4 className="font-semibold text-blue-900 mb-3">Required Roles</h4>
+              <h4 className="font-semibold text-blue-900 mb-3">{t('accessDenied.requiredRoles')}</h4>
               <p className="text-sm text-blue-700 mb-3">
-                You need one of the following roles to access this content:
+                {t('accessDenied.contactAdminMsg')}
               </p>
               <div className="flex flex-wrap gap-2">
                 {requiredRoles.map((roleId) => {
@@ -72,9 +73,9 @@ export function AccessDenied({ requiredRoles, message, appName }: AccessDeniedPr
           )}
 
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <h4 className="font-semibold text-yellow-900 mb-2">Need Access?</h4>
+            <h4 className="font-semibold text-yellow-900 mb-2">{t('accessDenied.contactAdmin')}</h4>
             <p className="text-sm text-yellow-800 mb-3">
-              If you believe you should have access to this content, please contact your administrator.
+              {t('accessDenied.contactAdminMsg')}
             </p>
             <div className="flex items-center gap-2 text-sm text-yellow-700">
               <Mail className="h-4 w-4" />
@@ -89,14 +90,14 @@ export function AccessDenied({ requiredRoles, message, appName }: AccessDeniedPr
               className="flex-1"
             >
               <ArrowLeft className="h-4 w-4 mr-2" />
-              Go Back
+              {t('accessDenied.goBack')}
             </Button>
             <Button
               onClick={() => navigate('/')}
               className="flex-1 bg-blue-600 hover:bg-blue-700"
             >
               <Home className="h-4 w-4 mr-2" />
-              Return to Home
+              {t('accessDenied.goHome')}
             </Button>
           </div>
         </CardContent>

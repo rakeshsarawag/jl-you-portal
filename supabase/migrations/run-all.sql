@@ -38,6 +38,8 @@
 \i 07_project_tasks_columns.sql
 \i 08_communications_columns.sql
 \i 11_drop_chat_tables.sql
+\i 18_task_comments.sql
+\i 19_project_tasks_timestamps.sql
 
 -- ============================================================
 -- Done. All migrations applied.

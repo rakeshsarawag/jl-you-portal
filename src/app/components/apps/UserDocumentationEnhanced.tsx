@@ -233,6 +233,56 @@ export function UserDocumentationEnhanced({ accessToken, onLogout }: AppDocument
   const [feedbackState, setFeedbackState] = useState<Record<string, { voted: boolean; rating: number | null }>>({});
   // Vote counts per FAQ
   const [voteCounts, setVoteCounts] = useState<Record<string, { up: number; down: number }>>({});
+  // Bookmarks — persisted to DB via knowledge-api /bookmarks endpoint
+  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
+  const [showBookmarksOnly, setShowBookmarksOnly] = useState(false);
+
+  // Load bookmarks from DB on mount
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-1fe2c468`;
+    fetch(`${API_BASE}/knowledge/bookmarks?user_id=${encodeURIComponent(currentUser.id)}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+      .then(r => r.ok ? r.json() : null)
+      .then(json => {
+        if (json?.data) {
+          setBookmarkedIds(new Set(json.data.map((b: any) => b.article_id as string)));
+        }
+      })
+      .catch(() => {
+        // Fallback to localStorage
+        try {
+          const raw = localStorage.getItem('doc_bookmarks');
+          if (raw) setBookmarkedIds(new Set(JSON.parse(raw)));
+        } catch {}
+      });
+  }, [currentUser?.id, accessToken]);
+
+  async function toggleBookmark(appId: string) {
+    const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/make-server-1fe2c468`;
+    const isBookmarked = bookmarkedIds.has(appId);
+    // Optimistic update
+    setBookmarkedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(appId)) next.delete(appId); else next.add(appId);
+      return next;
+    });
+    try {
+      await fetch(`${API_BASE}/knowledge/bookmarks`, {
+        method: isBookmarked ? 'DELETE' : 'POST',
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUser?.id, article_id: appId }),
+      });
+    } catch {
+      // Revert on error
+      setBookmarkedIds(prev => {
+        const next = new Set(prev);
+        if (isBookmarked) next.add(appId); else next.delete(appId);
+        return next;
+      });
+    }
+  }
   // Section feedback state
   const [sectionFeedback, setSectionFeedback] = useState<Record<string, { voted: boolean; up: number; down: number }>>({});
   // Step feedback state
@@ -822,9 +872,10 @@ export function UserDocumentationEnhanced({ accessToken, onLogout }: AppDocument
     const matchesSearch = !listSearchQuery
       || app.name.toLowerCase().includes(listSearchQuery.toLowerCase())
       || app.description.toLowerCase().includes(listSearchQuery.toLowerCase());
+    const matchesBookmark = !showBookmarksOnly || bookmarkedIds.has(app.id);
     const matchesRole = !currentUser || !currentUser.roles || currentUser.roles.includes('admin')
       || (app.role_access && app.role_access.some((r) => currentUser.roles.includes(r as never)));
-    return matchesCategory && matchesSearch && matchesRole;
+    return matchesCategory && matchesSearch && matchesRole && matchesBookmark;
   });
 
   const filteredFaqs = faqCategory === 'all'
@@ -876,6 +927,15 @@ export function UserDocumentationEnhanced({ accessToken, onLogout }: AppDocument
             {cat}
           </button>
         ))}
+        <button
+          onClick={() => setShowBookmarksOnly(v => !v)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+            showBookmarksOnly ? 'bg-amber-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+          }`}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill={showBookmarksOnly ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+          Bookmarks {bookmarkedIds.size > 0 && `(${bookmarkedIds.size})`}
+        </button>
       </div>
 
       {loadingApps ? (
@@ -899,7 +959,16 @@ export function UserDocumentationEnhanced({ accessToken, onLogout }: AppDocument
                     <div className={`${color} p-3 rounded-lg text-white`}>
                       <Icon className="h-6 w-6" />
                     </div>
-                    <ChevronRight className="h-5 w-5 text-gray-400" />
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={e => { e.stopPropagation(); toggleBookmark(app.id); }}
+                        className={`p-1.5 rounded-lg transition-colors ${bookmarkedIds.has(app.id) ? 'text-amber-500 bg-amber-50' : 'text-gray-300 hover:text-amber-400 hover:bg-amber-50'}`}
+                        title={bookmarkedIds.has(app.id) ? 'Remove bookmark' : 'Bookmark'}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill={bookmarkedIds.has(app.id) ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                      </button>
+                      <ChevronRight className="h-5 w-5 text-gray-400" />
+                    </div>
                   </div>
                   <CardTitle className="mt-4">{app.name}</CardTitle>
                   <CardDescription>{app.description}</CardDescription>

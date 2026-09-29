@@ -4,6 +4,16 @@ import { auditCreate, auditUpdate } from "./audit-helpers.ts";
 
 const app = new Hono();
 
+function triggerWorkflowEvent(event: string, entity_type: string, entity_id: string, context: Record<string, unknown>, triggered_by?: string) {
+  const base = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  fetch(`${base}/functions/v1/make-server-1fe2c468/workflow/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    body: JSON.stringify({ event, entity_type, entity_id, context, triggered_by }),
+  }).catch(() => {});
+}
+
 function getSupabase() {
   return createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -187,6 +197,13 @@ app.post('/employees', async (c) => {
       .select('*, onboarding_tasks(*), onboarding_documents(*), onboarding_welcome_kits(*)')
       .eq('id', record.id)
       .single();
+
+    triggerWorkflowEvent("onboarding_started", "onboarding_record", record.id, {
+      employee_name: record.employee_name,
+      department: record.department,
+      position: record.position,
+      start_date: record.start_date,
+    }, record.employee_id);
 
     return c.json({ success: true, data: shapeRecord(full.data) }, 201);
   } catch (error) {

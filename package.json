@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "test:unit": "vitest run tests/unit --config vitest.config.ts",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:ui": "SKIP_WEBSERVER=1 playwright test --ui",
+    "test:e2e:headed": "HEADED=1 SKIP_WEBSERVER=1 playwright test --workers=1",
+    "test:e2e:auto": "playwright test --workers=1",
+    "test:e2e:slow": "HEADED=1 SLOW_MO=500 SKIP_WEBSERVER=1 playwright test --workers=1",
     "migrate:all": "node scripts/migrate-all.mjs",
     "migrate:onboarding-source": "node scripts/migrate-onboarding-source.mjs",
     "seed:permissions": "node scripts/seed-permissions.mjs",
@@ -48,6 +51,7 @@
     "@radix-ui/react-toggle-group": "1.1.2",
     "@radix-ui/react-tooltip": "1.1.8",
     "@supabase/supabase-js": "^2.99.1",
+    "@tanstack/react-query": "^5.103.1",
     "canvas-confetti": "1.9.4",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
@@ -80,14 +84,17 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "4.1.12",
+    "@tanstack/react-virtual": "^3.14.13",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "4.7.0",
     "tailwindcss": "4.1.12",
     "typescript": "^7.0.2",
     "vite": "6.3.5",
-    "vitest": "^2.1.9"
+    "vitest": "^2.1.9",
+    "zod": "^4.6.5"
   },
   "pnpm": {
     "overrides": {

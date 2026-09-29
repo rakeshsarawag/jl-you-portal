@@ -16,7 +16,7 @@ test.describe('User Management', () => {
     await page.goto('/user-management');
     await page.getByRole('button', { name: /add user|new user|create/i }).click();
     await page.getByLabel(/name/i).fill('E2E Test User');
-    await page.getByLabel(/email/i).fill('e2e.newuser@jlyou.com');
+    await page.getByLabel(/email/i).fill(`e2e.test.${Date.now()}@example.com`);
     await page.getByLabel(/role/i).selectOption('employee');
     await page.getByRole('button', { name: /save|create/i }).click();
     await expect(page.getByText('E2E Test User')).toBeVisible();

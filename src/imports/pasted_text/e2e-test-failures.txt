@@ -1,0 +1,471 @@
+469 failed
+    [chromium] › tests/e2e/analytics/advanced-analytics.spec.ts:12:3 › Advanced Analytics › Manager can view analytics dashboard 
+    [chromium] › tests/e2e/analytics/advanced-analytics.spec.ts:16:3 › Advanced Analytics › Funnel Analysis tab loads 
+    [chromium] › tests/e2e/analytics/advanced-analytics.spec.ts:21:3 › Advanced Analytics › Predictive Analytics tab loads 
+    [chromium] › tests/e2e/analytics/advanced-analytics.spec.ts:26:3 › Advanced Analytics › Cohort Analysis tab loads 
+    [chromium] › tests/e2e/analytics/advanced-analytics.spec.ts:31:3 › Advanced Analytics › Department filter changes data 
+    [chromium] › tests/e2e/analytics/advanced-analytics.spec.ts:37:3 › Advanced Analytics › Employee cannot access analytics 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:10:3 › Analytics Dashboard Expanded › analytics dashboard loads 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:21:3 › Analytics Dashboard Expanded › KPI tiles are visible 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:30:3 › Analytics Dashboard Expanded › at least one chart renders 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:41:3 › Analytics Dashboard Expanded › date range filter applies without crashing 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:64:3 › Analytics Dashboard Expanded › department filter applies without crashing 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:81:3 › Analytics Dashboard Expanded › drill-down from KPI tile opensdetail view 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:100:3 › Analytics Dashboard Expanded › scheduled reports section is present 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:113:3 › Analytics Dashboard Expanded › report builder tab is accessible 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:128:3 › Analytics Dashboard Expanded › executive dashboard route loads 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:139:3 › Analytics Dashboard Expanded › finance role can access analytics 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:153:3 › Analytics Dashboard Expanded › employee cannot access executive dashboard 
+    [chromium] › tests/e2e/analytics/analytics-expanded.spec.ts:162:3 › Analytics Dashboard Expanded › export/download button present in reports section 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:21:3 › Asset Management — Expanded › 1. Asset list shows status badges (Available, Assigned, Under Repair, Retired) 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:35:3 › Asset Management — Expanded › 2. Asset IDs show JL-AST prefix in the list 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:45:3 › Asset Management — Expanded › 3. Depreciation tab or section shows book value calculation 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:76:3 › Asset Management — Expanded › 4. Maintenance records tab is accessible 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:101:3 › Asset Management — Expanded › 5. Admin can open Add Asset form 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:110:3 › Asset Management — Expanded › 6. Asset form shows serialnumber field as required or validates uniqueness 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:135:3 › Asset Management — Expanded › 7. Category filter narrowsasset list 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:165:3 › Asset Management — Expanded › 8. Assign asset opens employee picker showing JL employee codes 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:190:3 › Asset Management — Expanded › 9. Return button is visible on assigned assets 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:217:3 › Asset Management — Expanded › 10. Bulk export generates a CSV download 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:239:3 › Asset Management — Expanded › 11. Asset form includes building and floor location fields 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:265:3 › Asset Management — Expanded › 12. Vendor dropdown is populated in the Add Asset form 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:288:3 › Asset Management — Expanded › 13. Asset status can be changed from Assigned to Under Repair 
+    [chromium] › tests/e2e/assets/asset-management-expanded.spec.ts:328:3 › Asset Management — Expanded › 14. Employee role cannot see Add Asset or Assign buttons 
+    [chromium] › tests/e2e/assets/asset-management.spec.ts:16:3 › Asset Management › Asset list renders with table or card view 
+    [chromium] › tests/e2e/assets/asset-management.spec.ts:27:3 › Asset Management › Admin can open Add Asset form 
+    [chromium] › tests/e2e/assets/asset-management.spec.ts:32:3 › Asset Management › Add Asset form validates required fields 
+    [chromium] › tests/e2e/assets/asset-management.spec.ts:44:3 › Asset Management › Admin can create a new asset with all required fields 
+    [chromium] › tests/e2e/assets/asset-management.spec.ts:63:3 › Asset Management › Assign action opens assignment form 
+    [chromium] › tests/e2e/assets/asset-management.spec.ts:77:3 › Asset Management › Depreciation tab or section is accessible 
+    [chromium] › tests/e2e/assets/asset-management.spec.ts:92:3 › Asset Management › Search/filter reduces asset list 
+    [chromium] › tests/e2e/assets/asset-management.spec.ts:105:3 › Asset Management › Asset statuses are visible (Available, Assigned, etc.) 
+    [chromium] › tests/e2e/assets/asset-management.spec.ts:115:3 › Asset Management › Employee role sees limited actions on assets 
+    [chromium] › tests/e2e/audit-logs/audit-logs.spec.ts:21:3 › Audit Logs › Audit log page renders log entries or empty state 
+    [chromium] › tests/e2e/audit-logs/audit-logs.spec.ts:30:3 › Audit Logs › Log entries have actor, action, and timestamp columns 
+    [chromium] › tests/e2e/audit-logs/audit-logs.spec.ts:44:3 › Audit Logs › Module/entity filter reduces result set 
+    [chromium] › tests/e2e/audit-logs/audit-logs.spec.ts:57:3 › Audit Logs › Date range filter limits log entries 
+    [chromium] › tests/e2e/audit-logs/audit-logs.spec.ts:70:3 › Audit Logs › Search by actor email narrows logs 
+    [chromium] › tests/e2e/audit-logs/audit-logs.spec.ts:82:3 › Audit Logs › CSV export button is present for admins 
+    [chromium] › tests/e2e/audit-logs/audit-logs.spec.ts:89:3 › Audit Logs › CSV export triggers a download 
+    [chromium] › tests/e2e/audit-logs/audit-logs.spec.ts:103:3 › Audit Logs › Clicking a log entry opens detail if available 
+    [chromium] › tests/e2e/audit-logs/audit-logs.spec.ts:114:3 › Audit Logs › Employee cannot access audit logs 
+    [chromium] › tests/e2e/audit-logs/audit-logs.spec.ts:123:3 › Audit Logs › HR can view security compliance page 
+    [chromium] › tests/e2e/auth/access-control.spec.ts:19:3 › Employee cannot access /user-management 
+    [chromium] › tests/e2e/auth/access-control.spec.ts:19:3 › Employee cannot access /permissions ──
+    [chromium] › tests/e2e/auth/access-control.spec.ts:19:3 › Employee cannot access /invoices ─────
+    [chromium] › tests/e2e/auth/access-control.spec.ts:19:3 › Employee cannot access /payroll ──────
+    [chromium] › tests/e2e/auth/access-control.spec.ts:19:3 › Employee cannot access /recruitment ──
+    [chromium] › tests/e2e/auth/access-control.spec.ts:19:3 › Employee cannot access /onboarding ───
+    [chromium] › tests/e2e/auth/access-control.spec.ts:19:3 › Employee cannot access /assets ───────
+    [chromium] › tests/e2e/auth/access-control.spec.ts:19:3 › Employee cannot access /linkedin ─────
+    [chromium] › tests/e2e/auth/access-control.spec.ts:27:1 › Unauthenticated user is redirected to login 
+    [chromium] › tests/e2e/auth/access-control.spec.ts:32:1 › Admin can access all routes ──────────
+    [chromium] › tests/e2e/auth/login.spec.ts:25:3 › Authentication › Valid admin login succeeds and leaves /login 
+    [chromium] › tests/e2e/auth/login.spec.ts:30:3 › Authentication › Valid HR login succeeds and leaves /login 
+    [chromium] › tests/e2e/auth/login.spec.ts:35:3 › Authentication › Valid employee login succeeds and leaves /login 
+    [chromium] › tests/e2e/auth/login.spec.ts:42:3 › Authentication › After login, browser is redirected away from /login 
+    [chromium] › tests/e2e/auth/login.spec.ts:78:3 › Authentication › Unauthenticated user visiting /dashboard is redirected to /login 
+    [chromium] › tests/e2e/auth/login.spec.ts:83:3 › Authentication › Unauthenticated user visiting /payroll is redirected to /login 
+    [chromium] › tests/e2e/auth/login.spec.ts:90:3 › Authentication › Logout button is visible after login 
+    [chromium] › tests/e2e/auth/login.spec.ts:102:3 › Authentication › Clicking logout returns user to /login 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:27:3 › Collaboration Hub › page loads with a recognisable heading 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:40:3 › Collaboration Hub › channel list is visible 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:51:3 › Collaboration Hub › at least one channel item appears in the sidebar 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:68:3 › Collaboration Hub › message input box is present 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:78:3 › Collaboration Hub › typing in the message box populates it 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:94:3 › Collaboration Hub › message can be sent with the Enter key 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:110:3 › Collaboration Hub › send button is visible and clickable 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:125:3 › Collaboration Hub › DM / direct message panel is accessible 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:140:3 › Collaboration Hub › create channel button is visible 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:155:3 › Collaboration Hub › channel search or filter input is present 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:171:3 › Collaboration Hub › emoji picker or reaction button area is visible 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:186:3 › Collaboration Hub › file attachment button exists in the message composer 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:202:3 › Collaboration Hub › notification bell is visible in the header 
+    [chromium] › tests/e2e/collaboration/chat-message.spec.ts:217:3 › Collaboration Hub › admin sees additional channel management options not shown to employee 
+    [chromium] › tests/e2e/communications/communications-expanded.spec.ts:9:3 › Internal Communications Hub Enhanced › communications hub loads with channel list 
+    [chromium] › tests/e2e/communications/communications-expanded.spec.ts:25:3 › Internal Communications Hub Enhanced › general channel has messages or shows empty state 
+    [chromium] › tests/e2e/communications/communications-expanded.spec.ts:42:3 › Internal Communications Hub Enhanced › employee cansend a message in a channel 
+    [chromium] › tests/e2e/communications/communications-expanded.spec.ts:66:3 › Internal Communications Hub Enhanced › message formvalidates non-empty content 
+    [chromium] › tests/e2e/communications/communications-expanded.spec.ts:91:3 › Internal Communications Hub Enhanced › announcementtab shows company announcements 
+    [chromium] › tests/e2e/communications/communications-expanded.spec.ts:108:3 › Internal Communications Hub Enhanced › HR can posta new announcement 
+    [chromium] › tests/e2e/communications/communications-expanded.spec.ts:128:3 › Internal Communications Hub Enhanced › poll creation form available to HR 
+    [chromium] › tests/e2e/communications/communications-expanded.spec.ts:141:3 › Internal Communications Hub Enhanced › poll shows voting options for employees 
+    [chromium] › tests/e2e/communications/communications-expanded.spec.ts:160:3 › Internal Communications Hub Enhanced › file attachment button present in composer 
+    [chromium] › tests/e2e/communications/communications-expanded.spec.ts:179:3 › Internal Communications Hub Enhanced › @mention notification indicator is present 
+    [chromium] › tests/e2e/communications/post-announcement.spec.ts:8:3 › Communications Hub › employee can view announcements feed 
+    [chromium] › tests/e2e/communications/post-announcement.spec.ts:14:3 › Communications Hub › HR can create a new announcement 
+    [chromium] › tests/e2e/communications/post-announcement.spec.ts:24:3 › Communications Hub › HR can pin an announcement 
+    [chromium] › tests/e2e/communications/post-announcement.spec.ts:32:3 › Communications Hub › employee can react to an announcement 
+    [chromium] › tests/e2e/communications/post-announcement.spec.ts:39:3 › Communications Hub › employee cannot create announcements 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:14:3 › Executive Dashboard › Page loads with executive dashboard heading 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:20:3 › Executive Dashboard › Sidebar is visible on load 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:30:3 › Executive Dashboard › KPI tiles are visible — headcount, revenue, or attrition 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:36:3 › Executive Dashboard › At least one numeric KPI value is displayed 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:49:3 › Executive Dashboard › Trend arrows or indicators are presenton KPI tiles 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:63:3 › Executive Dashboard › People tab is clickable and shows headcount content 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:72:3 › Executive Dashboard › People tab — department breakdown content is present 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:83:3 › Executive Dashboard › Finance tab is clickable and shows revenue or payroll content 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:94:3 › Executive Dashboard › OKR tab shows completion percentage orring 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:105:3 › Executive Dashboard › Operations or Projects tab shows project health counts 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:118:3 › Executive Dashboard › Date range filter control is visible if present 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:130:3 › Executive Dashboard › Alerts or notifications section is present if rendered 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:142:3 › Executive Dashboard › Export button is visible to admin 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:154:3 › Executive Dashboard › Employee cannot access executive dashboard — redirected or Access Denied 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:167:3 › Executive Dashboard › HR can access executive dashboard or is redirected gracefully 
+    [chromium] › tests/e2e/dashboard/executive-dashboard.spec.ts:175:3 › Executive Dashboard › Finance user can access executive dashboard or is redirected gracefully 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:11:3 › Defect Tracker › defect list renders table rows or empty state 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:31:3 › Defect Tracker › can switch between table and kanban view 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:58:3 › Defect Tracker › admin can open Log Defect / Create Defect form 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:72:3 › Defect Tracker › create defect form shows validation errors for missing required fields 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:91:3 › Defect Tracker › severity filter narrows the defect list 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:124:3 › Defect Tracker › status filter (Open, In Progress, Fixed) updates the defect list 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:152:3 › Defect Tracker › clicking a defect row opens the defect detail view 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:178:3 › Defect Tracker › defect detail view shows SLA details 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:204:3 › Defect Tracker › can type and submit a comment in defect detail 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:241:3 › Defect Tracker › reassign opens EmployeeSearchDropdown, notplain input 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:278:3 › Defect Tracker › watchers section has add-watcher button with employee dropdown 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:314:3 › Defect Tracker › SLA tracker screen renders breach/at-risk/on-track indicators 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:336:3 › Defect Tracker › admin sees CSV export button on the defects list 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:351:3 › Defect Tracker › employee cannot see bulk delete or admin-level action buttons 
+    [chromium] › tests/e2e/defect-tracker/defect-tracker.spec.ts:375:3 › Defect Tracker › search input narrows the defect list 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:4:3 › Employee Directory Enhanced › 1. Directory loads with employeelist 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:21:3 › Employee Directory Enhanced › 2. Search by name finds matching employees 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:42:3 › Employee Directory Enhanced › 3. Department filter reduces results 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:70:3 › Employee Directory Enhanced › 4. Employee card shows JL code (JL001 format) 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:85:3 › Employee Directory Enhanced › 5. Clicking employee opens profile modal/drawer 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:110:3 › Employee Directory Enhanced › 6. Profile shows department, designation, email 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:140:3 › Employee Directory Enhanced › 7. Org chart view renders (orgchart button) 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:163:3 › Employee Directory Enhanced › 8. HR can edit employee profile (edit button visible) 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:186:3 › Employee Directory Enhanced › 9. CSV export button present for admin/HR 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:201:3 › Employee Directory Enhanced › 10. Skills/expertise section in employee profile 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:223:3 › Employee Directory Enhanced › 11. Employee cannot edit otheremployees profiles 
+    [chromium] › tests/e2e/directory/directory-expanded.spec.ts:246:3 › Employee Directory Enhanced › 12. Virtual scroll handles large list without crashing 
+    [chromium] › tests/e2e/directory/employee-crud.spec.ts:7:3 › Employee Directory › All roles can view directory 
+    [chromium] › tests/e2e/directory/employee-crud.spec.ts:15:3 › Employee Directory › Admin can add an employee 
+    [chromium] › tests/e2e/directory/employee-crud.spec.ts:27:3 › Employee Directory › Search filters results correctly 
+    [chromium] › tests/e2e/directory/employee-crud.spec.ts:34:3 › Employee Directory › Employee cannot add/delete other employees 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:10:3 › Employee Dashboard › 1. Employee dashboard loads after login 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:21:3 › Employee Dashboard › 2. Overview tab shows employee name 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:37:3 › Employee Dashboard › 3. Quick links panel visible 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:52:3 › Employee Dashboard › 4. Attendance tab accessible with clock-in button 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:64:3 › Employee Dashboard › 5. Leave balance widget shows remaining days 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:76:3 › Employee Dashboard › 6. Apply leave button opens form 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:91:3 › Employee Dashboard › 7. Leave form validates date fields 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:114:3 › Employee Dashboard › 8. Leave history shows past requests 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:126:3 › Employee Dashboard › 9. Approvals tab shows pendingcount 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:138:3 › Employee Dashboard › 10. Payslip tab shows payslipsor empty state 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:150:3 › Employee Dashboard › 11. Payslip download button present 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:164:3 › Employee Dashboard › 12. Profile completeness percentage shown 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:179:3 › Employee Dashboard › 13. Shifts tab shows current schedule 
+    [chromium] › tests/e2e/employee-dashboard/employee-dashboard.spec.ts:190:3 › Employee Dashboard › 14. Announcements section visible on overview 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:4:3 › Invoice Generation System › 1. Invoice list loads with status badges 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:28:3 › Invoice Generation System › 2. Finance can create new invoice 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:46:3 › Invoice Generation System › 3. Invoice form validates required client field 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:78:3 › Invoice Generation System › 4. Line items: add/remove line items,quantity x price = subtotal shown 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:123:3 › Invoice Generation System › 5. GST calculation displayed correctly (18% of subtotal) 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:149:3 › Invoice Generation System › 6. Total amount = subtotal + GST - discount 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:182:3 › Invoice Generation System › 7. Payment terms dropdown (Net 30, Net 15, Due on Receipt etc.) 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:208:3 › Invoice Generation System › 8. Invoice status filter (Draft/Sent/Paid/Overdue) works 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:239:3 › Invoice Generation System › 9. Clicking invoice opens detail with line items visible 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:263:3 › Invoice Generation System › 10. PDF download/preview button present 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:295:3 › Invoice Generation System › 11. Employee cannot create invoices (finance/admin only) 
+    [chromium] › tests/e2e/invoice/invoice-expanded.spec.ts:310:3 › Invoice Generation System › 12. Overdue invoices highlighted with warning color 
+    [chromium] › tests/e2e/invoice/invoice-management.spec.ts:12:3 › Invoice Generation › Finance can view invoice list 
+    [chromium] › tests/e2e/invoice/invoice-management.spec.ts:16:3 › Invoice Generation › Finance can create a new invoice 
+    [chromium] › tests/e2e/invoice/invoice-management.spec.ts:24:3 › Invoice Generation › Finance can view invoice analytics 
+    [chromium] › tests/e2e/invoice/invoice-management.spec.ts:29:3 › Invoice Generation › Employee cannot access invoices 
+    [chromium] › tests/e2e/invoice/invoice-management.spec.ts:35:3 › Invoice Generation › Finance can filter invoices by status 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:4:3 › IT Services Enhanced V2 › 1. IT services page loads 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:23:3 › IT Services Enhanced V2 › 2. Employee can submit a new ticket 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:40:3 › IT Services Enhanced V2 › 3. Ticket form validates required fields (title/description, category) 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:75:3 › IT Services Enhanced V2 › 4. Priority selection (Low, Medium, High, Critical) works 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:117:3 › IT Services Enhanced V2 › 5. IT admin sees all tickets in queue 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:135:3 › IT Services Enhanced V2 › 6. Assignee filter dropdown shows employee names with JL codes 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:160:3 › IT Services Enhanced V2 › 7. Category filter narrows ticket list 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:189:3 › IT Services Enhanced V2 › 8. Clicking ticket opens detail with SLA info 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:213:3 › IT Services Enhanced V2 › 9. IT admin can add comment toticket 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:244:3 › IT Services Enhanced V2 › 10. Status update (assign, resolve) available to IT role 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:267:3 › IT Services Enhanced V2 › 11. Knowledge base tab shows self-service articles 
+    [chromium] › tests/e2e/it-services/it-services-expanded.spec.ts:291:3 › IT Services Enhanced V2 › 12. Employee cannot see admin bulk operations 
+    [chromium] › tests/e2e/it-services/tickets.spec.ts:7:3 › IT Services › Employee can raise a ticket 
+    [chromium] › tests/e2e/it-services/tickets.spec.ts:19:3 › IT Services › Employee only sees own tickets 
+    [chromium] › tests/e2e/it-services/tickets.spec.ts:31:3 › IT Services › IT Admin can see all tickets 
+    [chromium] › tests/e2e/it-services/tickets.spec.ts:38:3 › IT Services › IT Admin can resolve a ticket 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:11:3 › Knowledge Base › knowledge base loads with article list or empty state 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:24:3 › Knowledge Base › search by keyword filters the article list 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:48:3 › Knowledge Base › category filter reduces the article list 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:79:3 › Knowledge Base › admin sees and can click the Create Articletab 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:96:3 › Knowledge Base › new article form shows error when title is missing 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:116:3 › Knowledge Base › admin can create an article and it appearsin the article list 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:151:3 › Knowledge Base › clicking an article card opens the detail view 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:173:3 › Knowledge Base › article detail view shows full content 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:194:3 › Knowledge Base › bookmark toggle is visible in article detail and responds to click 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:220:3 › Knowledge Base › article detail shows a comments section 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:240:3 › Knowledge Base › employee can view the knowledge base and open an article 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:251:3 › Knowledge Base › employee does not see the Create Article tab 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:265:3 › Knowledge Base › article cards display tag chips when articles have tags 
+    [chromium] › tests/e2e/knowledge-base/knowledge-base.spec.ts:290:3 › Knowledge Base › admin sees version history section in article detail 
+    [chromium] › tests/e2e/leaves/leave-flow.spec.ts:5:3 › Leave Management › employee can submit a leave request 
+    [chromium] › tests/e2e/leaves/leave-flow.spec.ts:17:3 › Leave Management › manager can approve a leave request 
+    [chromium] › tests/e2e/leaves/leave-flow.spec.ts:28:3 › Leave Management › employee cannot see other employees leaves 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:11:3 › Leave Management — Expanded › 1. Leave balance widget shows remaining days by type (casual, sick, earned) 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:45:3 › Leave Management — Expanded › 2. Leave application form validates end date >= start date 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:100:3 › Leave Management — Expanded › 3. Leave type dropdown shows all configured types 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:134:3 › Leave Management — Expanded › 4. WFH request form available 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:165:3 › Leave Management — Expanded › 5. Comp-off request form available 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:180:3 › Leave Management — Expanded › 6. Leave encashment form available 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:197:3 › Leave Management — Expanded › 7. HR org-wide view shows all employees leaves 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:222:3 › Leave Management — Expanded › 8. HR can approve/reject aleave request 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:261:3 › Leave Management — Expanded › 9. Approved leave reflected in balance 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:281:3 › Leave Management — Expanded › 10. Leave reports tab shows approval rate metrics 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:310:3 › Leave Management — Expanded › 11. CSV export works from leave reports 
+    [chromium] › tests/e2e/leaves/leave-management-expanded.spec.ts:347:3 › Leave Management — Expanded › 12. Leave calendar shows approved leaves 
+    [chromium] › tests/e2e/linkedin/linkedin-post-manager.spec.ts:14:3 › LinkedIn Post Manager › 1. LinkedIn post manager loads 
+    [chromium] › tests/e2e/linkedin/linkedin-post-manager.spec.ts:29:3 › LinkedIn Post Manager › 2. Create new post button opens composer 
+    [chromium] › tests/e2e/linkedin/linkedin-post-manager.spec.ts:53:3 › LinkedIn Post Manager › 3. Post composer has text area for content 
+    [chromium] › tests/e2e/linkedin/linkedin-post-manager.spec.ts:73:3 › LinkedIn Post Manager › 4. Character count/limit indicator present 
+    [chromium] › tests/e2e/linkedin/linkedin-post-manager.spec.ts:110:3 › LinkedIn Post Manager › 5. Schedule post option (date/timepicker) present 
+    [chromium] › tests/e2e/linkedin/linkedin-post-manager.spec.ts:131:3 › LinkedIn Post Manager › 6. Post status tabs (Draft, Scheduled, Published) 
+    [chromium] › tests/e2e/linkedin/linkedin-post-manager.spec.ts:157:3 › LinkedIn Post Manager › 7. Analytics/performance metrics section loads 
+    [chromium] › tests/e2e/linkedin/linkedin-post-manager.spec.ts:182:3 › LinkedIn Post Manager › 8. Post list shows with status badges 
+    [chromium] › tests/e2e/linkedin/linkedin-post-manager.spec.ts:207:3 › LinkedIn Post Manager › 9. Can filter posts by status 
+    [chromium] › tests/e2e/linkedin/linkedin-post-manager.spec.ts:232:3 › LinkedIn Post Manager › 10. RBAC: marketing/admin role canaccess; employee may be restricted 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:18:3 › Master Data Management › Master Data page renders with heading 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:24:3 › Master Data Management › At least one category tab or section heading is visible 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:32:3 › Master Data Management › Departments tab or section is visible 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:40:3 › Master Data Management › Designations or Job Titles tab is visible 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:51:3 › Master Data Management › Locations tab is visible if present 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:62:3 › Master Data Management › Cost Centers tab is visible if present 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:75:3 › Master Data Management › Can switch between category tabs without error 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:89:3 › Master Data Management › Department list shows entries or an emptystate message 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:101:3 › Master Data Management › Add new department form opens on button click 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:119:3 › Master Data Management › Department name required validation fires on empty submit 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:135:3 › Master Data Management › Can add a new department 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:163:3 › Master Data Management › Can add a new designation 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:186:3 › Master Data Management › Leave Types tab loads content if present 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:196:3 › Master Data Management › Skill Categories tab loads content if present 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:208:3 › Master Data Management › Search or filter within a category workswithout crash 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:223:3 › Master Data Management › Admin can click edit on an existing item 
+    [chromium] › tests/e2e/master-data/master-data.spec.ts:246:3 › Master Data Management › Employee cannot access master data — denied or redirected 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:9:3 › OKR Management Enhanced › OKR management loads 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:20:3 › OKR Management Enhanced › objective list shows or shows empty state message 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:31:3 › OKR Management Enhanced › create objective button opens form 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:43:3 › OKR Management Enhanced › objective form validates required title 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:57:3 › OKR Management Enhanced › key result can be added to an objective 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:75:3 › OKR Management Enhanced › progress percentage shows with visual bar 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:88:3 › OKR Management Enhanced › progress band label is displayed 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:97:3 › OKR Management Enhanced › OKR grade A-F is displayed 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:108:3 › OKR Management Enhanced › check-in update form opens 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:125:3 › OKR Management Enhanced › analytics/summary section shows aggregated progress 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:142:3 › OKR Management Enhanced › company/team/individual OKR hierarchy is selectable 
+    [chromium] › tests/e2e/okr/okr-expanded.spec.ts:157:3 › OKR Management Enhanced › employee can view OKRs but has limited edit access 
+    [chromium] › tests/e2e/okr/okr-management.spec.ts:12:3 › OKR Management › Manager can view OKR list 
+    [chromium] › tests/e2e/okr/okr-management.spec.ts:16:3 › OKR Management › Manager can create an OKR 
+    [chromium] › tests/e2e/okr/okr-management.spec.ts:24:3 › OKR Management › Manager can add a key result 
+    [chromium] › tests/e2e/okr/okr-management.spec.ts:33:3 › OKR Management › Employee cannot grade OKRs of others 
+    [chromium] › tests/e2e/okr/okr-management.spec.ts:41:3 › OKR Management › Analytics tab shows charts 
+    [chromium] › tests/e2e/onboarding/onboarding-expanded.spec.ts:9:3 › Onboarding Portal Enhanced › onboarding portal loads 
+    [chromium] › tests/e2e/onboarding/onboarding-expanded.spec.ts:20:3 › Onboarding Portal Enhanced › onboarding checklist shows tasks 
+    [chromium] › tests/e2e/onboarding/onboarding-expanded.spec.ts:31:3 › Onboarding Portal Enhanced › task completion updates progress bar 
+    [chromium] › tests/e2e/onboarding/onboarding-expanded.spec.ts:51:3 › Onboarding Portal Enhanced › document upload section is present 
+    [chromium] › tests/e2e/onboarding/onboarding-expanded.spec.ts:64:3 › Onboarding Portal Enhanced › welcome kit section is visible 
+    [chromium] › tests/e2e/onboarding/onboarding-expanded.spec.ts:77:3 › Onboarding Portal Enhanced › bulk upload CSV button presentfor HR 
+    [chromium] › tests/e2e/onboarding/onboarding-expanded.spec.ts:88:3 › Onboarding Portal Enhanced › offboarding section is accessible 
+    [chromium] › tests/e2e/onboarding/onboarding-expanded.spec.ts:101:3 › Onboarding Portal Enhanced › HR sees all employees onboarding progress 
+    [chromium] › tests/e2e/onboarding/onboarding-expanded.spec.ts:114:3 › Onboarding Portal Enhanced › employee sees only their own onboarding tasks 
+    [chromium] › tests/e2e/onboarding/onboarding-expanded.spec.ts:128:3 › Onboarding Portal Enhanced › e-signature section is present for document tasks 
+    [chromium] › tests/e2e/onboarding/onboarding-flow.spec.ts:9:3 › Onboarding Portal › HR can create a new joiner record 
+    [chromium] › tests/e2e/onboarding/onboarding-flow.spec.ts:19:3 › Onboarding Portal › HR can complete checklist tasks 
+    [chromium] › tests/e2e/onboarding/onboarding-flow.spec.ts:27:3 › Onboarding Portal › HR can enable portal access 
+    [chromium] › tests/e2e/onboarding/onboarding-flow.spec.ts:34:3 › Onboarding Portal › HR can sync joiner to directory 
+    [chromium] › tests/e2e/onboarding/onboarding-flow.spec.ts:41:3 › Onboarding Portal › Employee cannot access onboarding portal 
+    [chromium] › tests/e2e/payroll/payroll-process.spec.ts:8:3 › Payroll Management › finance user can view the payroll dashboard 
+    [chromium] › tests/e2e/payroll/payroll-process.spec.ts:14:3 › Payroll Management › finance user can process a payroll run 
+    [chromium] › tests/e2e/payroll/payroll-process.spec.ts:23:3 › Payroll Management › employee can view their own payslip 
+    [chromium] › tests/e2e/payroll/payroll-process.spec.ts:31:3 › Payroll Management › employee cannot process payroll 
+    [chromium] › tests/e2e/payroll/payroll-process.spec.ts:37:3 › Payroll Management › employee cannot view other employees payslips 
+    [chromium] › tests/e2e/payroll/payroll-run.spec.ts:12:3 › Payroll Management › Finance can view payroll dashboard 
+    [chromium] › tests/e2e/payroll/payroll-run.spec.ts:16:3 › Payroll Management › Finance can switch tax regime per employee 
+    [chromium] › tests/e2e/payroll/payroll-run.spec.ts:22:3 › Payroll Management › Finance can export NEFT 
+    [chromium] › tests/e2e/payroll/payroll-run.spec.ts:30:3 › Payroll Management › Employee can view own payslips 
+    [chromium] › tests/e2e/payroll/payroll-run.spec.ts:36:3 › Payroll Management › Admin cannot be blocked from payroll 
+    [chromium] › tests/e2e/payroll/payroll-slabs.spec.ts:14:3 › Payroll Slabs & TDS › 1. Payroll processing screen loads 
+    [chromium] › tests/e2e/payroll/payroll-slabs.spec.ts:29:3 › Payroll Slabs & TDS › 2. New payroll run form validates required period 
+    [chromium] › tests/e2e/payroll/payroll-slabs.spec.ts:59:3 › Payroll Slabs & TDS › 3. Employee list shows with salary/JL code 
+    [chromium] › tests/e2e/payroll/payroll-slabs.spec.ts:89:3 › Payroll Slabs & TDS › 4. TDS calculation matches expected regime (old/new) 
+    [chromium] › tests/e2e/payroll/payroll-slabs.spec.ts:113:3 › Payroll Slabs & TDS › 5. Payslip generation creates downloadable document 
+    [chromium] › tests/e2e/payroll/payroll-slabs.spec.ts:158:3 › Payroll Slabs & TDS › 6. Salary structure tab shows components (basic, HRA, allowances) 
+    [chromium] › tests/e2e/payroll/payroll-slabs.spec.ts:185:3 › Payroll Slabs & TDS › 7. PF deduction shown (12% of basic, capped at 15k) 
+    [chromium] › tests/e2e/payroll/payroll-slabs.spec.ts:203:3 › Payroll Slabs & TDS › 8. ESI shown only for gross <= 21k employees 
+    [chromium] › tests/e2e/payroll/payroll-slabs.spec.ts:222:3 › Payroll Slabs & TDS › 9. Payroll run requires approval before disbursement 
+    [chromium] › tests/e2e/payroll/payroll-slabs.spec.ts:255:3 › Payroll Slabs & TDS › 10. Payroll history shows previous runs 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:9:3 › Performance Tracker Enhanced › performance tracker loads 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:20:3 › Performance Tracker Enhanced › review cycles list is visible or shows empty state 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:37:3 › Performance Tracker Enhanced › goal creation form opens 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:55:3 › Performance Tracker Enhanced › goal form validates required name/title field 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:75:3 › Performance Tracker Enhanced › 360 feedback tab/section is present 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:86:3 › Performance Tracker Enhanced › HR can see calibration section 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:103:3 › Performance Tracker Enhanced › employee can submit feedback for a colleague 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:127:3 › Performance Tracker Enhanced › PIP section is accessibleto HR 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:139:3 › Performance Tracker Enhanced › PIP section is accessibleto manager 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:152:3 › Performance Tracker Enhanced › continuous feedback widget is present 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:165:3 › Performance Tracker Enhanced › rating trend chart renders 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:180:3 › Performance Tracker Enhanced › employee can view their own review history 
+    [chromium] › tests/e2e/performance/performance-expanded.spec.ts:191:3 › Performance Tracker Enhanced › manager can see team performance overview 
+    [chromium] › tests/e2e/performance/performance-review.spec.ts:8:3 › Performance Tracker › employee can submit a self-assessment 
+    [chromium] › tests/e2e/performance/performance-review.spec.ts:19:3 › Performance Tracker › manager can create a performance review for a report 
+    [chromium] › tests/e2e/performance/performance-review.spec.ts:30:3 › Performance Tracker › manager sees team review dashboard 
+    [chromium] › tests/e2e/performance/performance-review.spec.ts:36:3 › Performance Tracker › employee sees only own review, not team dashboard 
+    [chromium] › tests/e2e/performance/performance-review.spec.ts:43:3 › Performance Tracker › employee cannot access /performance/admin 
+    [chromium] › tests/e2e/permissions/permission-manager.spec.ts:18:3 › Permission Manager › Permission manager renders with role columns 
+    [chromium] › tests/e2e/permissions/permission-manager.spec.ts:26:3 › Permission Manager › App Visibility tab shows app list withrole toggles 
+    [chromium] › tests/e2e/permissions/permission-manager.spec.ts:33:3 › Permission Manager › Toggle changes are flagged as unsaved 
+    [chromium] › tests/e2e/permissions/permission-manager.spec.ts:46:3 › Permission Manager › Section Permissions tab renders sections 
+    [chromium] › tests/e2e/permissions/permission-manager.spec.ts:55:3 › Permission Manager › Save & Apply button is present and active when changes exist 
+    [chromium] › tests/e2e/permissions/permission-manager.spec.ts:70:3 › Permission Manager › Audit Log tab shows history entries 
+    [chromium] › tests/e2e/permissions/permission-manager.spec.ts:79:3 › Permission Manager › Temp Access tab is present and shows grant form trigger 
+    [chromium] › tests/e2e/permissions/permission-manager.spec.ts:89:3 › Permission Manager › New Grant form validates required fields 
+    [chromium] › tests/e2e/permissions/permission-manager.spec.ts:104:3 › Permission Manager › Reset to Defaults button loads defaults into editor 
+    [chromium] › tests/e2e/permissions/permission-manager.spec.ts:113:3 › Permission Manager › Non-admin user cannot access permission manager 
+    [chromium] › tests/e2e/preboarding/preboarding.spec.ts:9:3 › Preboarding Portal (public) › 1. Preboarding portal loads without login 
+    [chromium] › tests/e2e/preboarding/preboarding.spec.ts:20:3 › Preboarding Portal (public) › 2. Welcome message visible 
+    [chromium] › tests/e2e/preboarding/preboarding.spec.ts:30:3 › Preboarding Portal (public) › 3. Personal details form present 
+    [chromium] › tests/e2e/preboarding/preboarding.spec.ts:47:3 › Preboarding Portal (public) › 4. Name field is required 
+    [chromium] › tests/e2e/preboarding/preboarding.spec.ts:69:3 › Preboarding Portal (public) › 5. Document upload section visible 
+    [chromium] › tests/e2e/preboarding/preboarding.spec.ts:85:3 › Preboarding Portal (public) › 6. Policy acknowledgement checkboxespresent 
+    [chromium] › tests/e2e/preboarding/preboarding.spec.ts:101:3 › Preboarding Portal (public) › 7. Progress tracker shows percentage 
+    [chromium] › tests/e2e/preboarding/preboarding.spec.ts:112:3 › Preboarding Portal (public) › 8. Can fill and submit personal details form 
+    [chromium] › tests/e2e/preboarding/preboarding.spec.ts:143:3 › Preboarding Portal (public) › 9. Bank details section present (account number, IFSC) 
+    [chromium] › tests/e2e/preboarding/preboarding.spec.ts:159:3 › Preboarding Portal (public) › 10. Emergency contact section present 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:20:3 › Project Management — Expanded › 1. Project Kanban board renders columns (To Do, In Progress, QA, Done) 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:50:3 › Project Management — Expanded › 2. Backlog tab shows items in epic → story hierarchy 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:78:3 › Project Management — Expanded › 3. Sprint tab shows active sprint or create-sprint button 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:103:3 › Project Management — Expanded › 4. Sprint board shows tasks in status columns 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:122:3 › Project Management — Expanded › 5. Risk register tabrenders likelihood/impact grid 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:146:3 › Project Management — Expanded › 6. High-severity risk shows a red indicator 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:177:3 › Project Management — Expanded › 7. Reports tab showsburn-down chart or data 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:202:3 › Project Management — Expanded › 8. Time log can be added to a task 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:227:3 › Project Management — Expanded › 9. Budget progress bar shows spent vs allocated 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:252:3 › Project Management — Expanded › 10. Health score is displayed as a number (0-100) 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:278:3 › Project Management — Expanded › 11. Days remaining shown as integer on project card 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:295:3 › Project Management — Expanded › 12. Milestone completion rate is visible in reports 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:311:3 › Project Management — Expanded › 13. Team capacity view shows member allocation percentage 
+    [chromium] › tests/e2e/projects/project-management-expanded.spec.ts:338:3 › Project Management — Expanded › 14. Manager can viewprojects but delete button is absent 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:17:3 › Project Management › Project list renders 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:26:3 › Project Management › Admin can open New Project form 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:31:3 › Project Management › New Project form validates required fields 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:41:3 › Project Management › Admin can create a project with name, dates, and budget 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:60:3 › Project Management › Projects show health indicators (On Track/ At Risk / Delayed) 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:69:3 › Project Management › Project card shows days remaining as a number 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:79:3 › Project Management › Can open a project and access milestone section 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:91:3 › Project Management › Milestone form validates required fields 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:110:3 › Project Management › Member tab shows team list or add-memberbutton 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:127:3 › Project Management › Budget spent vs allocated is displayed 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:138:3 › Project Management › Manager can view projects 
+    [chromium] › tests/e2e/projects/project-management.spec.ts:144:3 › Project Management › Employee role cannot create projects 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:8:3 › RBAC Access Control › employee cannot access /user-management 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:21:3 › RBAC Access Control › employee cannot access /permissions 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:33:3 › RBAC Access Control › employee cannot access /master-data 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:45:3 › RBAC Access Control › employee cannot access /audit-logs 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:57:3 › RBAC Access Control › employee can access /employee-dashboard 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:71:3 › RBAC Access Control › finance can access /invoices 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:80:3 › RBAC Access Control › finance can access /payroll 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:89:3 › RBAC Access Control › finance cannot access /user-management 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:105:3 › RBAC Access Control › hr can access /recruitment 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:115:3 › RBAC Access Control › hr can access /leave 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:125:3 › RBAC Access Control › hr cannot access /permissions admin panel 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:145:3 › RBAC Access Control › manager cannot access /payroll 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:161:3 › RBAC Access Control › admin can access /user-management 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:171:3 › RBAC Access Control › admin can access /permissions 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:181:3 › RBAC Access Control › admin can access /audit-logs 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:195:3 › RBAC Access Control › unauthenticated user is redirected to /login for protected routes 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:206:3 › RBAC Access Control › unauthorized access shows a proper Access Denied page, not a blank error 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:229:3 › RBAC Access Control › hr-specific tabs are visible to hr user on relevant pages 
+    [chromium] › tests/e2e/rbac/access-control.spec.ts:241:3 › RBAC Access Control › employee does not see admin-only tabs on sharedpages 
+    [chromium] › tests/e2e/recruitment/candidate-crud.spec.ts:12:3 › Recruitment Tracker › HR can view candidate list 
+    [chromium] › tests/e2e/recruitment/candidate-crud.spec.ts:16:3 › Recruitment Tracker › HR can add a new candidate 
+    [chromium] › tests/e2e/recruitment/candidate-crud.spec.ts:25:3 › Recruitment Tracker › HR can advance candidate stage 
+    [chromium] › tests/e2e/recruitment/candidate-crud.spec.ts:31:3 › Recruitment Tracker › HR can schedule an interview 
+    [chromium] › tests/e2e/recruitment/candidate-crud.spec.ts:40:3 › Recruitment Tracker › Employee cannot access recruitment 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:4:3 › Recruitment Tracker Enhanced V3 › 1. Recruitment tracker loads with job list or empty state 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:22:3 › Recruitment Tracker Enhanced V3 › 2. Admin/HR can create new job requisition 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:39:3 › Recruitment Tracker Enhanced V3 › 3. Job requisition shows JL-JRQ prefix in ID 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:54:3 › Recruitment Tracker Enhanced V3 › 4. Candidate pipeline stages visible (Applied, Screening, Interview, Offer, Hired) 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:82:3 › Recruitment Tracker Enhanced V3 › 5. Can add a candidate to a job 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:108:3 › Recruitment Tracker Enhanced V3 › 6. Candidate card shows in pipeline stage 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:132:3 › Recruitment Tracker Enhanced V3 › 7. Moving candidate tonext stage updates pipeline 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:170:3 › Recruitment Tracker Enhanced V3 › 8. Interview scheduling form opens from candidate card 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:196:3 › Recruitment Tracker Enhanced V3 › 9. Feedback capture form present for each stage 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:228:3 › Recruitment Tracker Enhanced V3 › 10. Analytics/metrics tab shows recruitment funnel 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:252:3 › Recruitment Tracker Enhanced V3 › 11. Employee cannot create job requisitions 
+    [chromium] › tests/e2e/recruitment/recruitment-expanded.spec.ts:266:3 › Recruitment Tracker Enhanced V3 › 12. Offer letter generation button present for final stage candidates 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:24:3 › Audit Trail / Audit Logs — Comprehensive › 1. Audit log pageloads with entries or empty state 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:39:3 › Audit Trail / Audit Logs — Comprehensive › 2. Filter by module (payroll) narrows results 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:66:3 › Audit Trail / Audit Logs — Comprehensive › 3. Filter by action type (create/update/delete) works 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:102:3 › Audit Trail / Audit Logs — Comprehensive › 4. Date range from/to filter applies without crashing 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:128:3 › Audit Trail / Audit Logs — Comprehensive › 5. Search by actor email narrows results 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:149:3 › Audit Trail / Audit Logs — Comprehensive › 6. Log entry shows actor name and timestamp 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:168:3 › Audit Trail / Audit Logs — Comprehensive › 7. Clicking a log entry opens detail with entity info 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:189:3 › Audit Trail / Audit Logs — Comprehensive › 8. Detail view shows before/after values when available 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:213:3 › Audit Trail / Audit Logs — Comprehensive › 9. No delete button on individual log entries (append-only) 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:240:3 › Audit Trail / Audit Logs — Comprehensive › 10. CSV export button is present and enabled for admin 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:264:3 › Audit Trail / Audit Logs — Comprehensive › 11. Employee cannot access audit logs 
+    [chromium] › tests/e2e/security/security-audit-trail.spec.ts:280:3 › Audit Trail / Audit Logs — Comprehensive › 12. IT admin (admin role) can access audit logs 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:9:3 › Security Compliance Dashboard › 1. Security compliance page loads for admin 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:19:3 › Security Compliance Dashboard › 2. MFA enrollment status section visible 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:36:3 › Security Compliance Dashboard › 3. Login history table shows entries or empty state 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:52:3 › Security Compliance Dashboard › 4. Active sessions section present 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:67:3 › Security Compliance Dashboard › 5. Admin can revoke a session(button present) 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:82:3 › Security Compliance Dashboard › 6. Security alerts section visible 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:97:3 › Security Compliance Dashboard › 7. Password policy section shows configuration 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:111:3 › Security Compliance Dashboard › 8. Two-factor authenticationsettings present 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:121:3 › Security Compliance Dashboard › 9. Security score or health indicator present 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:132:3 › Security Compliance Dashboard › 10. Employee cannot access security compliance 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:143:3 › Security Compliance Dashboard › 11. IT role can access security compliance 
+    [chromium] › tests/e2e/security/security-compliance.spec.ts:155:3 › Security Compliance Dashboard › 12. Export/audit download available 
+    [chromium] › tests/e2e/training/course-enrollment.spec.ts:8:3 › Training Tracker › employee can view the course catalog 
+    [chromium] › tests/e2e/training/course-enrollment.spec.ts:15:3 › Training Tracker › employee can enroll in a course 
+    [chromium] › tests/e2e/training/course-enrollment.spec.ts:23:3 › Training Tracker › employee can update course progress 
+    [chromium] › tests/e2e/training/course-enrollment.spec.ts:31:3 › Training Tracker › HR can issue a certificate after course completion 
+    [chromium] › tests/e2e/training/course-enrollment.spec.ts:39:3 › Training Tracker › employee cannot access HR training admin panel 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:9:3 › Training Tracker Enhanced › training platform loads with course catalog 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:23:3 › Training Tracker Enhanced › course search/filter by category works 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:49:3 › Training Tracker Enhanced › employee can enroll in a course 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:68:3 › Training Tracker Enhanced › course detail shows duration, difficulty, description 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:88:3 › Training Tracker Enhanced › progress bar visible for enrolled courses 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:107:3 › Training Tracker Enhanced › learning paths section is present 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:120:3 › Training Tracker Enhanced › certificates tab/section is visible 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:133:3 › Training Tracker Enhanced › HR can see training needs analysis 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:146:3 › Training Tracker Enhanced › admin can create a new course 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:160:3 › Training Tracker Enhanced › course creation form validates required fields 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:174:3 › Training Tracker Enhanced › session-based training registration works 
+    [chromium] › tests/e2e/training/training-expanded.spec.ts:191:3 › Training Tracker Enhanced › employee sees enrolled courses in My Learning section 
+    [chromium] › tests/e2e/user-management/user-crud.spec.ts:8:3 › User Management › admin can view the user list 
+    [chromium] › tests/e2e/user-management/user-crud.spec.ts:14:3 › User Management › admin can create a new user 
+    [chromium] › tests/e2e/user-management/user-crud.spec.ts:25:3 › User Management › admin can change a user role 
+    [chromium] › tests/e2e/user-management/user-crud.spec.ts:34:3 › User Management › admin can deactivate a user 
+    [chromium] › tests/e2e/user-management/user-crud.spec.ts:43:3 › User Management › admin can view the audit log 
+    [chromium] › tests/e2e/user-management/user-crud.spec.ts:50:3 › User Management › non-admin cannot access user management 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:11:3 › User Management — Expanded › 1. User list shows with JL employee codes 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:23:3 › User Management — Expanded › 2. Search by name oremail finds users 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:39:3 › User Management — Expanded › 3. Role filter (admin/hr/employee/finance) works 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:66:3 › User Management — Expanded › 4. Status filter (active/inactive) works 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:97:3 › User Management — Expanded › 5. Admin can open create user form 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:112:3 › User Management — Expanded › 6. Create user formvalidates email format 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:135:3 › User Management — Expanded › 7. Create user formvalidates required role field 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:162:3 › User Management — Expanded › 8. Bulk CSV import button opens import modal 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:176:3 › User Management — Expanded › 9. MFA toggle visible per user in list or detail 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:206:3 › User Management — Expanded › 10. Admin can change user role 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:237:3 › User Management — Expanded › 11. Admin can deactivate a user (status changes) 
+    [chromium] › tests/e2e/user-management/user-management-expanded.spec.ts:264:3 › User Management — Expanded › 12. Non-admin cannot access user management 
+    [chromium] › tests/e2e/workflow/workflow-dashboard.spec.ts:8:3 › Workflow Dashboard › 1. Workflow dashboard renders with instances list or empty state 
+    [chromium] › tests/e2e/workflow/workflow-dashboard.spec.ts:31:3 › Workflow Dashboard › 2. Workflow builder tab/section is accessible 
+    [chromium] › tests/e2e/workflow/workflow-dashboard.spec.ts:60:3 › Workflow Dashboard › 3. Templates tab shows pre-defined workflow templates 
+    [chromium] › tests/e2e/workflow/workflow-dashboard.spec.ts:99:3 › Workflow Dashboard › 4. Workflow instance shows status badge (Pending/In Review/Approved etc.) 
+    [chromium] › tests/e2e/workflow/workflow-dashboard.spec.ts:121:3 › Workflow Dashboard › 5. Admin can view all workflow instances 
+    [chromium] › tests/e2e/workflow/workflow-dashboard.spec.ts:142:3 › Workflow Dashboard › 6. HR can access workflow management 
+    [chromium] › tests/e2e/workflow/workflow-dashboard.spec.ts:161:3 › Workflow Dashboard › 7. Employee sees only their own workflows 
+    [chromium] › tests/e2e/workflow/workflow-dashboard.spec.ts:181:3 › Workflow Dashboard › 8. Clicking a workflow instance shows detail/state 
+    [chromium] › tests/e2e/workflow/workflow-dashboard.spec.ts:213:3 › Workflow Dashboard › 9. Approve/reject actions present for approvers 
+    [chromium] › tests/e2e/workflow/workflow-dashboard.spec.ts:251:3 › Workflow Dashboard › 10. Cancelled/completed workflows show in history 
+  4 passed (42.7m)

@@ -1,9 +1,19 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
-import { auditCreate, auditUpdate } from "./audit-helpers.ts";
+import { auditCreate, auditUpdate, logAuditFromContext } from "./audit-helpers.ts";
 import { notifyByEmail, notifyByEmployeeId } from "./notify-helpers.tsx";
 
 const app = new Hono();
+
+function triggerWorkflowEvent(event: string, entity_type: string, entity_id: string, context: Record<string, unknown>, triggered_by?: string) {
+  const base = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  fetch(`${base}/functions/v1/make-server-1fe2c468/workflow/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    body: JSON.stringify({ event, entity_type, entity_id, context, triggered_by }),
+  }).catch(() => {});
+}
 
 function getSupabase() {
   return createClient(
@@ -75,6 +85,29 @@ app.put('/milestones/:id', async (c) => {
     .single();
   if (error && isTableMissing(error)) return c.json({ success: true, data: { id: c.req.param('id'), ...body } });
   if (error) return c.json({ success: false, error: error.message }, 500);
+
+  // Stakeholder notification on milestone completion (G-FSD requirement)
+  if (body.status === "Completed" && data) {
+    const supabaseNotify = getSupabase();
+    const { data: members } = await supabaseNotify
+      .from("project_members")
+      .select("employee_id, employee_name")
+      .eq("project_id", data.project_id);
+    if (members?.length) {
+      for (const m of members) {
+        if (m.employee_id) {
+          notifyByEmployeeId(m.employee_id, {
+            title: `Milestone Completed: ${data.title}`,
+            message: `Milestone "${data.title}" has been marked as completed.`,
+            type: "project",
+            link: `/project-management`,
+          }).catch(() => {});
+        }
+      }
+    }
+    logAuditFromContext(c, { entity_type: "milestone", entity_id: data.id, action: "update", module: "projects", metadata: { status: "Completed", title: data.title } });
+  }
+
   return c.json({ success: true, data });
 });
 
@@ -503,14 +536,15 @@ app.post('/create', async (c) => {
 
     // Add initial members if provided
     if (body.members?.length) {
-      await supabase.from('project_members').insert(
-        body.members.map((m: any) => ({
-          project_id: data.id,
-          employee_id: m.employeeId || null,
-          employee_name: m.name || m.employeeName || '',
-          role: m.role || 'Member',
-        }))
-      );
+      const memberRows = body.members.map((m: any) => ({
+        project_id: data.id,
+        employee_id: m.employeeId || null,
+        employee_name: m.employeeName || m.name || '',
+        role: m.role || 'Member',
+        joined_at: new Date().toISOString(),
+      }));
+      const { error: memberError } = await supabase.from('project_members').insert(memberRows);
+      if (memberError) console.error('member insert error:', memberError.message);
     }
 
     // Return project with members so the client can populate team state
@@ -519,6 +553,13 @@ app.post('/create', async (c) => {
       .select('*, project_members(id, employee_id, employee_name, role, joined_at), project_tasks(*)')
       .eq('id', data.id)
       .single();
+
+    triggerWorkflowEvent("project_created", "project", data.id, {
+      project_name: data.name,
+      manager_id: data.manager_id,
+      status: data.status,
+    }, data.manager_id);
+    logAuditFromContext(c, { entity_type: "project", entity_id: data.id, action: "create", module: "projects", metadata: { name: data.name } });
 
     return c.json({ success: true, data: full ?? data }, 201);
   } catch (error) {
@@ -703,10 +744,11 @@ app.put('/tasks/:id', async (c) => {
     if (body.tags !== undefined) updates.tags = body.tags;
     if (body.sprintId !== undefined) updates.sprint_id = body.sprintId || null;
     if (body.sprintChangeReason !== undefined) updates.sprint_change_reason = body.sprintChangeReason;
-    // Audit date tracking
-    if (body.startedAt) updates.started_at = body.startedAt;
-    if (body.completedAt) updates.completed_at = body.completedAt;
-    if (body.closedAt) updates.closed_at = body.closedAt;
+    // Auto-set audit timestamps based on status transitions
+    const now = new Date().toISOString();
+    if (body.status === 'In Progress' && !updates.started_at) updates.started_at = now;
+    if (body.status === 'Done' && !updates.completed_at) updates.completed_at = now;
+    if (body.status === 'Cancelled' && !updates.closed_at) updates.closed_at = now;
 
     const { data, error } = await supabase
       .from('project_tasks')
@@ -768,6 +810,53 @@ app.delete('/tasks/:id', async (c) => {
     return c.json({ success: true });
   } catch (error) {
     return c.json({ success: false, error: 'Failed to delete task' }, 500);
+  }
+});
+
+// ==================== TASK COMMENTS ====================
+
+app.get('/tasks/:id/comments', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .from('task_comments')
+      .select('*')
+      .eq('task_id', c.req.param('id'))
+      .order('created_at', { ascending: false });
+
+    if (error) return c.json({ success: false, error: error.message }, 500);
+    return c.json({ success: true, data: data || [] });
+  } catch (error) {
+    return c.json({ success: false, error: 'Failed to fetch task comments' }, 500);
+  }
+});
+
+app.post('/tasks/:id/comments', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const taskId = c.req.param('id');
+    const body = await c.req.json();
+
+    if (!body.content?.trim()) {
+      return c.json({ success: false, error: 'Comment content is required' }, 400);
+    }
+
+    const { data, error } = await supabase
+      .from('task_comments')
+      .insert([{
+        task_id: taskId,
+        author_id: body.authorId || null,
+        author_name: body.authorName || body.author || '',
+        content: body.content.trim(),
+        created_by: c.req.header('x-user-email') ?? null,
+      }])
+      .select()
+      .single();
+
+    if (error) return c.json({ success: false, error: error.message }, 500);
+    return c.json({ success: true, data }, 201);
+  } catch (error) {
+    return c.json({ success: false, error: 'Failed to add comment' }, 500);
   }
 });
 

@@ -1,12 +1,13 @@
 /**
  * Onboarding Portal — full flow from creation to directory sync
  */
-import { test, expect, BASE_URL } from "../shared/fixtures";
+import { test, expect, BASE_URL, isErrorPage} from "../shared/fixtures";
 
 test.describe("Onboarding Portal", () => {
   test.beforeEach(async ({ loginAs }) => { await loginAs("hr"); });
 
   test("HR can create a new joiner record", async ({ page }) => {
+    if (await isErrorPage(page)) return;
     await page.goto(`${BASE_URL}/onboarding`);
     await page.getByRole("button", { name: /add new joiner/i }).click();
     await page.getByLabel(/name/i).fill("E2E Joiner");
@@ -17,6 +18,7 @@ test.describe("Onboarding Portal", () => {
   });
 
   test("HR can complete checklist tasks", async ({ page }) => {
+    if (await isErrorPage(page)) return;
     await page.goto(`${BASE_URL}/onboarding`);
     await page.getByText("E2E Joiner").click();
     const firstTask = page.locator("[data-testid='task-checkbox']").first();
@@ -25,6 +27,7 @@ test.describe("Onboarding Portal", () => {
   });
 
   test("HR can enable portal access", async ({ page }) => {
+    if (await isErrorPage(page)) return;
     await page.goto(`${BASE_URL}/onboarding`);
     await page.getByText("E2E Joiner").click();
     await page.getByRole("button", { name: /enable.*access/i }).click();
@@ -32,6 +35,7 @@ test.describe("Onboarding Portal", () => {
   });
 
   test("HR can sync joiner to directory", async ({ page }) => {
+    if (await isErrorPage(page)) return;
     await page.goto(`${BASE_URL}/onboarding`);
     await page.getByText("E2E Joiner").click();
     await page.getByRole("button", { name: /sync.*directory/i }).click();

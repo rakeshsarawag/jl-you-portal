@@ -1,8 +1,18 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
-import { auditCreate, auditUpdate } from "./audit-helpers.ts";
+import { auditCreate, auditUpdate, logAuditFromContext } from "./audit-helpers.ts";
 
 const app = new Hono();
+
+function triggerWorkflowEvent(event: string, entity_type: string, entity_id: string, context: Record<string, unknown>, triggered_by?: string) {
+  const base = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  fetch(`${base}/functions/v1/make-server-1fe2c468/workflow/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    body: JSON.stringify({ event, entity_type, entity_id, context, triggered_by }),
+  }).catch(() => {});
+}
 
 function getSupabase() {
   return createClient(
@@ -115,6 +125,7 @@ app.post('/candidates', async (c) => {
         status: body.status || 'Active',
         hiring_manager: body.hiringManager || '',
         notes: body.notes || '',
+        expertise: body.expertise || '',
         ...auditCreate(c),
       }])
       .select()
@@ -179,6 +190,7 @@ app.post('/bulk-upload', async (c) => {
         status: 'Active',
         hiring_manager: cd.hiringManager || '',
         notes: cd.notes || '',
+        expertise: cd.expertise || cd.Expertise || '',
         ...auditCreate(c),
       }]);
 
@@ -236,6 +248,7 @@ app.put('/candidates/:id', async (c) => {
         offer_sent_date: body.offerSentDate || null,
         offer_accepted_date: body.offerAcceptedDate || null,
         expected_joining_date: body.expectedJoiningDate || null,
+        expertise: body.expertise ?? '',
         ...auditUpdate(c),
       })
       .eq('id', c.req.param('id'))
@@ -281,6 +294,7 @@ app.post('/candidates/update', async (c) => {
         offer_sent_date: rest.offerSentDate || null,
         offer_accepted_date: rest.offerAcceptedDate || null,
         expected_joining_date: rest.expectedJoiningDate || null,
+        expertise: rest.expertise ?? '',
         ...auditUpdate(c),
       })
       .eq('id', id)
@@ -492,6 +506,14 @@ app.post('/jobs', async (c) => {
       .single();
 
     if (error) return c.json({ success: false, error: error.message }, 500);
+
+    triggerWorkflowEvent("job_posted", "recruitment_job", data.id, {
+      title: data.title,
+      department: data.department,
+      platforms: data.platforms,
+    });
+    logAuditFromContext(c, { entity_type: "recruitment_job", entity_id: data.id, action: "create", module: "recruitment", metadata: { title: data.title, department: data.department } });
+
     return c.json({ success: true, data }, 201);
   } catch (error) {
     return c.json({ success: false, error: 'Failed to create job' }, 500);

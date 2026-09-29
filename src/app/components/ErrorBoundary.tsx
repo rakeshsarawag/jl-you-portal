@@ -3,6 +3,7 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { AlertTriangle, Home, RefreshCw } from 'lucide-react';
 import { t } from '../../i18n';
+import { logger } from '../../utils/logger';
 
 interface ErrorBoundaryProps {
   accessToken?: string;
@@ -13,9 +14,8 @@ export function ErrorBoundary({ accessToken, onLogout }: ErrorBoundaryProps = {}
   const error = useRouteError() as any;
   const navigate = useNavigate();
 
-  // Only log if there's actually an error with content
   if (error && (error.message || error.statusText || error.status)) {
-    console.error('Route error:', error);
+    logger.capture(error, "Route error", { module: "ErrorBoundary" });
   }
 
   return (

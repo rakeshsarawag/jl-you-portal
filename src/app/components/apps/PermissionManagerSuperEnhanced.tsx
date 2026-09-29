@@ -9,7 +9,7 @@ import { toast } from 'sonner';
 import {
   Shield, Lock, Eye, EyeOff, Check, X, Loader2, ChevronDown, ChevronRight,
   Save, RotateCcw, Search, AlertCircle, Info, Users, LayoutGrid, List,
-  CheckSquare, Square, Minus, RefreshCw, History,
+  CheckSquare, Square, Minus, RefreshCw, History, Clock, Plus, Trash2, Ban,
 } from 'lucide-react';
 import { useUser } from '../../context/UserContext';
 import { API_BASE, publicAnonKey, apiHeaders } from '../../utils/constants';
@@ -43,7 +43,7 @@ type PermBlob = {
 
 type Matrix = Record<UserRole, PermBlob>;
 
-type PanelTab = 'apps' | 'sections' | 'audit';
+type PanelTab = 'apps' | 'sections' | 'audit' | 'temp-grants';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -366,6 +366,223 @@ function SectionPermissionsPanel({ matrix, onChange }: {
   );
 }
 
+// ── Temp Grants Panel ─────────────────────────────────────────────────────
+
+type TempGrant = {
+  id: string;
+  user_id: string;
+  app_id: string;
+  section_id?: string;
+  reason: string;
+  expires_at: string;
+  is_revoked: boolean;
+  granted_by?: string;
+  created_at: string;
+};
+
+function TempGrantsPanel() {
+  const { user } = useUser();
+  const [grants, setGrants] = useState<TempGrant[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [form, setForm] = useState({ user_id: '', app_id: '', section_id: '', reason: '', expires_at: '' });
+
+  const hdrs = apiHeaders(user);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${PERM_URL}/temp-grants`, { headers: hdrs });
+      const json = await res.json();
+      setGrants(json?.data ?? []);
+    } catch {
+      toast.error('Failed to load temporary grants');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleRevoke(id: string) {
+    setRevoking(id);
+    try {
+      const res = await fetch(`${PERM_URL}/temp-grants/${id}/revoke`, { method: 'PATCH', headers: hdrs });
+      if (!res.ok) throw new Error();
+      toast.success('Grant revoked');
+      load();
+    } catch {
+      toast.error('Failed to revoke grant');
+    } finally {
+      setRevoking(null);
+    }
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.user_id || !form.app_id || !form.expires_at || !form.reason) {
+      toast.error('All fields are required');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${PERM_URL}/temp-grants`, {
+        method: 'POST',
+        headers: { ...hdrs, 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error();
+      toast.success('Temporary grant created');
+      setShowForm(false);
+      setForm({ user_id: '', app_id: '', section_id: '', reason: '', expires_at: '' });
+      load();
+    } catch {
+      toast.error('Failed to create grant');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const now = new Date();
+  const active = grants.filter(g => !g.is_revoked && new Date(g.expires_at) > now);
+  const expired = grants.filter(g => g.is_revoked || new Date(g.expires_at) <= now);
+
+  return (
+    <div className="h-full overflow-y-auto p-6">
+      <div className="max-w-3xl mx-auto space-y-4">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">{active.length} active grant{active.length !== 1 ? 's' : ''}</p>
+          <button
+            onClick={() => setShowForm(v => !v)}
+            className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 flex items-center gap-1.5"
+          >
+            <Plus size={12} /> New Grant
+          </button>
+        </div>
+
+        {/* Create form */}
+        {showForm && (
+          <form onSubmit={handleCreate} className="border border-border rounded-xl p-4 bg-card space-y-3">
+            <h3 className="text-sm font-medium text-foreground">New Temporary Access Grant</h3>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">User ID</label>
+                <input
+                  value={form.user_id}
+                  onChange={e => setForm(f => ({ ...f, user_id: e.target.value }))}
+                  placeholder="UUID of user"
+                  className="w-full text-xs border border-input rounded-lg px-3 py-2 bg-background text-foreground"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">App</label>
+                <select
+                  value={form.app_id}
+                  onChange={e => setForm(f => ({ ...f, app_id: e.target.value }))}
+                  className="w-full text-xs border border-input rounded-lg px-3 py-2 bg-background text-foreground"
+                >
+                  <option value="">Select app…</option>
+                  {APP_REGISTRY.map(a => <option key={a.id} value={a.id}>{a.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Expires At</label>
+                <input
+                  type="datetime-local"
+                  value={form.expires_at}
+                  onChange={e => setForm(f => ({ ...f, expires_at: e.target.value }))}
+                  className="w-full text-xs border border-input rounded-lg px-3 py-2 bg-background text-foreground"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Section (optional)</label>
+                <input
+                  value={form.section_id}
+                  onChange={e => setForm(f => ({ ...f, section_id: e.target.value }))}
+                  placeholder="e.g. payroll.slips"
+                  className="w-full text-xs border border-input rounded-lg px-3 py-2 bg-background text-foreground"
+                />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Reason *</label>
+              <input
+                value={form.reason}
+                onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
+                placeholder="Business justification"
+                className="w-full text-xs border border-input rounded-lg px-3 py-2 bg-background text-foreground"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setShowForm(false)} className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-muted">Cancel</button>
+              <button type="submit" disabled={submitting} className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 flex items-center gap-1.5 disabled:opacity-50">
+                {submitting ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Create Grant
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* Active grants */}
+        {loading ? (
+          <div className="flex justify-center py-10"><Loader2 size={20} className="animate-spin text-primary" /></div>
+        ) : (
+          <>
+            <div className="space-y-2">
+              {active.length === 0 && <p className="text-sm text-muted-foreground text-center py-6">No active temporary grants.</p>}
+              {active.map(g => (
+                <div key={g.id} className="border border-green-200 dark:border-green-900 bg-green-50 dark:bg-green-950/20 rounded-xl px-4 py-3 flex items-start justify-between gap-3">
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-mono text-foreground truncate">{g.user_id}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 bg-primary/10 text-primary rounded font-medium">{g.app_id}</span>
+                      {g.section_id && <span className="text-[10px] px-1.5 py-0.5 bg-muted text-muted-foreground rounded">{g.section_id}</span>}
+                    </div>
+                    <p className="text-xs text-muted-foreground">{g.reason}</p>
+                    <p className="text-[10px] text-muted-foreground">Expires {new Date(g.expires_at).toLocaleString()}</p>
+                  </div>
+                  <button
+                    onClick={() => handleRevoke(g.id)}
+                    disabled={revoking === g.id}
+                    className="shrink-0 p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50"
+                    title="Revoke grant"
+                  >
+                    {revoking === g.id ? <Loader2 size={13} className="animate-spin" /> : <Ban size={13} />}
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            {/* Expired/revoked */}
+            {expired.length > 0 && (
+              <details className="mt-4">
+                <summary className="text-xs text-muted-foreground cursor-pointer select-none hover:text-foreground flex items-center gap-1">
+                  <History size={12} /> {expired.length} expired / revoked
+                </summary>
+                <div className="space-y-2 mt-2">
+                  {expired.map(g => (
+                    <div key={g.id} className="border border-border bg-muted/30 rounded-xl px-4 py-3 opacity-60">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-mono text-foreground truncate">{g.user_id}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 bg-muted text-muted-foreground rounded">{g.app_id}</span>
+                        {g.is_revoked && <span className="text-[10px] px-1.5 py-0.5 bg-red-100 dark:bg-red-950/30 text-red-600 rounded">revoked</span>}
+                        {!g.is_revoked && <span className="text-[10px] px-1.5 py-0.5 bg-amber-100 dark:bg-amber-950/30 text-amber-600 rounded">expired</span>}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">{g.reason}</p>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Audit Log Panel ────────────────────────────────────────────────────────
 
 function AuditPanel() {
@@ -530,6 +747,7 @@ export default function PermissionManagerSuperEnhanced() {
     { id: 'apps', label: 'App Visibility', icon: <LayoutGrid size={14} />, desc: 'Which apps each role can see in the launchpad' },
     { id: 'sections', label: 'Section Permissions', icon: <List size={14} />, desc: 'Which features and sections each role can access within apps' },
     { id: 'audit', label: 'Audit Log', icon: <History size={14} />, desc: 'History of permission changes' },
+    { id: 'temp-grants', label: 'Temp Access', icon: <Clock size={14} />, desc: 'Time-limited access grants for individual users' },
   ];
 
   return (
@@ -669,6 +887,8 @@ export default function PermissionManagerSuperEnhanced() {
           <AppVisibilityPanel matrix={matrix} onChange={handleChange} />
         ) : tab === 'sections' ? (
           <SectionPermissionsPanel matrix={matrix} onChange={handleChange} />
+        ) : tab === 'temp-grants' ? (
+          <TempGrantsPanel />
         ) : (
           <AuditPanel />
         )}

@@ -12,8 +12,6 @@ import KeyboardShortcutsModal from './components/ui/KeyboardShortcutsModal';
 import { LoginPage } from './components/LoginPage';
 import { UserProvider } from './context/UserContext';
 import { DisplaySettingsProvider } from './context/DisplaySettingsContext';
-import { MasterDataProvider } from './context/MasterDataContext';
-import { ValueHelpsProvider } from './context/ValueHelpsContext';
 import { useLocale } from '../i18n/LocaleContext';
 import { PWAService } from './services/pwaService';
 import { PWAStatus } from './components/mobile/PWAStatus';
@@ -33,6 +31,7 @@ export default function App() {
   useLocale();
 
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [logoutReason, setLogoutReason] = useState<'idle_timeout' | null>(null);
 
@@ -42,10 +41,13 @@ export default function App() {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error) {
+          setUserId(null);
           setAccessToken(null);
         } else if (session?.access_token) {
+          setUserId(session.user?.id ?? null);
           setAccessToken(session.access_token);
         } else {
+          setUserId(null);
           setAccessToken(null);
         }
       } catch {
@@ -59,10 +61,14 @@ export default function App() {
 
     // Listen for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      // INITIAL_SESSION is handled by checkSession() above — skip to avoid double render
+      if (event === 'INITIAL_SESSION') return;
       if (session?.access_token) {
+        setUserId(session.user?.id ?? null);
         setAccessToken(session.access_token);
       } else {
         invalidatePermissionsCache();
+        setUserId(null);
         setAccessToken(null);
       }
     });
@@ -77,12 +83,14 @@ export default function App() {
     PWAService.initialize();
   }, []);
 
-  // Seed master_data_config with default policy values (idempotent — ignoreDuplicates)
+  // Seed master_data_config once per browser install — skip on subsequent loads
   useEffect(() => {
+    const FLAG = 'jl_master_seeded_v1';
+    if (localStorage.getItem(FLAG)) return;
     void supabase.from('master_data_config').upsert(
       MASTER_DATA_SEED_RECORDS,
       { onConflict: 'config_group,config_key', ignoreDuplicates: true }
-    );
+    ).then(() => localStorage.setItem(FLAG, '1'));
   }, []);
 
   const handleLoginSuccess = (token: string) => {
@@ -141,6 +149,12 @@ export default function App() {
     return createAppRouter({ accessToken, onLogout: handleLogout });
   }, [accessToken, handleLogout]);
 
+  // Public route bypass — must be before any early return so hook count is stable
+  const isPreboarding = useMemo(
+    () => window.location.pathname === '/preboarding' && window.location.search.includes('token='),
+    [accessToken],
+  );
+
   // Loading state
   if (loading) {
     return (
@@ -153,9 +167,6 @@ export default function App() {
     );
   }
 
-  // Public route bypass — show preboarding portal without auth
-  const isPreboarding = window.location.pathname === '/preboarding' && window.location.search.includes('token=');
-
   // Main render
   return (
     <>
@@ -163,13 +174,10 @@ export default function App() {
         <PreboardingPortal />
       ) : accessToken && router ? (
         <DisplaySettingsProvider>
-        <UserProvider accessToken={accessToken}>
-          <MasterDataProvider>
-            <ValueHelpsProvider>
-              <RouterProvider router={router} />
-            </ValueHelpsProvider>
-          </MasterDataProvider>
-        </UserProvider>
+          {/* key remounts UserProvider on token change so user data refreshes */}
+          <UserProvider key={userId ?? 'anon'} accessToken={accessToken}>
+            <RouterProvider router={router} />
+          </UserProvider>
         </DisplaySettingsProvider>
       ) : (
         <LoginPage onLoginSuccess={handleLoginSuccess} logoutReason={logoutReason} />

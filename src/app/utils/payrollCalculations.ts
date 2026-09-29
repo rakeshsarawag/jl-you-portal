@@ -19,6 +19,40 @@ export function calculateESI(grossSalary: number): { employee: number; employer:
   };
 }
 
+// DB slab shape (from income_tax_slabs table / /payroll/tax-slabs API)
+export interface IncomeTaxSlab {
+  min_income: number;
+  max_income: number | null;
+  rate_pct: number;
+}
+
+export interface TaxRebate {
+  max_income_for_rebate: number;
+  rebate_amount: number;
+}
+
+// Generic slab-based TDS calculation — works with DB slabs or hardcoded fallback
+export function calculateTDSFromSlabs(
+  annualGross: number,
+  stdDeduction: number,
+  slabs: IncomeTaxSlab[],
+  rebate?: TaxRebate
+): number {
+  if (!slabs.length) return 0;
+  const taxable = Math.max(0, annualGross - stdDeduction);
+  let tax = 0;
+  for (const slab of slabs) {
+    if (taxable <= slab.min_income) break;
+    const upper = slab.max_income ?? Infinity;
+    const portion = Math.min(taxable, upper) - slab.min_income;
+    if (portion > 0) tax += portion * (slab.rate_pct / 100);
+  }
+  if (rebate && taxable <= rebate.max_income_for_rebate) {
+    tax = Math.max(0, tax - rebate.rebate_amount);
+  }
+  return Math.round(tax * 1.04 / 12); // 4% health & education cess, monthly
+}
+
 export function calculateTDSNewRegime(annualGross: number): number {
   const stdDeduction = 75000;
   const taxable = Math.max(0, annualGross - stdDeduction);

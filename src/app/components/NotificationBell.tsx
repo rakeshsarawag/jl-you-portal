@@ -384,10 +384,9 @@ export function NotificationBell() {
 
   const normalizeNotification = (row: Record<string, unknown>): Notification => ({
     ...row,
-    // body and message are both used across different inserts — normalise to body
     body: (row.body ?? row.message ?? '') as string,
-    // read and is_read are both present — normalise to is_read
-    is_read: Boolean(row.is_read ?? row.read ?? false),
+    // Use || so is_read=false,read=true still resolves to true
+    is_read: Boolean(row.is_read) || Boolean(row.read),
     app_filter: (row.app_filter ?? row.app ?? 'all') as string,
   } as Notification);
 
@@ -413,7 +412,15 @@ export function NotificationBell() {
 
   useEffect(() => {
     fetchNotifications();
+    // Keep in sync with AppHeader's NotificationPanel (shared event)
+    window.addEventListener('jl-notifications-changed', fetchNotifications);
+    return () => window.removeEventListener('jl-notifications-changed', fetchNotifications);
   }, [fetchNotifications]);
+
+  // Re-fetch whenever the tray opens so badge count is always fresh
+  useEffect(() => {
+    if (open) fetchNotifications();
+  }, [open]);
 
   // ── Fetch org announcements ────────────────────────────────────────────────
 
@@ -556,38 +563,45 @@ export function NotificationBell() {
 
   const readCount = visibleNotifications.filter((n) => n.is_read).length;
 
-  // ── Mutation helpers ────────────────────────────────────────────────────
+  // ── Mutation helpers (routed through service-role API to bypass RLS) ──────
 
   function markRead(id: string) {
     setNotifications((prev) =>
       prev.map((n) => (n.id === id ? { ...n, is_read: true, read_at: new Date().toISOString() } : n))
     );
-    void supabase
-      .from('notifications')
-      .update({ is_read: true, read_at: new Date().toISOString() })
-      .eq('id', id);
+    void fetch(`${API_BASE}/notifications/${id}/read`, { method: 'PUT', headers: apiHeaders() })
+      .catch((err) => console.warn('[NotifBell] markRead error:', err));
+    window.dispatchEvent(new Event('jl-notifications-changed'));
   }
 
   function markAllRead() {
-    const unreadIds = visibleNotifications.filter((n) => !n.is_read).map((n) => n.id);
-    if (!unreadIds.length) return;
+    if (!currentUser?.id) return;
+    const ids = [...new Set([currentUser.id, currentUser.appUserId, currentUser.employeeId].filter(Boolean))] as string[];
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true, read_at: n.read_at ?? new Date().toISOString() })));
-    void supabase
-      .from('notifications')
-      .update({ is_read: true, read_at: new Date().toISOString() })
-      .in('id', unreadIds);
+    void fetch(`${API_BASE}/notifications/read-all`, {
+      method: 'PUT',
+      headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: ids[0], userIds: ids }),
+    }).catch((err) => console.warn('[NotifBell] markAllRead error:', err));
+    window.dispatchEvent(new Event('jl-notifications-changed'));
   }
 
   function deleteNotification(id: string) {
     setNotifications((prev) => prev.filter((n) => n.id !== id));
-    void supabase.from('notifications').delete().eq('id', id);
+    void fetch(`${API_BASE}/notifications/${id}`, { method: 'DELETE', headers: apiHeaders() })
+      .catch((err) => console.warn('[NotifBell] delete error:', err));
+    window.dispatchEvent(new Event('jl-notifications-changed'));
   }
 
   function deleteAllRead() {
     const ids = visibleNotifications.filter((n) => n.is_read).map((n) => n.id);
     if (!ids.length) return;
     setNotifications((prev) => prev.filter((n) => !ids.includes(n.id)));
-    void supabase.from('notifications').delete().in('id', ids);
+    ids.forEach((id) => {
+      void fetch(`${API_BASE}/notifications/${id}`, { method: 'DELETE', headers: apiHeaders() })
+        .catch(() => {});
+    });
+    window.dispatchEvent(new Event('jl-notifications-changed'));
     setShowDeleteConfirm(false);
   }
 

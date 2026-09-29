@@ -4,6 +4,7 @@ import {
   calculateESI,
   calculateTDSNewRegime,
   calculateTDSOldRegime,
+  calculateTDSFromSlabs,
   PF_WAGE_CEILING,
   ESI_THRESHOLD,
 } from "../../../src/app/utils/payrollCalculations";
@@ -98,5 +99,40 @@ describe("calculateTDSOldRegime", () => {
 
   it("zero income returns zero TDS", () => {
     expect(calculateTDSOldRegime(0)).toBe(0);
+  });
+});
+
+describe("calculateTDSFromSlabs (DB-driven)", () => {
+  const newRegimeSlabs = [
+    { min_income: 0, max_income: 300000, rate_pct: 0 },
+    { min_income: 300000, max_income: 600000, rate_pct: 5 },
+    { min_income: 600000, max_income: 900000, rate_pct: 10 },
+    { min_income: 900000, max_income: 1200000, rate_pct: 15 },
+    { min_income: 1200000, max_income: 1500000, rate_pct: 20 },
+    { min_income: 1500000, max_income: null, rate_pct: 30 },
+  ];
+  const rebate = { max_income_for_rebate: 700000, rebate_amount: 25000 };
+
+  it("returns 0 for empty slabs", () => {
+    expect(calculateTDSFromSlabs(1000000, 75000, [])).toBe(0);
+  });
+
+  it("nil slab for very low income", () => {
+    expect(calculateTDSFromSlabs(300000, 75000, newRegimeSlabs, rebate)).toBe(0);
+  });
+
+  it("87A rebate applies for income at ₹7L taxable", () => {
+    // 7,75,000 - 75,000 std deduction = 700,000 taxable, gets full rebate
+    expect(calculateTDSFromSlabs(775000, 75000, newRegimeSlabs, rebate)).toBe(0);
+  });
+
+  it("positive TDS for ₹20L gross", () => {
+    expect(calculateTDSFromSlabs(2000000, 75000, newRegimeSlabs, rebate)).toBeGreaterThan(0);
+  });
+
+  it("matches hardcoded new regime function for high income", () => {
+    const dbResult = calculateTDSFromSlabs(2000000, 75000, newRegimeSlabs, rebate);
+    const hardcoded = calculateTDSNewRegime(2000000);
+    expect(Math.abs(dbResult - hardcoded)).toBeLessThan(5); // within ₹5 rounding
   });
 });

@@ -31,6 +31,7 @@ const EMPTY_BLOB: RolePermissionBlob = { app_visibility: {}, sections: {} };
 let _cachedMatrix: Record<string, RolePermissionBlob> | null = null;
 let _cacheTs = 0;
 const CACHE_TTL = 5 * 60 * 1000;
+let _inflight: Promise<Record<string, RolePermissionBlob>> | null = null;
 
 export let permissionsTableMissing = false;
 
@@ -56,52 +57,63 @@ async function fetchMatrix(): Promise<Record<string, RolePermissionBlob>> {
   const now = Date.now();
   if (_cachedMatrix && now - _cacheTs < CACHE_TTL) return _cachedMatrix;
 
-  const res = await fetch(`${API_BASE}/permissions`, {
-    cache: 'no-store',
-    headers: { Authorization: `Bearer ${publicAnonKey}` },
-  });
+  // If already fetching, return the same promise
+  if (_inflight) return _inflight;
 
-  if (res.status === 503) {
-    const body = await res.json().catch(() => ({}));
-    if (body?.table_missing) {
-      permissionsTableMissing = true;
-      // Table missing — seed defaults so next load works
-      const defaults = buildDefaultMatrix();
-      seedDefaultsToDB(defaults).catch(() => {});
-      _cachedMatrix = defaults;
-      _cacheTs = now;
-      return defaults;
+  _inflight = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/permissions`, {
+        cache: 'no-store',
+        headers: { Authorization: `Bearer ${publicAnonKey}` },
+      });
+
+      if (res.status === 503) {
+        const body = await res.json().catch(() => ({}));
+        if (body?.table_missing) {
+          permissionsTableMissing = true;
+          // Table missing — seed defaults so next load works
+          const defaults = buildDefaultMatrix();
+          seedDefaultsToDB(defaults).catch(() => {});
+          _cachedMatrix = defaults;
+          _cacheTs = Date.now();
+          return defaults;
+        }
+      }
+
+      if (!res.ok) throw new Error('permissions fetch failed');
+      permissionsTableMissing = false;
+
+      const json = await res.json();
+      const raw: Record<string, any> = json?.permissionMatrix ?? {};
+
+      const matrix: Record<string, RolePermissionBlob> = {};
+      for (const [role, data] of Object.entries(raw)) {
+        if (data && typeof data === 'object' && ('app_visibility' in data || 'sections' in data)) {
+          matrix[role] = {
+            app_visibility: data.app_visibility ?? {},
+            sections: data.sections ?? {},
+          };
+        }
+      }
+
+      // DB returned no rows — seed defaults so the Permissions Manager and Launchpad work from DB
+      if (Object.keys(matrix).length === 0) {
+        const defaults = buildDefaultMatrix();
+        seedDefaultsToDB(defaults).catch(() => {});
+        _cachedMatrix = defaults;
+        _cacheTs = Date.now();
+        return defaults;
+      }
+
+      _cachedMatrix = matrix;
+      _cacheTs = Date.now();
+      return matrix;
+    } finally {
+      _inflight = null;
     }
-  }
+  })();
 
-  if (!res.ok) throw new Error('permissions fetch failed');
-  permissionsTableMissing = false;
-
-  const json = await res.json();
-  const raw: Record<string, any> = json?.permissionMatrix ?? {};
-
-  const matrix: Record<string, RolePermissionBlob> = {};
-  for (const [role, data] of Object.entries(raw)) {
-    if (data && typeof data === 'object' && ('app_visibility' in data || 'sections' in data)) {
-      matrix[role] = {
-        app_visibility: data.app_visibility ?? {},
-        sections: data.sections ?? {},
-      };
-    }
-  }
-
-  // DB returned no rows — seed defaults so the Permissions Manager and Launchpad work from DB
-  if (Object.keys(matrix).length === 0) {
-    const defaults = buildDefaultMatrix();
-    seedDefaultsToDB(defaults).catch(() => {});
-    _cachedMatrix = defaults;
-    _cacheTs = now;
-    return defaults;
-  }
-
-  _cachedMatrix = matrix;
-  _cacheTs = now;
-  return matrix;
+  return _inflight;
 }
 
 /** Invalidate the in-memory cache so the next hook call re-fetches from DB */

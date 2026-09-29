@@ -1,0 +1,60 @@
+Warning: React has detected a change in the order of Hooks called by %s. This will lead to bugs and errors if not fixed. For more information, read the Rules of Hooks: https://reactjs.org/link/rules-of-hooks
+
+   Previous render            Next render
+   ------------------------------------------------------
+%s   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+%s App 1. useContext                 useContext
+2. useState                   useState
+3. useState                   useState
+4. useState                   useState
+5. useState                   useState
+6. useEffect                  useEffect
+7. useEffect                  useEffect
+8. useEffect                  useEffect
+9. useCallback                useCallback
+10. useCallback               useCallback
+11. useState                  useState
+12. useState                  useState
+13. useRef                    useRef
+14. useEffect                 useEffect
+15. useRef                    useRef
+16. useRef                    useRef
+17. useRef                    useRef
+18. useRef                    useRef
+19. useCallback               useCallback
+20. useCallback               useCallback
+21. useCallback               useCallback
+22. useEffect                 useEffect
+23. useState                  useState
+24. useEffect                 useEffect
+25. useEffect                 useEffect
+26. useMemo                   useMemo
+27. undefined                 useMemo
+ 
+    at App (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/src/app/App.tsx:36:3)
+    at LocaleProvider (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/src/i18n/LocaleContext.tsx:24:34)
+    at QueryClientProvider (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/@tanstack_react-query.js?v=7768471b:26:30)
+❌ Error: Rendered more hooks than during the previous render.
+    at updateWorkInProgressHook (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:11726:21)
+    at updateMemo (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:12247:22)
+    at Object.useMemo (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:12774:24)
+    at useMemo (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-BJQQJ3SG.js?v=e3cf59bd:1094:29)
+    at App (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/src/app/App.tsx:154:25)
+    at renderWithHooks (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:11596:26)
+    at updateFunctionComponent (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:14630:28)
+    at beginWork (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:15972:22)
+    at HTMLUnknownElement.callCallback2 (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:3680:22)
+    at Object.invokeGuardedCallbackDev (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:3705:24)
+❌ Error: Rendered more hooks than during the previous render.
+    at updateWorkInProgressHook (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:11726:21)
+    at updateMemo (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:12247:22)
+    at Object.useMemo (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:12774:24)
+    at useMemo (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-BJQQJ3SG.js?v=e3cf59bd:1094:29)
+    at App (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/src/app/App.tsx:154:25)
+    at renderWithHooks (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:11596:26)
+    at updateFunctionComponent (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:14630:28)
+    at beginWork (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:15972:22)
+    at beginWork$1 (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:19806:22)
+    at performUnitOfWork (https://app-pyjwr2hoz6u3khy65v7ylhpjjlwqjilo235ufqbgbknfla53yjwm.makeproxy-c.figma.site/node_modules/.vite/deps/chunk-WUMNJQEG.js?v=e3cf59bd:19251:20)
+2
+Service Worker registered: {}

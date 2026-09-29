@@ -4,6 +4,16 @@ import { auditCreate, auditUpdate } from "./audit-helpers.ts";
 
 const app = new Hono();
 
+function triggerWorkflowEvent(event: string, entity_type: string, entity_id: string, context: Record<string, unknown>, triggered_by?: string) {
+  const base = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  fetch(`${base}/functions/v1/make-server-1fe2c468/workflow/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    body: JSON.stringify({ event, entity_type, entity_id, context, triggered_by }),
+  }).catch(() => {});
+}
+
 function getSupabase() {
   return createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -212,6 +222,13 @@ app.post('/create', async (c) => {
       .eq('id', inv.id)
       .single();
 
+    triggerWorkflowEvent("invoice_created", "invoice", inv.id, {
+      invoice_number: inv.invoice_number,
+      client_name: inv.client_name,
+      total,
+      status: inv.status,
+    });
+
     return c.json({ success: true, data: shapeInvoice(full) }, 201);
   } catch (error) {
     return c.json({ success: false, error: 'Failed to create invoice' }, 500);
@@ -299,6 +316,98 @@ app.post('/billto', async (c) => {
     return c.json({ success: true, data }, 201);
   } catch (error) {
     return c.json({ success: false, error: 'Failed to create client' }, 500);
+  }
+});
+
+// ==================== PAYMENT REMINDERS ====================
+
+// POST /invoice/reminders/send — find overdue/due-soon invoices and send reminders
+app.post('/reminders/send', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const soonStr = new Date(today.getTime() + 7 * 86400000).toISOString().slice(0, 10); // 7 days ahead
+
+    // Get unpaid invoices that are overdue or due within 7 days
+    const { data: invoices, error } = await supabase
+      .from('invoices')
+      .select('id, invoice_number, client_name, client_email, due_date, total_amount, currency, status')
+      .in('status', ['Sent', 'Partially Paid', 'Overdue'])
+      .lte('due_date', soonStr)
+      .not('client_email', 'is', null);
+
+    if (error) return c.json({ success: false, error: error.message }, 500);
+    if (!invoices?.length) return c.json({ success: true, sent: 0, message: 'No overdue/due-soon invoices found' });
+
+    const resendKey = Deno.env.get('RESEND_API_KEY');
+    let sent = 0;
+    const errors: string[] = [];
+
+    for (const inv of invoices) {
+      const dueDate = new Date(inv.due_date);
+      const daysOverdue = Math.floor((today.getTime() - dueDate.getTime()) / 86400000);
+      const isOverdue = daysOverdue > 0;
+
+      // Mark as overdue in DB if past due
+      if (isOverdue && inv.status !== 'Overdue') {
+        await supabase.from('invoices').update({ status: 'Overdue' }).eq('id', inv.id);
+      }
+
+      // Create in-portal notification for finance team
+      await supabase.from('notifications').insert({
+        user_id: null, // broadcast to finance role
+        title: isOverdue ? `Payment Overdue: ${inv.invoice_number}` : `Payment Due Soon: ${inv.invoice_number}`,
+        message: isOverdue
+          ? `Invoice ${inv.invoice_number} for ${inv.client_name} is ${daysOverdue} day(s) overdue. Amount: ${inv.currency} ${Number(inv.total_amount).toLocaleString('en-IN')}`
+          : `Invoice ${inv.invoice_number} for ${inv.client_name} is due on ${inv.due_date}. Amount: ${inv.currency} ${Number(inv.total_amount).toLocaleString('en-IN')}`,
+        type: 'invoice',
+        link: '/invoice',
+        created_at: new Date().toISOString(),
+      }).catch(() => {});
+
+      // Send email reminder if Resend key available and client has email
+      if (resendKey && inv.client_email) {
+        try {
+          const html = `
+            <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:24px">
+              <h2 style="color:#1f2937">${isOverdue ? '⚠️ Payment Overdue' : '📋 Payment Reminder'}</h2>
+              <p>Dear ${inv.client_name},</p>
+              <p>${isOverdue
+                ? `This is to inform you that invoice <strong>${inv.invoice_number}</strong> was due on <strong>${inv.due_date}</strong> and is now <strong>${daysOverdue} day(s) overdue</strong>.`
+                : `This is a friendly reminder that invoice <strong>${inv.invoice_number}</strong> is due on <strong>${inv.due_date}</strong>.`
+              }</p>
+              <table style="width:100%;border-collapse:collapse;margin:16px 0">
+                <tr><td style="padding:8px 12px;background:#f9fafb;font-weight:600">Invoice #</td><td style="padding:8px 12px">${inv.invoice_number}</td></tr>
+                <tr><td style="padding:8px 12px;background:#f9fafb;font-weight:600">Amount Due</td><td style="padding:8px 12px">${inv.currency} ${Number(inv.total_amount).toLocaleString('en-IN')}</td></tr>
+                <tr><td style="padding:8px 12px;background:#f9fafb;font-weight:600">Due Date</td><td style="padding:8px 12px">${inv.due_date}</td></tr>
+              </table>
+              <p>Please arrange payment at your earliest convenience.</p>
+              <p style="color:#6b7280;font-size:13px">This is an automated reminder from JL HRIS Finance module.</p>
+            </div>`;
+          const r = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from: 'finance@jlhris.com',
+              to: [inv.client_email],
+              subject: `${isOverdue ? 'Payment Overdue' : 'Payment Reminder'}: Invoice ${inv.invoice_number}`,
+              html,
+            }),
+          });
+          if (r.ok) sent++;
+          else errors.push(`Email failed for ${inv.invoice_number}`);
+        } catch (e: any) {
+          errors.push(`${inv.invoice_number}: ${e.message}`);
+        }
+      } else {
+        sent++; // count as "processed" even if no email key
+      }
+    }
+
+    return c.json({ success: true, sent, total: invoices.length, errors });
+  } catch (err: any) {
+    return c.json({ success: false, error: err.message }, 500);
   }
 });
 

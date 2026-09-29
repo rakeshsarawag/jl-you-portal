@@ -19,6 +19,7 @@ import {
   DollarSign, Repeat, ClipboardEdit, Coffee,
 } from 'lucide-react';
 import { useUser } from '../../context/UserContext';
+import { useEmployees } from '../../context/EmployeesContext';
 import { useEmployeeDashboard, Task, LeaveRequest } from '../../hooks/useEmployeeDashboard';
 import { API_BASE, publicAnonKey, safeJson, supabase } from '../../utils/constants';
 import { LEAVE_TYPES } from '../../../constants/apps/leave';
@@ -29,6 +30,14 @@ import { useSectionPermission } from '../SectionGuard';
 
 // ── Tab type ──────────────────────────────────────────────────────────────
 type Tab = 'overview' | 'attendance' | 'leaves' | 'approvals' | 'tasks' | 'holidays' | 'calendar' | 'payslip' | 'shifts' | 'roster';
+
+// ── Leave Year-End Rules ──────────────────────────────────────────────────
+const LEAVE_YEAR_END_RULES = {
+  MAX_CARRY_FORWARD: 12,        // Max EL carry forward per year
+  AEL_MAX_CAP: 60,              // Max AEL accumulation
+  AEL_LEAVE_TYPE: 'AEL',       // Accumulated Earned Leave type key
+  MATERNITY_PATERNITY_LIMIT: 2, // Times per career
+} as const;
 
 // ── Attendance time constants ──────────────────────────────────────────────
 const WORK_START = '09:30';
@@ -375,6 +384,18 @@ function LeaveForm({
       e.leaveType = t('validation.leave.type');
     } else if (selectedPolicy && selectedPolicy.is_active === false) {
       e.leaveType = 'This leave type is currently not available';
+    } else {
+      const isMaternity = form.leaveType?.toLowerCase().includes('maternity');
+      const isPaternity = form.leaveType?.toLowerCase().includes('paternity');
+      if (isMaternity || isPaternity) {
+        const leaveTypeKey = isMaternity ? 'Maternity Leave' : 'Paternity Leave';
+        const balanceEntry = leaveBalancesDB?.find((b: any) =>
+          b.leave_type?.toLowerCase().includes(isMaternity ? 'maternity' : 'paternity')
+        );
+        if (balanceEntry && (balanceEntry.times_availed ?? 0) >= LEAVE_YEAR_END_RULES.MATERNITY_PATERNITY_LIMIT) {
+          e.leaveType = `${leaveTypeKey} can only be availed twice in a career (first 2 children only). Limit reached.`;
+        }
+      }
     }
     if (!form.startDate) {
       e.startDate = t('validation.leave.startDate');
@@ -414,7 +435,10 @@ function LeaveForm({
     }
   };
 
-  const balanceEntries = Object.entries(leaveBalance).filter(([, v]) => typeof v === 'number');
+  const balanceEntries = Object.entries(leaveBalance).filter(([type, v]) => {
+    const lower = type.toLowerCase();
+    return typeof v === 'number' && !lower.includes('maternity') && !lower.includes('paternity');
+  });
   const datesSet = form.startDate && form.endDate && form.endDate >= form.startDate;
 
   return (
@@ -475,6 +499,12 @@ function LeaveForm({
               <p className="text-xs text-muted-foreground mt-0.5">
                 Policy: {selectedPolicy.annual_days} days/year
                 {selectedPolicy.carry_forward ? ' · carry forward allowed' : ''}
+              </p>
+            )}
+            {(form.leaveType?.toLowerCase().includes('maternity') || form.leaveType?.toLowerCase().includes('paternity')) && (
+              <p className="text-xs text-amber-600 bg-amber-50 rounded px-3 py-2 mt-1">
+                ⚠️ Maternity/Paternity leave is limited to 2 times in a career and applies to the first 2 children only.
+                Please attach relevant supporting documents.
               </p>
             )}
           </div>
@@ -1038,12 +1068,8 @@ function ShiftSwapModal({
   const [form, setForm] = useState({ shift_date: today, swap_with_id: '', reason: '' });
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [colleagues, setColleagues] = useState<any[]>([]);
-
-  useEffect(() => {
-    supabase.from('employees').select('id, name, email').limit(50)
-      .then(({ data }) => setColleagues(data ?? []));
-  }, []);
+  const { employees: allEmployees } = useEmployees();
+  const colleagues = allEmployees.slice(0, 50);
 
   const validate = () => {
     const e: Record<string, string> = {};
@@ -1231,15 +1257,57 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
     item: any; table: string; action: 'approve' | 'reject'; label: string;
   } | null>(null);
 
-  // ── Employee profile (birthday / anniversary) ─────────────────────────
-  const [employeeProfile, setEmployeeProfile] = useState<{ date_of_birth?: string | null; join_date?: string | null; name?: string } | null>(null);
+  // ── Employee profile (birthday / anniversary / probation / completeness) ─
+  const [employeeProfile, setEmployeeProfile] = useState<{
+    date_of_birth?: string | null;
+    join_date?: string | null;
+    name?: string;
+    probation_end_date?: string | null;
+    // completeness fields
+    phone?: string | null;
+    address?: string | null;
+    emergency_contact_name?: string | null;
+    bank_account_number?: string | null;
+    pan_number?: string | null;
+    department_id?: string | null;
+    designation_id?: string | null;
+    avatar_url?: string | null;
+  } | null>(null);
+
   useEffect(() => {
     if (!empIdForQuery) return;
     void (async () => {
-      const { data } = await supabase.from('employees').select('name, date_of_birth, join_date, manager_id').eq('id', empIdForQuery).single();
+      const { data } = await supabase.from('employees').select(
+        'name, date_of_birth, join_date, manager_id, probation_end_date, phone, address, emergency_contact_name, bank_account_number, pan_number, department_id, designation_id, avatar_url'
+      ).eq('id', empIdForQuery).single();
       if (data) setEmployeeProfile(data);
     })();
   }, [empIdForQuery]);
+
+  // ── Profile completeness (out of 8 key fields) ───────────────────────
+  const profileCompleteness = (() => {
+    if (!employeeProfile) return null;
+    const fields = [
+      employeeProfile.phone,
+      employeeProfile.address,
+      employeeProfile.emergency_contact_name,
+      employeeProfile.bank_account_number,
+      employeeProfile.pan_number,
+      employeeProfile.department_id,
+      employeeProfile.designation_id,
+      employeeProfile.avatar_url,
+    ];
+    const filled = fields.filter(Boolean).length;
+    return Math.round((filled / fields.length) * 100);
+  })();
+
+  // ── Probation countdown ───────────────────────────────────────────────
+  const probationDaysLeft = (() => {
+    const end = employeeProfile?.probation_end_date;
+    if (!end) return null;
+    const diff = Math.ceil((new Date(end).getTime() - Date.now()) / 86400000);
+    return diff; // negative = already ended
+  })();
 
   // ── Birthday / Anniversary banner ────────────────────────────────────
   const todayKey = new Date().toISOString().slice(0, 10);
@@ -1395,7 +1463,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
 
   // Realtime subscription for team calendar
   useEffect(() => {
-    const ch = supabase.channel('team-leave-updates')
+    const ch = supabase.channel(`team-leave-updates-${Math.random().toString(36).slice(2)}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'leaves' }, () => {
         fetchTeamCalendar();
       }).subscribe();
@@ -1958,6 +2026,49 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
         {/* ── Overview Tab ── */}
         {tab === 'overview' && (
           <div className="space-y-6">
+            {/* Profile Completeness — non-dismissible when <80% */}
+            {isEmployee && profileCompleteness !== null && profileCompleteness < 80 && (
+              <div className="bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800/40 rounded-lg px-4 py-3 flex items-center gap-3">
+                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-orange-100 dark:bg-orange-900/40 flex items-center justify-center">
+                  <span className="text-sm">⚠️</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-orange-800 dark:text-orange-300">
+                    Your profile is {profileCompleteness}% complete
+                  </p>
+                  <p className="text-xs text-orange-700 dark:text-orange-400 mt-0.5">
+                    Please complete your profile — add phone, address, emergency contact, bank details, and PAN to unlock all features.
+                  </p>
+                  <div className="mt-2 h-1.5 w-full bg-orange-100 dark:bg-orange-900/40 rounded-full overflow-hidden">
+                    <div className="h-full bg-orange-500 rounded-full" style={{ width: `${profileCompleteness}%` }} />
+                  </div>
+                </div>
+                <button
+                  onClick={() => setTab('overview')}
+                  className="flex-shrink-0 px-3 py-1.5 text-xs font-medium bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
+                >
+                  Update Profile
+                </button>
+              </div>
+            )}
+
+            {/* Probation countdown badge */}
+            {isEmployee && probationDaysLeft !== null && probationDaysLeft >= 0 && (
+              <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/40 rounded-lg px-4 py-3 flex items-center gap-3">
+                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-900/40 flex items-center justify-center">
+                  <span className="text-sm">📅</span>
+                </div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-blue-800 dark:text-blue-300">
+                    Probation Period — {probationDaysLeft} {probationDaysLeft === 1 ? 'day' : 'days'} remaining
+                  </p>
+                  <p className="text-xs text-blue-600 dark:text-blue-400 mt-0.5">
+                    Ends on {new Date(employeeProfile!.probation_end_date!).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {/* Birthday / Anniversary Banner */}
             {!bannerDismissed && (isBirthday || isAnniversary) && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 flex items-center gap-2">
@@ -1980,7 +2091,11 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
             {isEmployee && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <StatCard label="Present Days" value={dash.stats.presentDays} sub="this month" loading={dash.loading} />
-                <StatCard label="Leave Balance" value={Object.values(dash.leaveBalance).reduce((a, b) => a + b, 0)} sub="days remaining" loading={dash.loading} />
+                <StatCard label="Leave Balance" value={Object.entries(dash.leaveBalance).reduce((a, [type, b]) => {
+                  const lower = type.toLowerCase();
+                  if (lower.includes('maternity') || lower.includes('paternity')) return a;
+                  return a + b;
+                }, 0)} sub="days remaining" loading={dash.loading} />
                 <StatCard label="Tasks Completed" value={dash.stats.tasksCompleted} sub={`${dash.stats.tasksPending} pending`} loading={dash.loading} />
                 <StatCard label="Hours Logged" value={`${dash.stats.hoursThisMonth.toFixed(0)}h`} sub="this month" loading={dash.loading} />
               </div>
@@ -2132,6 +2247,48 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
                 {dash.loading ? (
                   <div className="flex gap-3 overflow-x-auto pb-2">{[1,2,3,4,5].map(i => <div key={i} className="min-w-[140px] h-20 bg-muted animate-pulse rounded-lg flex-shrink-0" />)}</div>
                 ) : (() => {
+                  // Leave balance summary table
+                  const tableRows = leaveBalancesDB.length > 0 ? leaveBalancesDB : Object.entries(dash.leaveBalance).map(([type, balance]) => ({ leave_type: type, balance, total_entitlement: null, consumed: null, carry_forward: null }));
+                  const tableEl = tableRows.length > 0 ? (
+                    <div className="bg-card rounded-xl border overflow-hidden mb-4">
+                      <div className="px-4 py-3 border-b bg-muted/30">
+                        <h3 className="text-sm font-semibold">Leave Balance Summary</h3>
+                      </div>
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b text-muted-foreground">
+                            <th className="text-left px-4 py-2">Leave Type</th>
+                            <th className="text-center px-4 py-2">Entitlement</th>
+                            <th className="text-center px-4 py-2">Consumed</th>
+                            <th className="text-center px-4 py-2 text-green-600">Available</th>
+                            <th className="text-center px-4 py-2">Carry Forward</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {tableRows.map((row: any, i: number) => {
+                            const consumed = row.consumed ?? (row.total_entitlement != null ? row.total_entitlement - (row.balance ?? 0) : null);
+                            return (
+                              <tr key={row.leave_type || i} className={i % 2 === 0 ? 'bg-muted/10' : ''}>
+                                <td className="px-4 py-2.5 font-medium">{row.leave_type}</td>
+                                <td className="px-4 py-2.5 text-center">{row.total_entitlement ?? '—'}</td>
+                                <td className="px-4 py-2.5 text-center text-orange-600">{consumed != null ? consumed : '—'}</td>
+                                <td className="px-4 py-2.5 text-center font-semibold text-green-600">{row.balance ?? 0}</td>
+                                <td className="px-4 py-2.5 text-center text-blue-600">{row.carry_forward ?? '—'}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                        <tfoot>
+                          <tr>
+                            <td colSpan={5} className="px-4 py-3 text-xs text-muted-foreground border-t bg-muted/20">
+                              📅 Year-End Policy: Maximum {LEAVE_YEAR_END_RULES.MAX_CARRY_FORWARD} Earned Leaves can be carried forward. Accumulated Earned Leaves (AEL) max cap is {LEAVE_YEAR_END_RULES.AEL_MAX_CAP}. All remaining leave balance lapses on December 31st.
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  ) : null;
+
                   // Merge DB balances with dash.leaveBalance fallback
                   const CARD_CONFIGS = [
                     { key: 'Earned Leave', label: 'Earned Leave', borderColor: 'border-green-400', textColor: 'text-green-600', bgColor: 'bg-green-50', altKey: 'Annual Leave' },
@@ -2154,24 +2311,27 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
                     balance: days, expiry: null,
                   }));
                   return (
-                    <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none">
-                      {displayCards.map(c => {
-                        const expiryDays = c.expiry ? Math.ceil((new Date(c.expiry).getTime() - Date.now()) / 86400000) : null;
-                        const showExpiry = c.label === 'Comp-Off' && (c.balance as number) > 0 && expiryDays !== null && expiryDays <= 14;
-                        return (
-                          <div key={c.key} className={`min-w-[140px] ${c.bgColor} border-l-4 ${c.borderColor} rounded-lg p-3 shadow-sm flex-shrink-0`}>
-                            <p className="text-xs text-muted-foreground font-medium leading-tight">{c.label}</p>
-                            <p className={`text-2xl font-bold mt-1 ${c.textColor}`}>{c.balance}</p>
-                            <p className="text-xs text-muted-foreground">days</p>
-                            {showExpiry && (
-                              <span className="inline-flex items-center mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-200 text-amber-800">
-                                Expires in {expiryDays}d
-                              </span>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <>
+                      {tableEl}
+                      <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none">
+                        {displayCards.map(c => {
+                          const expiryDays = c.expiry ? Math.ceil((new Date(c.expiry).getTime() - Date.now()) / 86400000) : null;
+                          const showExpiry = c.label === 'Comp-Off' && (c.balance as number) > 0 && expiryDays !== null && expiryDays <= 14;
+                          return (
+                            <div key={c.key} className={`min-w-[140px] ${c.bgColor} border-l-4 ${c.borderColor} rounded-lg p-3 shadow-sm flex-shrink-0`}>
+                              <p className="text-xs text-muted-foreground font-medium leading-tight">{c.label}</p>
+                              <p className={`text-2xl font-bold mt-1 ${c.textColor}`}>{c.balance}</p>
+                              <p className="text-xs text-muted-foreground">days</p>
+                              {showExpiry && (
+                                <span className="inline-flex items-center mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-200 text-amber-800">
+                                  Expires in {expiryDays}d
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
                   );
                 })()}
               </div>
@@ -2247,15 +2407,17 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
             )}
 
             {/* Announcements feed */}
-            {dash.announcements.length > 0 && (
-              <div className="bg-card border border-border rounded-xl p-5">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                    <Bell size={15} className="text-primary" />
-                    Announcements
-                  </h2>
-                  <button onClick={() => navigate('/communications')} className="text-xs text-primary font-medium hover:underline">View All</button>
-                </div>
+            <div className="bg-card border border-border rounded-xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <Bell size={15} className="text-primary" />
+                  Announcements
+                </h2>
+                <button onClick={() => navigate('/communications')} className="text-xs text-primary font-medium hover:underline">View All</button>
+              </div>
+              {dash.announcements.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">No announcements at this time.</p>
+              ) : (
                 <div className="space-y-3">
                   {dash.announcements.map(ann => (
                     <div key={ann.id} className="flex items-start gap-3 py-2 border-b border-border last:border-0">
@@ -2267,8 +2429,8 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
                     </div>
                   ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Manager: pending approvals summary */}
             {canSeePendingApprovals && dash.pendingLeaves.length > 0 && (
@@ -2457,7 +2619,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground">{fmtDate(leave.start_date)} → {fmtDate(leave.end_date)} · {leave.days} day{leave.days !== 1 ? 's' : ''}</p>
+                        <p className="text-xs text-muted-foreground">{fmtDate(leave.start_date)} → {fmtDate(leave.end_date)} · {leave.days} day{leave.days !== 1 ? 's' : ''} · <span className="font-mono">{`JL-LVE-${leave.id.slice(0, 6).toUpperCase()}`}</span></p>
                         {leave.reason && <p className="text-xs text-muted-foreground italic">{leave.reason}</p>}
                         {(leave.approver || leave.approved_by) && (
                           <p className="text-xs text-muted-foreground">{leave.status} by {leave.approver || leave.approved_by}</p>

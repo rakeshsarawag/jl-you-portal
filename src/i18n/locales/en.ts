@@ -3602,6 +3602,43 @@ const en = {
   "execDashboard.lastRefreshed": "Last refreshed",
   "execDashboard.costCenter": "Cost Center Breakdown",
   "execDashboard.projectHealth": "Project Health",
+
+  // ── Access Denied ─────────────────────────────────────────────────────────
+  "accessDenied.title": "Access Denied",
+  "accessDenied.heading": "Access Denied",
+  "accessDenied.defaultMsg": "You do not have permission to access this content.",
+  "accessDenied.requiredRoles": "Required roles",
+  "accessDenied.goBack": "Go Back",
+  "accessDenied.goHome": "Go Home",
+  "accessDenied.contactAdmin": "Contact admin",
+  "accessDenied.contactAdminMsg": "If you believe this is an error, contact your administrator.",
+
+  // ── Session Timeout Warning ───────────────────────────────────────────────
+  "sessionTimeout.title": "Session Expiring",
+  "sessionTimeout.body": "Your session will expire in {minutes} minute(s). Do you want to stay signed in?",
+  "sessionTimeout.staySignedIn": "Stay Signed In",
+  "sessionTimeout.signOut": "Sign Out Now",
+
+  // ── User Profile Modal ────────────────────────────────────────────────────
+  "userProfile.title": "Employee Profile",
+  "userProfile.tabOverview": "Overview",
+  "userProfile.tabPerformance": "Performance",
+  "userProfile.tabTimeline": "Timeline",
+  "userProfile.tabRecognition": "Recognition",
+  "userProfile.department": "Department",
+  "userProfile.jobTitle": "Job Title",
+  "userProfile.email": "Email",
+  "userProfile.phone": "Phone",
+  "userProfile.location": "Location",
+  "userProfile.joinDate": "Join Date",
+  "userProfile.manager": "Manager",
+  "userProfile.sendMessage": "Send Message",
+  "userProfile.close": "Close",
+
+  // ── KPI Card ──────────────────────────────────────────────────────────────
+  "kpi.vsLastMonth": "vs last month",
+  "kpi.trend": "Trend",
+  "kpi.noData": "No data",
 } as const;
 
 export type TextKey = keyof typeof en;

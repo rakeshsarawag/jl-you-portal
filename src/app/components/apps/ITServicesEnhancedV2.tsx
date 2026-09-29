@@ -3,7 +3,7 @@
  * RBAC: IT Admin (it role) = full management; all roles can raise & view own tickets
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { InlineLoader } from '../ui/PageLoader';
 import { useNavigate } from 'react-router';
 import {
@@ -25,7 +25,9 @@ import {
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { API_BASE, publicAnonKey, apiHeaders, supabase } from '../../utils/constants';
 import { t } from '../../../i18n/index';
+import { useEmployees } from '../../context/EmployeesContext';
 import EmployeeSearchDropdown from '../ui/EmployeeSearchDropdown';
+import { useEmployeeOptions } from '../../hooks/useSharedData';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -794,7 +796,11 @@ function TicketForm({ isIT, createdByName, createdBy, onSubmit, onClose, ticketC
   const cats = catsProp && catsProp.length > 0 ? catsProp : [...TICKET_CATEGORIES];
   const [submitting, setSubmitting] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [itEmployees, setItEmployees] = useState<{ id: string; name: string }[]>([]);
+  const { employees: rawEmpTF } = useEmployees();
+  const itEmployees = useMemo(
+    () => !isIT ? [] : rawEmpTF.filter((e) => e.status !== 'Inactive').map((e) => ({ id: e.id, name: (e.employee_name as string) ?? (e.fullName as string) ?? e.name ?? "" })).filter((e) => e.name),
+    [rawEmpTF, isIT],
+  );
   const [form, setForm] = useState({
     title: '',
     category: cats[0] as string,
@@ -805,20 +811,6 @@ function TicketForm({ isIT, createdByName, createdBy, onSubmit, onClose, ticketC
     impact: 'Individual' as string,
     source: 'Self-Service Portal' as string,
   });
-
-  useEffect(() => {
-    if (!isIT) return;
-    fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() })
-      .then(r => r.json())
-      .then(json => {
-        const list = (json.data ?? [])
-          .filter((e: any) => e.status !== 'Inactive')
-          .map((e: any) => ({ id: e.id, name: e.employee_name ?? e.fullName ?? e.name ?? "" }))
-          .filter((e: any) => e.name);
-        if (list.length > 0) setItEmployees(list);
-      })
-      .catch(() => {});
-  }, [isIT]);
 
   function validate() {
     const e: Record<string, string> = {};
@@ -1004,7 +996,11 @@ function DetailModal({
   const [assignCode, setAssignCode] = useState('');
   const [submittingComment, setSubmittingComment] = useState(false);
   const [submittingAssign, setSubmittingAssign] = useState(false);
-  const [employees, setEmployees] = useState<{ id: string; name: string; code: string }[]>([]);
+  const { employees: rawEmpDM } = useEmployees();
+  const employees = useMemo(
+    () => !(isIT || isAdmin) ? [] : rawEmpDM.filter((e) => e.status !== 'Inactive').map((e) => ({ id: e.id, name: (e.employee_name as string) ?? (e.fullName as string) ?? e.name ?? '', code: (e.employee_code as string) ?? (e.employeeCode as string) ?? '' })).filter((e) => e.name),
+    [rawEmpDM, isIT, isAdmin],
+  );
   const [confirmState, setConfirmState] = useState<{ title: string; message: string; danger?: boolean; action: () => void } | null>(null);
   const [tagInput, setTagInput] = useState('');
   const [editMode, setEditMode] = useState(false);
@@ -1023,23 +1019,6 @@ function DetailModal({
   const hasComments = (ticket.comments?.length ?? 0) > 0;
   const sla = getSLAStatus(ticket);
 
-  useEffect(() => {
-    if (!isIT && !isAdmin) return;
-    fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() })
-      .then(r => r.json())
-      .then(json => {
-        const list = (json.data ?? [])
-          .filter((e: any) => e.status !== 'Inactive')
-          .map((e: any) => ({
-            id: e.id,
-            name: e.employee_name ?? e.fullName ?? e.name ?? '',
-            code: e.employee_code ?? e.employeeCode ?? '',
-          }))
-          .filter((e: any) => e.name);
-        if (list.length > 0) setEmployees(list);
-      })
-      .catch(() => {});
-  }, [isIT, isAdmin]);
 
   async function addTag(ticketId: string) {
     const trimmed = tagInput.trim();
@@ -1847,7 +1826,7 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
   const [dateTo, setDateTo] = useState('');
   const [selectedTickets, setSelectedTickets] = useState<Set<string>>(new Set());
   const [dbCategories, setDbCategories] = useState<string[]>([]);
-  const [itStaff, setItStaff] = useState<{ id: string; full_name: string }[]>([]);
+  const { options: employeeOptions } = useEmployeeOptions();
   const [kbSearch, setKbSearch] = useState('');
   const [kbCategory, setKbCategory] = useState<string>('All');
   const [kbArticles, setKbArticles] = useState<KBArticle[]>([]);
@@ -1899,17 +1878,6 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
         if (names.length > 0) {
           setDbCategories(names);
         }
-      });
-  }, []);
-
-  // Fetch IT staff for assignee filter
-  useEffect(() => {
-    supabase
-      .from('app_users')
-      .select('id, full_name')
-      .in('role', ['it', 'admin', 'it_admin'])
-      .then(({ data }) => {
-        if (data && data.length > 0) setItStaff(data);
       });
   }, []);
 
@@ -2623,8 +2591,8 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
                     >
                       <option value="">{t('itServices.allAssignees')}</option>
                       <option value="__unassigned__">{t('itServices.unassigned')}</option>
-                      {itStaff.map(s => (
-                        <option key={s.id} value={s.full_name}>{s.full_name}</option>
+                      {employeeOptions.map(e => (
+                        <option key={e.value} value={e.label}>{e.displayLabel}</option>
                       ))}
                     </select>
                     <select

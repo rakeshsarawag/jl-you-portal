@@ -4,6 +4,16 @@ import { auditCreate, auditUpdate } from "./audit-helpers.ts";
 
 const app = new Hono();
 
+function triggerWorkflowEvent(event: string, entity_type: string, entity_id: string, context: Record<string, unknown>) {
+  const base = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  fetch(`${base}/functions/v1/make-server-1fe2c468/workflow/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    body: JSON.stringify({ event, entity_type, entity_id, context }),
+  }).catch(() => {});
+}
+
 function getSupabase() {
   return createClient(
     Deno.env.get('SUPABASE_URL')!,
@@ -71,6 +81,7 @@ app.post('/create', async (c) => {
       .single();
 
     if (error) return c.json({ success: false, error: error.message }, 500);
+    triggerWorkflowEvent("asset_created", "asset", data.id, { asset_tag: data.asset_tag, name: data.name, category: data.category });
     return c.json({ success: true, data }, 201);
   } catch (error) {
     return c.json({ success: false, error: 'Failed to create asset' }, 500);
@@ -195,6 +206,10 @@ app.post('/assign', async (c) => {
         }
       } catch {}
     }
+
+    triggerWorkflowEvent("asset_assigned", "asset", assetId, {
+      asset_id: assetId, employee_id: employeeId, employee_name: employeeName,
+    });
 
     return c.json({ success: true, data: updatedAsset ?? data });
   } catch (error) {

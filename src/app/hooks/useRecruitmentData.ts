@@ -49,6 +49,7 @@ export interface Candidate {
   noticePeriodEndDate?: string;
   attachments?: CandidateAttachment[];
   userNotes?: string;
+  expertise?: string;
   // Agency sourcing
   agency_name?: string;
   agency_email?: string;
@@ -257,6 +258,7 @@ function shapedCandidate(c: any): Candidate {
       recommendation: fb.recommendation ?? "Maybe",
     })),
     // Direct columns (migration 02); fall back to legacy JSON notes for old rows
+    expertise: c.expertise ?? meta.expertise,
     nationality: c.nationality ?? meta.nationality,
     partOfOrganization: c.part_of_organization ?? meta.partOfOrganization,
     previousCompany: c.previous_company ?? meta.previousCompany,
@@ -546,6 +548,7 @@ export function useRecruitmentData(userEmail?: string) {
       noticePeriod: r["Notice Period"] ?? r.noticePeriod ?? r.notice_period ?? "",
       source: r.Source ?? r.source ?? "Excel Upload",
       skills: (r.Skills ?? r.skills ?? "").split(",").map((s: string) => s.trim()).filter(Boolean),
+      expertise: r.Expertise ?? r.expertise ?? "",
       nationality: r.Nationality ?? r.nationality ?? "",
       previousCompany: r["Previous Company"] ?? r.previousCompany ?? "",
       notes: r.Notes ?? r.notes ?? "",

@@ -20,6 +20,7 @@ import { useAuditLogger } from '../../../hooks/useAuditLogger';
 import { useUser } from '../../context/UserContext';
 import { useSectionPermission } from "../SectionGuard";
 import { OKR_STATUSES, OKR_TYPES, OKR_QUARTERS, KR_UNITS } from '../../../constants/apps/okr';
+import { getProgressBand as getProgressBandUtil, getOkrGrade, GRADE_COLORS } from '../../utils/okrUtils';
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { useDepartmentOptions } from '../../hooks/useSharedData';
 import { t } from '../../../i18n/index';
@@ -184,14 +185,11 @@ function scoreTextColor(score: number): string {
   return 'text-red-700';
 }
 
-// ── Progress Band (4-band) ────────────────────────────────────────────────────
+// ── Progress Band (4-band) — delegates to okrUtils ────────────────────────────
 
 function getProgressBand(progress: number): { label: string; cls: string } {
-  // progress is 0–1
-  if (progress >= 0.70) return { label: 'Achieved', cls: 'bg-emerald-100 text-emerald-700' };
-  if (progress >= 0.60) return { label: 'On Track', cls: 'bg-lime-100 text-lime-700' };
-  if (progress >= 0.40) return { label: 'Progressing', cls: 'bg-amber-100 text-amber-700' };
-  return { label: 'Behind', cls: 'bg-red-100 text-red-700' };
+  const b = getProgressBandUtil(progress);
+  return { label: b.label, cls: `${b.bg} ${b.color}` };
 }
 
 function ProgressBandChip({ progress }: { progress: number }) {

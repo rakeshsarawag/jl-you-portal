@@ -34,6 +34,8 @@ import {
   Download,
   ListChecks,
   ExternalLink,
+  MessageSquare,
+  Send,
 } from "lucide-react";
 import { useUser } from "../../context/UserContext";
 import {
@@ -41,6 +43,7 @@ import {
   Project,
   ProjectTask,
   ProjectMember,
+  TaskComment,
 } from "../../hooks/useProjectData";
 import { t } from "../../../i18n/index";
 import { API_BASE, publicAnonKey, safeJson, apiHeaders, supabase } from "../../utils/constants";
@@ -62,6 +65,8 @@ import { SelectOptions } from "../../context/ValueHelpsContext";
 import ReportDefectButton from "../ReportDefectButton";
 import { useEmployeeOptions } from "../../hooks/useSharedData";
 import EmployeeSearchDropdown from "../ui/EmployeeSearchDropdown";
+import { useEmployees } from "../../context/EmployeesContext";
+import { daysRemaining as daysRemainingUtil, timeAgo as timeAgoUtil, budgetOverrunPct } from "../../utils/projectUtils";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -161,15 +166,18 @@ function ProgressBar({ value }: { value: number }) {
   );
 }
 
-function Avatar({ name }: { name: string }) {
+function Avatar({ name, size = "sm" }: { name: string; size?: "sm" | "lg" }) {
   const initials = name
     .split(" ")
     .map((w) => w[0])
     .join("")
     .toUpperCase()
     .slice(0, 2);
+  const cls = size === "lg"
+    ? "w-10 h-10 text-sm"
+    : "w-7 h-7 text-xs";
   return (
-    <div className="w-7 h-7 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+    <div className={`${cls} rounded-full bg-blue-500 flex items-center justify-center text-white font-bold flex-shrink-0`}>
       {initials}
     </div>
   );
@@ -177,9 +185,7 @@ function Avatar({ name }: { name: string }) {
 
 
 function daysRemaining(endDate: string) {
-  const end = new Date(endDate);
-  const now = new Date();
-  return Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  return daysRemainingUtil(endDate);
 }
 
 function computeHealthScore(project: Project): number {
@@ -245,23 +251,16 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
-  const [wizardMembers, setWizardMembers] = useState<{ name: string; role: string }[]>([]);
+  const { employees: rawEmpPF } = useEmployees();
+  const employees = useMemo(
+    () => rawEmpPF.filter((e) => e.status !== "Inactive").map((e) => ({ id: e.id, name: e.employee_name as string ?? e.fullName as string ?? e.name ?? "" })).filter((e) => e.name),
+    [rawEmpPF],
+  );
+  const [wizardMembers, setWizardMembers] = useState<{ name: string; role: string; employeeId?: string; employeeCode?: string }[]>([]);
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberRole, setNewMemberRole] = useState(MEMBER_ROLES[0]);
-
-  useEffect(() => {
-    fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() })
-      .then(r => r.json())
-      .then(json => {
-        const list = (json.data ?? [])
-          .filter((e: any) => e.status !== "Inactive")
-          .map((e: any) => ({ id: e.id, name: e.employee_name ?? e.fullName ?? e.name ?? "" }))
-          .filter((e: any) => e.name);
-        if (list.length > 0) setEmployees(list);
-      })
-      .catch(() => {});
-  }, []);
+  const [newMemberId, setNewMemberId] = useState("");
+  const [newMemberCode, setNewMemberCode] = useState("");
 
   function set(k: string, v: unknown) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -299,7 +298,7 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
   async function handleSubmit() {
     setSaving(true);
     try {
-      await onSubmit({ ...form, members: wizardMembers.map(m => ({ employeeName: m.name, role: m.role })) } as Partial<Project>);
+      await onSubmit({ ...form, members: wizardMembers.map(m => ({ employeeName: m.name, employeeId: m.employeeId, employeeCode: m.employeeCode, role: m.role })) } as Partial<Project>);
     } finally {
       setSaving(false);
     }
@@ -506,7 +505,7 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
             <div className="flex gap-2">
               <EmployeeSearchDropdown
                 value={newMemberName}
-                onChange={(name) => setNewMemberName(name)}
+                onChange={(name, id, code) => { setNewMemberName(name); setNewMemberId(id ?? ""); setNewMemberCode(code ?? ""); }}
                 placeholder="Search member…"
                 className="flex-1"
               />
@@ -521,8 +520,8 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
                 type="button"
                 onClick={() => {
                   if (!newMemberName.trim()) return;
-                  setWizardMembers(m => [...m, { name: newMemberName.trim(), role: newMemberRole }]);
-                  setNewMemberName("");
+                  setWizardMembers(m => [...m, { name: newMemberName.trim(), employeeId: newMemberId || undefined, employeeCode: newMemberCode || undefined, role: newMemberRole }]);
+                  setNewMemberName(""); setNewMemberId(""); setNewMemberCode("");
                 }}
                 className="px-3 py-2 text-sm text-white bg-indigo-500 rounded-lg hover:bg-indigo-600"
               >
@@ -532,11 +531,14 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
             {wizardMembers.length > 0 && (
               <div className="space-y-2 max-h-40 overflow-y-auto">
                 {wizardMembers.map((m, i) => (
-                  <div key={i} className="flex items-center gap-2 text-sm">
+                  <div key={i} className="flex items-center gap-2 text-sm bg-background rounded-lg px-3 py-2 border border-border">
                     <Avatar name={m.name} />
-                    <span className="flex-1 font-medium">{m.name}</span>
-                    <span className="text-xs px-2 py-0.5 bg-muted rounded-full text-muted-foreground">{m.role}</span>
-                    <button type="button" onClick={() => setWizardMembers(ms => ms.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600"><X className="w-3.5 h-3.5" /></button>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-foreground truncate">{m.name}</p>
+                      {m.employeeCode && <p className="text-[10px] text-muted-foreground">{m.employeeCode}</p>}
+                    </div>
+                    <span className="text-xs px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded-full font-medium border border-indigo-100">{m.role}</span>
+                    <button type="button" onClick={() => setWizardMembers(ms => ms.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600 flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
                   </div>
                 ))}
               </div>
@@ -718,14 +720,11 @@ function TaskForm({ onSubmit, onCancel, sprintOptions = [], initialData }: TaskF
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
-  const [taskEmployees, setTaskEmployees] = useState<string[]>([]);
-  useEffect(() => {
-    fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() })
-      .then(r => r.json()).then(json => {
-        const names = (json.data ?? []).filter((e: any) => e.status !== 'Inactive').map((e: any) => e.employee_name ?? e.fullName ?? e.name ?? "").filter(Boolean);
-        if (names.length) setTaskEmployees(names);
-      }).catch(() => {});
-  }, []);
+  const { employees: rawEmpTF } = useEmployees();
+  const taskEmployees = useMemo(
+    () => rawEmpTF.filter((e) => e.status !== 'Inactive').map((e) => (e.employee_name as string) ?? (e.fullName as string) ?? e.name ?? "").filter(Boolean),
+    [rawEmpTF],
+  );
 
   function set(k: keyof ProjectTask, v: unknown) {
     setForm((f) => ({ ...f, [k]: v }));
@@ -1073,8 +1072,13 @@ interface TaskDetailProps {
   task: ProjectTask;
   projectId: string;
   canEdit: boolean;
+  canDelete?: boolean;
+  canLogTime?: boolean;
+  currentUser?: { id?: string; name?: string };
   onUpdate: (updates: Partial<ProjectTask>) => Promise<void>;
+  onDelete?: () => Promise<void>;
   onLogTime: (hours: number, type: string, desc: string, logDate: string, billable: boolean) => Promise<void>;
+  onAddComment: (taskId: string, content: string) => Promise<TaskComment>;
   onClose: () => void;
   sprintOptions?: { id: string; name: string }[];
 }
@@ -1082,8 +1086,13 @@ interface TaskDetailProps {
 function TaskDetailModal({
   task,
   canEdit,
+  canDelete = canEdit,
+  canLogTime: canLogTimeProp = true,
+  currentUser,
   onUpdate,
+  onDelete,
   onLogTime,
+  onAddComment,
   onClose,
   sprintOptions = [],
 }: TaskDetailProps) {
@@ -1097,6 +1106,60 @@ function TaskDetailModal({
   const [sprintChangeReason, setSprintChangeReason] = useState("");
   const [showLogTime, setShowLogTime] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [comments, setComments] = useState<TaskComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(true);
+  const [newComment, setNewComment] = useState("");
+  const [submittingComment, setSubmittingComment] = useState(false);
+  const commentInputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    setCommentsLoading(true);
+    fetch(`${API_BASE}/projects/tasks/${task.id}/comments`, {
+      headers: { Authorization: `Bearer ${publicAnonKey}`, apikey: publicAnonKey },
+    })
+      .then(r => r.json())
+      .then(d => setComments(Array.isArray(d?.data) ? d.data.map((c: any) => ({
+        id: c.id,
+        taskId: c.task_id,
+        authorId: c.author_id,
+        authorName: c.author_name ?? '',
+        content: c.content,
+        createdAt: c.created_at,
+      })) : []))
+      .catch(() => setComments([]))
+      .finally(() => setCommentsLoading(false));
+  }, [task.id]);
+
+  async function handleSubmitComment() {
+    if (!newComment.trim()) return;
+    setSubmittingComment(true);
+    try {
+      const comment = await onAddComment(task.id, newComment.trim());
+      setComments(prev => [comment, ...prev]);
+      setNewComment("");
+    } catch {
+      toast.error("Failed to add comment");
+    } finally {
+      setSubmittingComment(false);
+    }
+  }
+
+  function formatCommentTime(iso: string): string {
+    const d = new Date(iso);
+    const diff = Date.now() - d.getTime();
+    const m = Math.floor(diff / 60000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const days = Math.floor(h / 24);
+    if (days < 7) return `${days}d ago`;
+    return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  function authorInitials(name: string): string {
+    return name.split(" ").map(w => w[0] ?? "").join("").slice(0, 2).toUpperCase() || "?";
+  }
 
   async function handleSave() {
     if (sprintId !== originalSprintId && !sprintChangeReason.trim()) {
@@ -1275,7 +1338,70 @@ function TaskDetailModal({
               )}
             </div>
           )}
-          <div className="flex gap-2 pt-2 border-t">
+          {/* ── Comments section ──────────────────────────────────── */}
+          <div className="border-t pt-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <MessageSquare className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-sm font-semibold text-foreground">
+                Comments {comments.length > 0 && <span className="text-muted-foreground font-normal">({comments.length})</span>}
+              </h3>
+            </div>
+
+            {/* Add comment */}
+            <div className="flex gap-2 items-start">
+              <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 text-[10px] font-bold text-primary">
+                {authorInitials(currentUser?.name ?? "Me")}
+              </div>
+              <div className="flex-1 relative">
+                <textarea
+                  ref={commentInputRef}
+                  value={newComment}
+                  onChange={e => setNewComment(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) handleSubmitComment();
+                  }}
+                  placeholder="Add a comment… (Ctrl+Enter to submit)"
+                  rows={2}
+                  className="w-full border border-border rounded-lg px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 resize-none bg-background"
+                />
+                <button
+                  onClick={handleSubmitComment}
+                  disabled={submittingComment || !newComment.trim()}
+                  className="absolute bottom-2 right-2 w-6 h-6 flex items-center justify-center rounded-md bg-primary text-primary-foreground disabled:opacity-40 hover:opacity-90 transition-opacity"
+                >
+                  <Send className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+
+            {/* Comment list — latest on top */}
+            {commentsLoading ? (
+              <div className="space-y-2">
+                {[1, 2].map(i => <div key={i} className="h-12 bg-muted animate-pulse rounded-lg" />)}
+              </div>
+            ) : comments.length === 0 ? (
+              <p className="text-xs text-muted-foreground py-2 text-center">No comments yet. Be the first to comment.</p>
+            ) : (
+              <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                {comments.map(c => (
+                  <div key={c.id} className="flex gap-2.5">
+                    <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center flex-shrink-0 text-[10px] font-bold text-muted-foreground">
+                      {authorInitials(c.authorName)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2 mb-0.5">
+                        <span className="text-xs font-semibold text-foreground">{c.authorName || "Unknown"}</span>
+                        <span className="text-[10px] text-muted-foreground">{formatCommentTime(c.createdAt)}</span>
+                      </div>
+                      <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">{c.content}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex gap-2 pt-2 border-t flex-wrap">
             {canEdit && !editing && (
               <button
                 onClick={() => setEditing(true)}
@@ -1284,12 +1410,25 @@ function TaskDetailModal({
                 <Edit className="w-3.5 h-3.5" /> {t("common.edit")}
               </button>
             )}
-            <button
-              onClick={() => setShowLogTime(true)}
-              className="flex items-center gap-1 px-3 py-1.5 text-sm text-foreground border border-border rounded-lg hover:bg-muted"
-            >
-              <Clock className="w-3.5 h-3.5" /> {t("projects.logTime")}
-            </button>
+            {canLogTimeProp && (
+              <button
+                onClick={() => setShowLogTime(true)}
+                className="flex items-center gap-1 px-3 py-1.5 text-sm text-foreground border border-border rounded-lg hover:bg-muted"
+              >
+                <Clock className="w-3.5 h-3.5" /> {t("projects.logTime")}
+              </button>
+            )}
+            {canDelete && onDelete && !editing && (
+              <button
+                onClick={async () => {
+                  if (!confirm(`Delete task "${task.title}"? This cannot be undone.`)) return;
+                  try { await onDelete(); onClose(); } catch { toast.error("Failed to delete task"); }
+                }}
+                className="ml-auto flex items-center gap-1 px-3 py-1.5 text-sm text-red-600 border border-red-200 rounded-lg hover:bg-red-50"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Delete
+              </button>
+            )}
           </div>
         </div>
       </Modal>
@@ -1322,11 +1461,16 @@ interface KanbanBoardProps {
   tasks: ProjectTask[];
   projectId: string;
   canManage: boolean;
+  canCreateTask?: boolean;
+  canDeleteTask?: boolean;
+  canLogTime?: boolean;
   currentUserId: string;
+  currentUser?: { id?: string; name?: string };
   onCreateTask: (data: Partial<ProjectTask>) => Promise<void>;
   onUpdateTask: (taskId: string, updates: Partial<ProjectTask>) => Promise<void>;
   onDeleteTask: (taskId: string) => Promise<void>;
   onLogTime: (taskId: string, hours: number, type: string, desc: string, logDate: string, billable: boolean) => Promise<void>;
+  onAddComment: (taskId: string, content: string) => Promise<TaskComment>;
   sprintOptions?: { id: string; name: string }[];
 }
 
@@ -1557,11 +1701,16 @@ function KanbanBoard({
   tasks,
   projectId,
   canManage,
+  canCreateTask = canManage,
+  canDeleteTask = canManage,
+  canLogTime = canManage,
   currentUserId,
+  currentUser,
   onCreateTask,
   onUpdateTask,
   onDeleteTask,
   onLogTime,
+  onAddComment,
   sprintOptions = [],
 }: KanbanBoardProps) {
   const [showTaskForm, setShowTaskForm] = useState(false);
@@ -1688,7 +1837,7 @@ function KanbanBoard({
               <Users className="w-3.5 h-3.5" /> By Assignee
             </button>
           </div>
-          {canManage && (
+          {canCreateTask && (
             <button
               onClick={() => setShowTaskForm(true)}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
@@ -1755,12 +1904,17 @@ function KanbanBoard({
         <TaskDetailModal
           task={selectedTask}
           projectId={projectId}
-          canEdit={canManage || selectedTask.assigneeId === currentUserId}
+          canEdit={canManage}
+          canDelete={canDeleteTask}
+          canLogTime={canLogTime}
+          currentUser={currentUser}
           onUpdate={async (updates) => {
             await onUpdateTask(selectedTask.id, updates);
             setSelectedTask((prev) => (prev ? { ...prev, ...updates } : prev));
           }}
+          onDelete={() => onDeleteTask(selectedTask.id)}
           onLogTime={(h, type, desc, logDate, billable) => onLogTime(selectedTask.id, h, type, desc, logDate, billable)}
+          onAddComment={onAddComment}
           onClose={() => setSelectedTask(null)}
           sprintOptions={sprintOptions}
         />
@@ -1789,10 +1943,22 @@ function TeamTab({
   const [showForm, setShowForm] = useState(false);
   const [empName, setEmpName] = useState("");
   const [empId, setEmpId] = useState("");
+  const [empCode, setEmpCode] = useState("");
   const [role, setRole] = useState(MEMBER_ROLES[0]);
   const [saving, setSaving] = useState(false);
+  const { employees: allEmployees } = useEmployees();
 
   const existingNames = new Set(members.map(m => m.employeeName?.toLowerCase()));
+
+  // Build a lookup map: employeeId → { code, department, jobTitle }
+  const empLookup = useMemo(() => {
+    const map = new Map<string, { code: string; department?: string; jobTitle?: string }>();
+    for (const e of allEmployees as any[]) {
+      const id = e.id ?? e.employee_id;
+      if (id) map.set(id, { code: e.employee_code ?? e.employeeCode ?? '', department: e.department, jobTitle: e.job_title ?? e.jobTitle ?? e.position });
+    }
+    return map;
+  }, [allEmployees]);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -1801,8 +1967,7 @@ function TeamTab({
     try {
       await onAddMember({ employeeName: empName, employeeId: empId || undefined, role });
       toast.success(t("project.memberAdded"));
-      setEmpName("");
-      setEmpId("");
+      setEmpName(""); setEmpId(""); setEmpCode("");
       setRole(MEMBER_ROLES[0]);
       setShowForm(false);
     } catch {
@@ -1836,7 +2001,7 @@ function TeamTab({
               </label>
               <EmployeeSearchDropdown
                 value={empName}
-                onChange={(name, id) => { setEmpName(name); setEmpId(id ?? ""); }}
+                onChange={(name, id, code) => { setEmpName(name); setEmpId(id ?? ""); setEmpCode(code ?? ""); }}
                 placeholder="Search employee…"
                 filter={(e) => !existingNames.has(e.label?.toLowerCase())}
               />
@@ -1872,37 +2037,69 @@ function TeamTab({
           </div>
         </form>
       )}
-      <div className="divide-y divide-border">
-        {members.map((m) => (
-          <div key={m.id} className="flex items-center gap-3 py-3">
-            <Avatar name={m.employeeName} />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground">{m.employeeName}</p>
-              <p className="text-xs text-muted-foreground">{t("project.joined").replace("{date}", m.joinedDate)}</p>
-            </div>
-            <Badge className="bg-purple-100 text-purple-700">{m.role}</Badge>
-            {canManage && (
-              <button
-                onClick={async () => {
-                  if (!confirm(t("project.removeMemberConfirm").replace("{name}", m.employeeName))) return;
-                  try {
-                    await onRemoveMember(m.id);
-                    toast.success(t("project.memberRemoved"));
-                  } catch {
-                    toast.error(t("project.memberRemoveFailed"));
-                  }
-                }}
-                className="text-red-400 hover:text-red-600"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        ))}
-        {members.length === 0 && (
-          <p className="text-sm text-muted-foreground py-4 text-center">{t("project.noTeamMembers")}</p>
-        )}
-      </div>
+      {members.length === 0 ? (
+        <p className="text-sm text-muted-foreground py-8 text-center">{t("project.noTeamMembers")}</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {members.map((m) => {
+            const info = m.employeeId ? empLookup.get(m.employeeId) : undefined;
+            const joinedLabel = m.joinedDate
+              ? new Date(m.joinedDate).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })
+              : null;
+            const roleColors: Record<string, string> = {
+              "Project Manager": "bg-blue-100 text-blue-700 border-blue-200",
+              "Lead": "bg-purple-100 text-purple-700 border-purple-200",
+              "Developer": "bg-teal-100 text-teal-700 border-teal-200",
+              "QA": "bg-orange-100 text-orange-700 border-orange-200",
+              "Designer": "bg-pink-100 text-pink-700 border-pink-200",
+            };
+            const roleCls = roleColors[m.role] ?? "bg-muted text-muted-foreground border-border";
+            return (
+              <div key={m.id} className="bg-card border border-border rounded-xl p-4 flex flex-col gap-3 hover:shadow-sm transition-shadow relative group">
+                {/* Top: avatar + name + code */}
+                <div className="flex items-start gap-3">
+                  <Avatar name={m.employeeName} size="lg" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-foreground truncate">{m.employeeName}</p>
+                    {info?.code && (
+                      <p className="text-[11px] text-muted-foreground font-mono mt-0.5">{info.code}</p>
+                    )}
+                    {(info?.jobTitle || info?.department) && (
+                      <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                        {[info.jobTitle, info.department].filter(Boolean).join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                  {canManage && (
+                    <button
+                      onClick={async () => {
+                        if (!confirm(t("project.removeMemberConfirm").replace("{name}", m.employeeName))) return;
+                        try {
+                          await onRemoveMember(m.id);
+                          toast.success(t("project.memberRemoved"));
+                        } catch {
+                          toast.error(t("project.memberRemoveFailed"));
+                        }
+                      }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-600 flex-shrink-0 p-1 rounded hover:bg-red-50"
+                      title="Remove member"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+                {/* Bottom: role badge + joined date */}
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${roleCls}`}>{m.role}</span>
+                  {joinedLabel && (
+                    <span className="text-[10px] text-muted-foreground">Joined {joinedLabel}</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -2638,8 +2835,19 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
         }
         toast.success("Risk updated");
       } else {
-        const { error } = await supabase.from("project_risks").insert([payload]);
+        const { error, data: inserted } = await supabase.from("project_risks").insert([payload]).select().single();
         if (error) throw error;
+        // Auto-notify PM on high-severity risk (score >= 6)
+        if (score >= 6) {
+          void notifyPM({
+            projectId,
+            recipientId: "manager",
+            eventType: "high_risk_added",
+            title: `High-severity risk added: "${form.title.trim()}"`,
+            entityType: "risk",
+            entityId: inserted?.id ?? "",
+          });
+        }
         toast.success("Risk added");
       }
       setShowSlideOver(false);
@@ -2693,6 +2901,53 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
           <div className="text-sm text-muted-foreground mt-0.5">Mitigated</div>
         </div>
       </div>
+
+      {/* Risk Trend: by category and status breakdown */}
+      {risks.length > 0 && (
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-card rounded-xl border p-4">
+            <h3 className="font-semibold text-sm text-foreground mb-3">Risks by Category</h3>
+            <div className="space-y-2">
+              {RISK_CATEGORIES.map(cat => {
+                const count = risks.filter(r => r.category === cat).length;
+                if (count === 0) return null;
+                const pct = Math.round((count / risks.length) * 100);
+                return (
+                  <div key={cat}>
+                    <div className="flex justify-between text-xs text-muted-foreground mb-0.5">
+                      <span>{cat}</span><span>{count} ({pct}%)</span>
+                    </div>
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                      <div className="h-full bg-blue-500 rounded-full" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              }).filter(Boolean)}
+            </div>
+          </div>
+          <div className="bg-card rounded-xl border p-4">
+            <h3 className="font-semibold text-sm text-foreground mb-3">Status Distribution</h3>
+            <div className="space-y-2">
+              {RISK_STATUSES.map(st => {
+                const count = risks.filter(r => r.status === st).length;
+                if (count === 0) return null;
+                const pct = Math.round((count / risks.length) * 100);
+                const color = st === "Mitigated" || st === "Closed" ? "bg-green-500" : st === "Triggered" ? "bg-red-500" : st === "Assessed" ? "bg-blue-500" : "bg-amber-400";
+                return (
+                  <div key={st}>
+                    <div className="flex justify-between text-xs text-muted-foreground mb-0.5">
+                      <span>{st}</span><span>{count} ({pct}%)</span>
+                    </div>
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                      <div className={`h-full ${color} rounded-full`} style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              }).filter(Boolean)}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex gap-4 items-start">
         {/* Risk Matrix */}
@@ -3986,19 +4241,15 @@ function AddBacklogSlideOver({ sprintNames, dbSprints = [], memberNames, epics, 
   const [criteria, setCriteria] = useState<string[]>(initialItem?.acceptanceCriteria ?? []);
   const [ticketInput, setTicketInput] = useState("");
   const [linkedTickets, setLinkedTickets] = useState<string[]>([]);
-  const [allEmployees, setAllEmployees] = useState<string[]>([]);
+  const { employees: rawEmpBL } = useEmployees();
+  const allEmployees = useMemo(
+    () => rawEmpBL.filter((e) => e.status !== 'Inactive').map((e) => (e.employee_name as string) ?? (e.fullName as string) ?? e.name ?? "").filter(Boolean),
+    [rawEmpBL],
+  );
   const [dependencies, setDependencies] = useState<{ targetId: string; targetTitle: string; type: string }[]>([]);
   const [depSearch, setDepSearch] = useState("");
   const [depType, setDepType] = useState("Blocks");
   const [allProjectItems, setAllProjectItems] = useState<{ id: string; title: string }[]>([]);
-
-  useEffect(() => {
-    fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() })
-      .then(r => r.json()).then(json => {
-        const names = (json.data ?? []).filter((e: any) => e.status !== 'Inactive').map((e: any) => e.employee_name ?? e.fullName ?? e.name ?? "").filter(Boolean);
-        if (names.length) setAllEmployees(names);
-      }).catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (!projectId) return;
@@ -4815,14 +5066,11 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
   const [environment, setEnvironment] = useState("QA");
   const [version, setVersion] = useState("");
   const [assigneeName, setAssigneeName] = useState("");
-  const [allEmployees, setAllEmployees] = useState<string[]>([]);
-  useEffect(() => {
-    fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() })
-      .then(r => r.json()).then(json => {
-        const names = (json.data ?? []).filter((e: any) => e.status !== 'Inactive').map((e: any) => e.employee_name ?? e.fullName ?? e.name ?? "").filter(Boolean);
-        if (names.length) setAllEmployees(names);
-      }).catch(() => {});
-  }, []);
+  const { employees: rawEmpDF } = useEmployees();
+  const allEmployees = useMemo(
+    () => rawEmpDF.filter((e) => e.status !== 'Inactive').map((e) => (e.employee_name as string) ?? (e.fullName as string) ?? e.name ?? "").filter(Boolean),
+    [rawEmpDF],
+  );
   const [sprint, setSprint] = useState("Backlog");
   const [ticketInput, setTicketInput] = useState("");
   const [linkedTickets, setLinkedTickets] = useState<string[]>([]);
@@ -5303,10 +5551,20 @@ interface ProjectDetailProps {
   onBack: () => void;
   onGoToDashboard?: () => void;
   onUpdateRAG: (ragStatus: string) => Promise<void>;
+  currentUser?: { id?: string; name?: string };
+  // Section-level permission flags (passed from top-level sec* values)
+  secCreateTasks?: boolean;
+  secDeleteTasks?: boolean;
+  secManageTeam?: boolean;
+  secManageBacklog?: boolean;
+  secManageDefects?: boolean;
+  secManageSprints?: boolean;
+  secTimeLogs?: boolean;
   onUpdateTask: (taskId: string, updates: Partial<ProjectTask>) => Promise<void>;
   onCreateTask: (data: Partial<ProjectTask>) => Promise<void>;
   onDeleteTask: (taskId: string) => Promise<void>;
   onLogTime: (taskId: string, hours: number, type: string, desc: string, logDate: string, billable: boolean) => Promise<void>;
+  onAddComment: (taskId: string, content: string) => Promise<TaskComment>;
   onAddMember: (data: Partial<ProjectMember>) => Promise<void>;
   onRemoveMember: (memberId: string) => Promise<void>;
 }
@@ -5314,7 +5572,7 @@ interface ProjectDetailProps {
 // ─── Reports Tab ──────────────────────────────────────────────────────────────
 
 function ReportsTab({ projectId, project }: { projectId: string; project: Project }) {
-  const [reportTab, setReportTab] = useState<"burndown" | "velocity" | "timelog" | "budget" | "defects">("burndown");
+  const [reportTab, setReportTab] = useState<"burndown" | "velocity" | "timelog" | "budget" | "defects" | "milestones">("burndown");
   const { options: empOptions } = useEmployeeOptions();
 
   // ── Burndown state ──
@@ -5593,23 +5851,91 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
     { key: "timelog", label: "Time Log" },
     { key: "budget", label: "Budget" },
     { key: "defects", label: "Defect Trends" },
+    { key: "milestones", label: "Milestone Rate" },
   ] as const;
+
+  function exportFullReportCSV() {
+    const sections: string[] = [];
+    sections.push(`"Project Report: ${project.name}"`);
+    sections.push(`"Generated: ${new Date().toLocaleString('en-IN')}"`);
+    sections.push("");
+    sections.push("PROJECT SUMMARY");
+    sections.push(`"Name","Status","Priority","Progress","Budget","Spent","Start","End"`);
+    sections.push(`"${project.name}","${project.status}","${project.priority ?? ''}","${project.progress ?? 0}%","${project.budget ?? 0}","${project.spent ?? 0}","${project.startDate ?? ''}","${project.endDate ?? ''}"`);
+    sections.push("");
+    sections.push("TIME LOG");
+    sections.push(`"Date","Member","Type","Hours","Billable","Comment"`);
+    for (const l of (timeLogs as any[])) {
+      sections.push(`"${l.log_date}","${l.employee_name}","${l.log_type}","${l.hours}","${l.billable ? 'Yes' : 'No'}","${l.comment ?? ''}"`);
+    }
+    sections.push("");
+    sections.push("BUDGET ITEMS");
+    sections.push(`"Category","Budgeted","Actual","Variance"`);
+    for (const b of (budgetItems as any[])) {
+      sections.push(`"${b.category}","${b.budgeted}","${b.actual}","${(b.budgeted - b.actual).toFixed(2)}"`);
+    }
+    sections.push("");
+    sections.push("DEFECTS");
+    sections.push(`"Title","Priority","Status","Assignee"`);
+    for (const d of (defects as any[])) {
+      sections.push(`"${d.title}","${d.priority}","${d.status}","${d.assignee_name ?? ''}"`);
+    }
+    const csv = sections.join("\n");
+    const a = document.createElement("a");
+    a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
+    a.download = `project-report-${project.name.replace(/\s+/g, '-').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+  }
+
+  function exportFullReportPrint() {
+    const totalBudgetLocal = project.budget ?? 0;
+    const totalSpentLocal = project.spent ?? 0;
+    const html = `<!DOCTYPE html><html><head><title>Project Report: ${project.name}</title>
+    <style>body{font-family:sans-serif;padding:24px;color:#111}h1{font-size:20px}h2{font-size:14px;margin-top:20px;border-bottom:1px solid #ccc;padding-bottom:4px}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}th{background:#f5f5f5}@media print{button{display:none}}</style>
+    </head><body>
+    <h1>Project Report: ${project.name}</h1>
+    <p style="color:#666;font-size:12px">Generated: ${new Date().toLocaleString('en-IN')} &nbsp;|&nbsp; Status: ${project.status} &nbsp;|&nbsp; Progress: ${project.progress ?? 0}%</p>
+    <h2>Budget Summary</h2>
+    <table><tr><th>Budget</th><th>Spent</th><th>Remaining</th></tr>
+    <tr><td>₹${totalBudgetLocal.toLocaleString('en-IN')}</td><td>₹${totalSpentLocal.toLocaleString('en-IN')}</td><td>₹${(totalBudgetLocal - totalSpentLocal).toLocaleString('en-IN')}</td></tr></table>
+    <h2>Defects</h2>
+    <table><tr><th>Title</th><th>Priority</th><th>Status</th><th>Assignee</th></tr>
+    ${(defects as any[]).map(d => `<tr><td>${d.title}</td><td>${d.priority}</td><td>${d.status}</td><td>${d.assignee_name ?? ''}</td></tr>`).join('')}
+    </table>
+    <h2>Time Log</h2>
+    <table><tr><th>Date</th><th>Member</th><th>Type</th><th>Hours</th><th>Billable</th></tr>
+    ${(timeLogs as any[]).map(l => `<tr><td>${l.log_date}</td><td>${l.employee_name}</td><td>${l.log_type}</td><td>${l.hours}</td><td>${l.billable ? 'Yes' : 'No'}</td></tr>`).join('')}
+    </table>
+    </body></html>`;
+    const w = window.open('', '_blank');
+    if (w) { w.document.write(html); w.document.close(); w.focus(); w.print(); }
+  }
 
   return (
     <div className="space-y-6">
-      {/* Sub-tab bar */}
-      <div className="flex gap-1 bg-muted rounded-lg p-1 w-fit">
-        {SUB_TABS.map(t => (
-          <button
-            key={t.key}
-            onClick={() => setReportTab(t.key)}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              reportTab === t.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {t.label}
+      {/* Sub-tab bar + export buttons */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex gap-1 bg-muted rounded-lg p-1 w-fit">
+          {SUB_TABS.map(t => (
+            <button
+              key={t.key}
+              onClick={() => setReportTab(t.key)}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                reportTab === t.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={exportFullReportCSV} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-colors text-muted-foreground">
+            <Download className="w-3.5 h-3.5" /> Export Excel (CSV)
           </button>
-        ))}
+          <button onClick={exportFullReportPrint} className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+            <Download className="w-3.5 h-3.5" /> Export PDF
+          </button>
+        </div>
       </div>
 
       {/* ── BURNDOWN ── */}
@@ -5798,7 +6124,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
           <div className="flex flex-wrap gap-2 items-center">
             <select value={tlMember} onChange={e => setTlMember(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-card w-44">
               <option value="">All members</option>
-              {empOptions.map(e => <option key={e.value} value={e.label}>{e.label}</option>)}
+              {empOptions.map(e => <option key={e.value} value={e.label}>{e.displayLabel ?? e.label}</option>)}
             </select>
             <select value={tlType} onChange={e => setTlType(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-card">
               <option value="">All types</option>
@@ -6063,6 +6389,105 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
           </div>
         </div>
       )}
+
+      {/* ── MILESTONE COMPLETION RATE ── */}
+      {reportTab === "milestones" && (() => {
+        const ms = (project as any).milestones || [];
+        // Fetch milestones from project object or show empty state
+        const total = ms.length;
+        const completed = ms.filter((m: any) => m.status === 'Completed' || m.actual_date).length;
+        const overdue = ms.filter((m: any) => !m.actual_date && m.planned_date && new Date(m.planned_date) < new Date()).length;
+        const onTrack = total - completed - overdue;
+        const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+        const bars = [
+          { label: "Completed", count: completed, color: "#22c55e" },
+          { label: "Overdue", count: overdue, color: "#ef4444" },
+          { label: "On Track", count: onTrack, color: "#6366f1" },
+        ];
+
+        return (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Total Milestones", value: total, color: "text-foreground" },
+                { label: "Completed", value: completed, color: "text-green-600" },
+                { label: "Completion Rate", value: `${pct}%`, color: pct >= 80 ? "text-green-600" : pct >= 50 ? "text-amber-600" : "text-red-600" },
+              ].map(k => (
+                <div key={k.label} className="bg-card border rounded-xl p-4 text-center">
+                  <div className={`text-2xl font-bold ${k.color}`}>{k.value}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{k.label}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Progress bar */}
+            <div className="bg-card border rounded-xl p-5">
+              <h4 className="text-sm font-semibold mb-3">Overall Completion</h4>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-4 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                </div>
+                <span className="text-sm font-bold w-12 text-right">{pct}%</span>
+              </div>
+            </div>
+
+            {/* Bar chart */}
+            <div className="bg-card border rounded-xl p-5">
+              <h4 className="text-sm font-semibold mb-4">Status Breakdown</h4>
+              {total === 0 ? (
+                <p className="text-sm text-muted-foreground">No milestones defined for this project.</p>
+              ) : (
+                <div className="space-y-3">
+                  {bars.map(b => (
+                    <div key={b.label} className="flex items-center gap-3">
+                      <div className="w-24 text-sm text-muted-foreground">{b.label}</div>
+                      <div className="flex-1 h-5 bg-muted rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${total > 0 ? (b.count / total) * 100 : 0}%`, background: b.color }} />
+                      </div>
+                      <div className="w-8 text-sm font-semibold text-right">{b.count}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Milestone list */}
+            {ms.length > 0 && (
+              <div className="bg-card border rounded-xl overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="bg-muted/50 border-b">
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Milestone</th>
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Planned</th>
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Actual</th>
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {ms.map((m: any) => {
+                      const isComplete = m.status === 'Completed' || !!m.actual_date;
+                      const isLate = !isComplete && m.planned_date && new Date(m.planned_date) < new Date();
+                      return (
+                        <tr key={m.id} className="hover:bg-muted/30">
+                          <td className="px-4 py-2 font-medium">{m.name || m.title}</td>
+                          <td className="px-4 py-2 text-muted-foreground">{m.planned_date || '—'}</td>
+                          <td className="px-4 py-2 text-muted-foreground">{m.actual_date || '—'}</td>
+                          <td className="px-4 py-2">
+                            <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${isComplete ? 'bg-green-100 text-green-700' : isLate ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+                              {isComplete ? 'Completed' : isLate ? 'Overdue' : 'On Track'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -6072,18 +6497,41 @@ function ProjectDetailPanel({
   canManage,
   isAdmin: isAdminUser,
   currentUserId,
+  currentUser,
   userEmail,
   onBack,
   onGoToDashboard,
   onUpdateRAG,
+  secCreateTasks,
+  secDeleteTasks,
+  secManageTeam,
+  secManageBacklog,
+  secManageDefects,
+  secManageSprints,
+  secTimeLogs,
   onUpdateTask,
   onCreateTask,
   onDeleteTask,
   onLogTime,
+  onAddComment,
   onAddMember,
   onRemoveMember,
 }: ProjectDetailProps) {
+  // Effective permission: canManage (role-based) OR explicit section permission
+  const canCreateTask = canManage || !!secCreateTasks;
+  const canDeleteTask = canManage || !!secDeleteTasks;
+  const canManageTeam = canManage || !!secManageTeam;
+  const canManageBacklog = canManage || !!secManageBacklog;
+  const canManageDefects = canManage || !!secManageDefects;
+  const canManageSprints = canManage || !!secManageSprints;
+  const canLogTime = canManage || !!secTimeLogs;
   const [activeTab, setActiveTab] = useState<"overview" | "backlog" | "defects" | "tasks" | "team" | "milestones" | "sprints" | "risks" | "reports">("overview");
+  const secReports = useSectionPermission("projects", "reports");
+  useEffect(() => {
+    if (activeTab === "reports" && !secReports) {
+      setActiveTab("overview");
+    }
+  }, [activeTab, secReports]);
   const [sprintNames, setSprintNames] = useState<string[]>([]);
   const [sprintOptions, setSprintOptions] = useState<{ id: string; name: string }[]>([]);
   const [updatingRag, setUpdatingRag] = useState(false);
@@ -6224,7 +6672,7 @@ function ProjectDetailPanel({
       {/* Tabs */}
       <div className="max-w-6xl mx-auto px-6 py-6">
         <div className="flex gap-1 mb-6 bg-muted rounded-lg p-1 w-fit">
-          {(["overview", "backlog", "defects", "tasks", "team", "milestones", "sprints", "risks", "reports"] as const).map((tab) => (
+          {(["overview", "backlog", "defects", "tasks", "team", "milestones", "sprints", "risks", ...(secReports ? ["reports" as const] : [])] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -6419,12 +6867,12 @@ function ProjectDetailPanel({
 
         {/* Backlog */}
         {activeTab === "backlog" && (
-          <BacklogTab projectId={project.id} members={members} sprintNames={sprintNames} userEmail={userEmail} canManage={canManage} />
+          <BacklogTab projectId={project.id} members={members} sprintNames={sprintNames} userEmail={userEmail} canManage={canManageBacklog} />
         )}
 
         {/* Defects */}
         {activeTab === "defects" && (
-          <DefectsTab projectId={project.id} members={members} sprintNames={sprintNames} userEmail={userEmail} canManage={canManage} />
+          <DefectsTab projectId={project.id} members={members} sprintNames={sprintNames} userEmail={userEmail} canManage={canManageDefects} />
         )}
 
         {/* Tasks */}
@@ -6433,11 +6881,16 @@ function ProjectDetailPanel({
             tasks={tasks}
             projectId={project.id}
             canManage={canManage}
+            canCreateTask={canCreateTask}
+            canDeleteTask={canDeleteTask}
+            canLogTime={canLogTime}
             currentUserId={currentUserId}
+            currentUser={currentUser}
             onCreateTask={onCreateTask}
             onUpdateTask={(taskId, updates) => onUpdateTask(taskId, updates)}
             onDeleteTask={onDeleteTask}
             onLogTime={onLogTime}
+            onAddComment={onAddComment}
             sprintOptions={sprintOptions}
           />
         )}
@@ -6447,7 +6900,7 @@ function ProjectDetailPanel({
           <TeamTab
             members={members}
             projectId={project.id}
-            canManage={canManage}
+            canManage={canManageTeam}
             onAddMember={onAddMember}
             onRemoveMember={onRemoveMember}
           />
@@ -6460,7 +6913,7 @@ function ProjectDetailPanel({
 
         {/* Sprints */}
         {activeTab === "sprints" && (
-          <SprintsTab projectId={project.id} tasks={tasks} canManage={canManage} />
+          <SprintsTab projectId={project.id} tasks={tasks} canManage={canManageSprints} />
         )}
 
         {/* Risks */}
@@ -6469,8 +6922,17 @@ function ProjectDetailPanel({
         )}
 
         {/* Reports */}
-        {activeTab === "reports" && (
+        {activeTab === "reports" && secReports && (
           <ReportsTab projectId={project.id} project={project} />
+        )}
+        {activeTab === "reports" && !secReports && (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mb-3">
+              <svg className="w-6 h-6 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+            </div>
+            <h3 className="text-sm font-semibold text-foreground mb-1">Reports Access Required</h3>
+            <p className="text-xs text-muted-foreground">You don&apos;t have permission to view project reports. Contact your administrator.</p>
+          </div>
         )}
       </div>
     </div>
@@ -7669,6 +8131,7 @@ export function ProjectManagementJira({
     deleteTask,
     logTime,
     updateRAG,
+    addTaskComment,
   } = useProjectData();
 
   // Permission gates
@@ -7824,7 +8287,7 @@ export function ProjectManagementJira({
             >
               {t("projectMgmt.dashboard")}
             </button>
-            <button
+            {secViewProjects && <button
               onClick={() => setMainView("projects")}
               className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mainView === "projects" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
@@ -7834,7 +8297,7 @@ export function ProjectManagementJira({
                   {atRiskProjectCount}
                 </span>
               )}
-            </button>
+            </button>}
             <button
               onClick={() => setMainView("mytasks")}
               className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mainView === "mytasks" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
@@ -7884,7 +8347,7 @@ export function ProjectManagementJira({
         )}
 
         {/* Projects View */}
-        {mainView === "projects" && <>
+        {mainView === "projects" && secViewProjects && <>
         {/* Stat Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
@@ -8326,6 +8789,13 @@ export function ProjectManagementJira({
           isAdmin={canAdminDelete}
           currentUserId={userId}
           userEmail={userEmail}
+          secCreateTasks={secCreateTasks}
+          secDeleteTasks={secDeleteTasks}
+          secManageTeam={secManageTeam}
+          secManageBacklog={secManageBacklog}
+          secManageDefects={secManageDefects}
+          secManageSprints={secManageSprints}
+          secTimeLogs={secTimeLogs}
           onBack={() => { setSelectedProject(null); setProjectOpenedFromDashboard(false); }}
           onGoToDashboard={projectOpenedFromDashboard ? () => { setSelectedProject(null); setMainView("dashboard"); setProjectOpenedFromDashboard(false); } : undefined}
           onUpdateRAG={(ragStatus) => updateRAG(selectedProject.id, ragStatus)}
@@ -8347,6 +8817,11 @@ export function ProjectManagementJira({
           }
           onDeleteTask={(taskId) => deleteTask(selectedProject.id, taskId)}
           onLogTime={(taskId, h, type, desc, logDate, billable) => logTime(taskId, h, type, desc, { logDate, billable, projectId: selectedProject?.id })}
+          onAddComment={(taskId, content) => addTaskComment(taskId, content, {
+            authorId: currentUser?.id,
+            authorName: currentUser?.name ?? '',
+          })}
+          currentUser={currentUser ? { id: currentUser.id, name: currentUser.name ?? '' } : undefined}
           onAddMember={(data) => addMember(selectedProject.id, data)}
           onRemoveMember={(memberId) => removeMember(selectedProject.id, memberId)}
         />

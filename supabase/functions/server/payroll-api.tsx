@@ -1,6 +1,16 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
-import { auditCreate, auditUpdate } from "./audit-helpers.ts";
+import { auditCreate, auditUpdate, logAuditFromContext } from "./audit-helpers.ts";
+
+function triggerWorkflowEvent(event: string, entity_type: string, entity_id: string, context: Record<string, unknown>) {
+  const base = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  fetch(`${base}/functions/v1/make-server-1fe2c468/workflow/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    body: JSON.stringify({ event, entity_type, entity_id, context }),
+  }).catch(() => {});
+}
 
 const app = new Hono();
 
@@ -226,9 +236,35 @@ app.post('/process', async (c) => {
       created++;
     }
 
+    // Fire workflow event for payroll run initiated
+    triggerWorkflowEvent("payroll_run_initiated", "payroll_run", `${month}-${year}`, {
+      month, year, created, skipped, total: employees.length,
+    });
+    logAuditFromContext(c, { entity_type: "payroll_run", entity_id: `${month}-${year}`, action: "create", module: "payroll", metadata: { month, year, created, skipped } });
+
     return c.json({ success: true, created, skipped, total: employees.length });
   } catch (error) {
     return c.json({ success: false, error: 'Failed to process payroll' }, 500);
+  }
+});
+
+// ==================== TDS / TAX SLABS FROM DB ====================
+
+app.get('/tax-slabs', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const regime = c.req.query('regime') || 'new';
+    const fy = c.req.query('fy') || '2025-26';
+
+    const [{ data: itSlabs }, { data: ptSlabs }, { data: rebates }] = await Promise.all([
+      supabase.from('income_tax_slabs').select('*').eq('regime', regime).eq('fy', fy).order('min_income'),
+      supabase.from('professional_tax_slabs').select('*').eq('fy', fy).order('min_salary'),
+      supabase.from('tax_rebates').select('*').eq('regime', regime).eq('fy', fy),
+    ]);
+
+    return c.json({ success: true, data: { incomeTaxSlabs: itSlabs || [], professionalTaxSlabs: ptSlabs || [], rebates: rebates || [] } });
+  } catch (error) {
+    return c.json({ success: false, error: 'Failed to fetch tax slabs' }, 500);
   }
 });
 

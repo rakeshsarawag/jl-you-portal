@@ -24,6 +24,7 @@ import {
 import { t } from "../../../i18n/index";
 import { useUser } from "../../context/UserContext";
 import EmployeeSearchDropdown from "../ui/EmployeeSearchDropdown";
+import { useEmployeeOptions } from "../../hooks/useSharedData";
 import { useSectionPermission } from "../SectionGuard";
 
 // ── Utility functions ─────────────────────────────────────────────────────────
@@ -130,27 +131,15 @@ function EmptyState({ msg }: { msg?: string }) {
 
 function WatcherAddDropdown({ currentWatchers, onAdd }: { currentWatchers: string[]; onAdd: (name: string) => void }) {
   const [open, setOpen] = useState(false);
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
   const [search, setSearch] = useState("");
+  const { options: allEmployees } = useEmployeeOptions();
 
-  useEffect(() => {
-    if (!open) return;
-    fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() })
-      .then((r) => r.json())
-      .then((j) =>
-        setEmployees(
-          (j.data ?? [])
-            .filter((e: any) => e.status !== "Inactive")
-            .map((e: any) => ({ id: e.id, name: e.employee_name ?? e.fullName ?? e.name ?? "" }))
-            .filter((e: any) => e.name && !currentWatchers.includes(e.name))
-        )
-      )
-      .catch(() => {});
-  }, [open]);
-
-  const filtered = employees.filter((e) =>
-    !search || e.name.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = allEmployees.filter((e) => {
+    if (currentWatchers.includes(e.label)) return false;
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return e.label.toLowerCase().includes(q) || e.employeeCode?.toLowerCase().includes(q);
+  });
 
   return (
     <div className="relative">
@@ -161,22 +150,25 @@ function WatcherAddDropdown({ currentWatchers, onAdd }: { currentWatchers: strin
         {t("defect.watchers.addWatcher")}
       </button>
       {open && (
-        <div className="absolute left-0 top-5 z-30 bg-white border border-gray-200 rounded-lg shadow-lg w-48 p-2 space-y-1">
+        <div className="absolute left-0 top-5 z-30 bg-white border border-gray-200 rounded-lg shadow-lg w-56 p-2 space-y-1">
           <input
             autoFocus
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search..."
+            placeholder="Search by name or ID…"
             className="w-full border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none"
           />
           <div className="max-h-40 overflow-y-auto space-y-0.5">
             {filtered.slice(0, 20).map((e) => (
               <button
-                key={e.id}
-                onClick={() => { onAdd(e.name); setOpen(false); setSearch(""); }}
-                className="w-full text-left px-2 py-1 text-xs rounded hover:bg-gray-50 text-gray-700"
+                key={e.value}
+                onClick={() => { onAdd(e.label); setOpen(false); setSearch(""); }}
+                className="w-full text-left px-2 py-1 text-xs rounded hover:bg-gray-50 flex items-center justify-between gap-2"
               >
-                {e.name}
+                <span className="text-gray-700">{e.label}</span>
+                {e.employeeCode && (
+                  <span className="text-[10px] font-mono bg-blue-50 text-blue-600 px-1 rounded shrink-0">{e.employeeCode}</span>
+                )}
               </button>
             ))}
             {filtered.length === 0 && <p className="text-xs text-gray-400 px-2 py-1">No results</p>}
@@ -268,8 +260,11 @@ function SideNav({ screen, onNavigate, mobileOpen, onMobileClose, permissions }:
 
   return (
     <>
-      {/* Desktop sidebar */}
-      <aside className="hidden md:flex fixed left-0 top-12 h-[calc(100vh-3rem)] w-[220px] bg-white border-r border-gray-200 flex-col z-20">
+      {/* Desktop sidebar — offset by global AppSidebar width via CSS variable */}
+      <aside
+        className="hidden md:flex fixed top-12 h-[calc(100vh-3rem)] w-[220px] bg-white border-r border-gray-200 flex-col z-20"
+        style={{ left: 'var(--global-sidebar-w, 0px)' }}
+      >
         {navContent}
       </aside>
 
@@ -280,7 +275,10 @@ function SideNav({ screen, onNavigate, mobileOpen, onMobileClose, permissions }:
             className="fixed inset-0 bg-black/40 z-30 md:hidden"
             onClick={onMobileClose}
           />
-          <aside className="fixed left-0 top-12 h-[calc(100vh-3rem)] w-[220px] bg-white border-r border-gray-200 flex flex-col z-40 md:hidden">
+          <aside
+            className="fixed top-12 h-[calc(100vh-3rem)] w-[220px] bg-white border-r border-gray-200 flex flex-col z-40 md:hidden"
+            style={{ left: 'var(--global-sidebar-w, 0px)' }}
+          >
             {navContent}
           </aside>
         </>
@@ -555,19 +553,15 @@ function LogDefectModal({
   const [labelInput, setLabelInput] = useState("");
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [sprints, setSprints] = useState<{ id: string; name: string }[]>([]);
-  const [employees, setEmployees] = useState<{ id: string; name: string }[]>([]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handleKey);
-    // Load projects and employees in parallel
-    Promise.all([
-      fetch(`${API_BASE}/projects/all`, { headers: apiHeaders() }).then(r => r.json()).catch(() => ({ data: [] })),
-      fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() }).then(r => r.json()).catch(() => ({ data: [] })),
-    ]).then(([projJson, empJson]) => {
-      setProjects((projJson.data ?? []).map((p: any) => ({ id: p.id, name: p.name ?? p.projectName ?? '' })).filter((p: any) => p.name));
-      setEmployees((empJson.data ?? []).filter((e: any) => e.status !== 'Inactive').map((e: any) => ({ id: e.id, name: e.employee_name ?? e.fullName ?? e.name ?? '' })).filter((e: any) => e.name));
-    });
+    // Load projects
+    fetch(`${API_BASE}/projects/all`, { headers: apiHeaders() })
+      .then(r => r.json())
+      .then(j => setProjects((j.data ?? []).map((p: any) => ({ id: p.id, name: p.name ?? p.projectName ?? '' })).filter((p: any) => p.name)))
+      .catch(() => {});
     return () => window.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
@@ -1634,8 +1628,8 @@ function DefectDetailScreen({
   const [evidenceUrl, setEvidenceUrl] = useState("");
   const [editingVerify, setEditingVerify] = useState(false);
   const [showReassignModal, setShowReassignModal] = useState(false);
-  const [newAssigneeModal, setNewAssigneeModal] = useState<{ id: string; name: string }>({ id: "", name: "" });
-  const [reassignEmployees, setReassignEmployees] = useState<{ id: string; name: string }[]>([]);
+  const [newAssigneeModal, setNewAssigneeModal] = useState<{ id: string; name: string; code?: string }>({ id: "", name: "" });
+  const { options: employeeOptions } = useEmployeeOptions();
   const [duplicateOf, setDuplicateOf] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
   const [statusErrors, setStatusErrors] = useState<string[]>([]);
@@ -1652,14 +1646,6 @@ function DefectDetailScreen({
       setEvidenceUrl((selectedDefect as any).evidenceUrl ?? "");
     }
   }, [selectedDefect]);
-
-  useEffect(() => {
-    if (!showReassignModal) return;
-    fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() })
-      .then(r => r.json())
-      .then(j => setReassignEmployees((j.data ?? []).filter((e: any) => e.status !== "Inactive").map((e: any) => ({ id: e.id, name: e.employee_name ?? e.fullName ?? e.name ?? "" })).filter((e: any) => e.name)))
-      .catch(() => {});
-  }, [showReassignModal]);
 
   const d = selectedDefect;
 
@@ -2324,16 +2310,16 @@ function DefectDetailScreen({
               <p className="text-sm text-gray-400">Unassigned</p>
             )}
             {isReassigning ? (
-              <div className="flex gap-2">
-                <input
-                  value={newAssignee}
-                  onChange={(e) => setNewAssignee(e.target.value)}
-                  placeholder="New assignee name"
-                  className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none"
-                  autoFocus
-                />
-                <button onClick={confirmReassign} className="px-3 py-1 bg-red-600 text-white rounded text-xs font-semibold">OK</button>
-                <button onClick={() => setIsReassigning(false)} className="px-3 py-1 border border-gray-200 rounded text-xs">X</button>
+              <div className="flex gap-2 items-start">
+                <div className="flex-1">
+                  <EmployeeSearchDropdown
+                    value={newAssignee}
+                    onChange={(name, id) => { setNewAssignee(name); if (id) setNewAssigneeModal(prev => ({ ...prev, id, name })); }}
+                    placeholder="Search assignee…"
+                  />
+                </div>
+                <button onClick={confirmReassign} className="px-3 py-1.5 bg-red-600 text-white rounded text-xs font-semibold shrink-0">OK</button>
+                <button onClick={() => setIsReassigning(false)} className="px-3 py-1.5 border border-gray-200 rounded text-xs shrink-0">✕</button>
               </div>
             ) : (
               <button onClick={() => setIsReassigning(true)} className="text-xs text-red-600 underline hover:text-red-800">Reassign</button>
@@ -2493,17 +2479,11 @@ function DefectDetailScreen({
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center">
           <div className="bg-white rounded-xl p-5 shadow-xl w-80 space-y-3">
             <h3 className="font-semibold text-gray-900">Reassign Defect</h3>
-            <select
-              value={newAssigneeModal.id}
-              onChange={(e) => {
-                const emp = reassignEmployees.find(x => x.id === e.target.value);
-                if (emp) setNewAssigneeModal(emp);
-              }}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none"
-            >
-              <option value="">Select assignee...</option>
-              {reassignEmployees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
-            </select>
+            <EmployeeSearchDropdown
+              value={newAssigneeModal.name}
+              onChange={(name, id, code) => setNewAssigneeModal({ id: id ?? "", name, code })}
+              placeholder="Search employee…"
+            />
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowReassignModal(false)} className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm">Cancel</button>
               <button

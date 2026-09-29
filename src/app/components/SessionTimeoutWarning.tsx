@@ -1,4 +1,5 @@
 import { X } from 'lucide-react';
+import { t } from '../../i18n';
 
 interface Props {
   secondsLeft: number;
@@ -12,7 +13,7 @@ export function SessionTimeoutWarning({ secondsLeft, onKeepWorking, onSignOut }:
       <div className="bg-white dark:bg-card rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-border">
-          <h2 className="text-base font-bold text-foreground">Session Timeout Warning</h2>
+          <h2 className="text-base font-bold text-foreground">{t('sessionTimeout.title')}</h2>
           <button
             onClick={onKeepWorking}
             className="text-muted-foreground hover:text-foreground transition-colors rounded-full p-0.5 hover:bg-muted"
@@ -44,13 +45,13 @@ export function SessionTimeoutWarning({ secondsLeft, onKeepWorking, onSignOut }:
             onClick={onKeepWorking}
             className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors shadow-sm"
           >
-            Keep Working
+            {t('sessionTimeout.staySignedIn')}
           </button>
           <button
             onClick={onSignOut}
             className="text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
           >
-            Sign Out
+            {t('sessionTimeout.signOut')}
           </button>
         </div>
       </div>

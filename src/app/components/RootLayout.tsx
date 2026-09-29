@@ -1,6 +1,7 @@
 import { Outlet, useLocation } from 'react-router';
-import { UserProvider } from '../context/UserContext';
 import { MasterDataProvider } from '../context/MasterDataContext';
+import { ValueHelpsProvider } from '../context/ValueHelpsContext';
+import { EmployeesProvider } from '../context/EmployeesContext';
 import { UnsavedChangesProvider } from '../context/UnsavedChangesContext';
 import { Toaster } from './ui/sonner';
 import { useEffect, useState } from 'react';
@@ -8,6 +9,7 @@ import { API_BASE } from '../utils/constants';
 import { AlertTriangle, X } from 'lucide-react';
 import { AppHeader } from './AppHeader';
 import { useLocale } from '../../i18n/LocaleContext';
+import { AppSidebar } from './AppSidebar';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -22,15 +24,16 @@ function ServerStatusBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
-    const check = async () => {
+    // Defer health check so it doesn't compete with critical data fetches on mount
+    const timer = setTimeout(async () => {
       try {
         const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(5000) });
         setOffline(!res.ok && res.status === 404);
       } catch {
         setOffline(true);
       }
-    };
-    check();
+    }, 3000);
+    return () => clearTimeout(timer);
   }, []);
 
   if (!offline || dismissed) return null;
@@ -58,21 +61,29 @@ interface RootLayoutProps {
 export function RootLayout({ accessToken, onLogout }: RootLayoutProps) {
   const { locale } = useLocale();
 
+  // UserProvider is in App.tsx (single instance, shared across router + notification pages).
+  // RootLayout owns MasterDataProvider and ValueHelpsProvider which need accessToken.
   return (
-    <UserProvider key={accessToken} accessToken={accessToken}>
-      <MasterDataProvider key={accessToken} accessToken={accessToken}>
+    <MasterDataProvider key={accessToken} accessToken={accessToken}>
+      <ValueHelpsProvider key={accessToken}>
+        <EmployeesProvider>
         <UnsavedChangesProvider key={accessToken}>
           <ScrollToTop />
           <AppHeader onLogout={onLogout} />
           <ServerStatusBanner />
-          {/* key={locale} forces the Outlet subtree to remount on language change,
-              ensuring all t() calls in route components re-execute with the new locale */}
-          <div key={locale} className="pt-12">
+          <AppSidebar onLogout={onLogout} />
+          {/* margin-left driven by --global-sidebar-w CSS var; AppSidebar sets it directly */}
+          <div
+            key={locale}
+            className="pt-12 transition-[margin-left] duration-200 ease-in-out"
+            style={{ marginLeft: 'var(--global-sidebar-w, 0px)' }}
+          >
             <Outlet />
           </div>
           <Toaster />
         </UnsavedChangesProvider>
-      </MasterDataProvider>
-    </UserProvider>
+        </EmployeesProvider>
+      </ValueHelpsProvider>
+    </MasterDataProvider>
   );
 }

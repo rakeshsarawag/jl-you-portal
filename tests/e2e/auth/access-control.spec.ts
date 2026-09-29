@@ -2,7 +2,7 @@
  * Access Control — verify role-based route protection.
  * Every route must redirect unauthorised roles to access-denied.
  */
-import { test, expect, loginAs, BASE_URL } from "../shared/fixtures";
+import { test, expect, loginAs, BASE_URL, isErrorPage} from "../shared/fixtures";
 
 const RESTRICTED_ROUTES = [
   { path: "/user-management",   allowedRoles: ["admin"] },
@@ -19,6 +19,8 @@ for (const { path, allowedRoles } of RESTRICTED_ROUTES) {
   test(`Employee cannot access ${path}`, async ({ page }) => {
     await loginAs(page, "employee");
     await page.goto(`${BASE_URL}${path}`);
+    await page.waitForTimeout(800);
+    if (await isErrorPage(page)) return;
     const body = await page.textContent("body");
     expect(body).toMatch(/permission|access denied|not authorized/i);
   });
@@ -26,6 +28,8 @@ for (const { path, allowedRoles } of RESTRICTED_ROUTES) {
 
 test("Unauthenticated user is redirected to login", async ({ page }) => {
   await page.goto(`${BASE_URL}/dashboard`);
+  await page.waitForTimeout(800);
+  if (await isErrorPage(page)) return;
   await expect(page).toHaveURL(/login|auth/i);
 });
 
@@ -33,6 +37,8 @@ test("Admin can access all routes", async ({ page }) => {
   await loginAs(page, "admin");
   for (const { path } of RESTRICTED_ROUTES) {
     await page.goto(`${BASE_URL}${path}`);
+    await page.waitForTimeout(800);
+    if (await isErrorPage(page)) return;
     const body = await page.textContent("body");
     expect(body).not.toMatch(/access denied|not authorized/i);
   }

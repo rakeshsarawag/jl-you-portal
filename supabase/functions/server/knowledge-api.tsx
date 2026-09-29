@@ -298,6 +298,67 @@ app.post('/articles/:id/comments', async (c) => {
   return c.json({ success: true, data: data ?? comment });
 });
 
+// ==================== BOOKMARKS ====================
+
+// GET /bookmarks?user_id=xxx  — list bookmarked article IDs for a user
+app.get('/bookmarks', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const userId = c.req.query('user_id');
+    if (!userId) return c.json({ error: 'user_id required' }, 400);
+    const { data, error } = await supabase
+      .from('knowledge_bookmarks')
+      .select('id, article_id, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    if (error && error.code === '42P01') return c.json({ success: true, data: [] });
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json({ success: true, data: data || [] });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// POST /bookmarks  — { user_id, article_id }
+app.post('/bookmarks', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const body = await c.req.json();
+    const { user_id, article_id } = body;
+    if (!user_id || !article_id) return c.json({ error: 'user_id and article_id required' }, 400);
+    const { data, error } = await supabase
+      .from('knowledge_bookmarks')
+      .upsert([{ user_id, article_id }], { onConflict: 'user_id,article_id' })
+      .select()
+      .single();
+    if (error && error.code === '42P01') return c.json({ success: true, data: { user_id, article_id } });
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json({ success: true, data });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+// DELETE /bookmarks  — { user_id, article_id }
+app.delete('/bookmarks', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const body = await c.req.json();
+    const { user_id, article_id } = body;
+    if (!user_id || !article_id) return c.json({ error: 'user_id and article_id required' }, 400);
+    const { error } = await supabase
+      .from('knowledge_bookmarks')
+      .delete()
+      .eq('user_id', user_id)
+      .eq('article_id', article_id);
+    if (error && error.code === '42P01') return c.json({ success: true });
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json({ success: true });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
 // ==================== STATS ====================
 
 app.get('/stats', async (c) => {

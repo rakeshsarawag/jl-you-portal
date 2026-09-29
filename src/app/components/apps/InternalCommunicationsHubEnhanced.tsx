@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { useCommunicationsData } from '../../hooks/useCommunicationsData';
 import { useUser } from '../../context/UserContext';
+import { useEmployees } from '../../context/EmployeesContext';
 import { useSectionPermission } from '../SectionGuard';
 import { toast } from 'sonner';
 import { t } from '../../../i18n/index';
@@ -339,7 +340,7 @@ function CreateAnnouncementModal({ onClose, onCreate }: { onClose: () => void; o
   const submit = () => {
     if (!title.trim()) { toast.error(t('validation.announcement.title')); return; }
     if (!body.trim()) { toast.error(t('validation.announcement.body')); return; }
-    onCreate({ id: crypto.randomUUID(), title, body, priority, audience, attachments });
+    onCreate({ id: crypto.randomUUID(), title, content: body, priority, audience, attachments });
     onClose();
   };
 
@@ -406,7 +407,7 @@ function CreateEventModal({ onClose, onCreate }: { onClose: () => void; onCreate
     if (!title.trim()) { toast.error(t('validation.event.title')); return; }
     if (!date) { toast.error(t('validation.event.date')); return; }
     if (new Date(date) <= new Date()) { toast.error(t('validation.event.date.future')); return; }
-    onCreate({ id: crypto.randomUUID(), title, description, date, location });
+    onCreate({ id: crypto.randomUUID(), title, description, start_date: date, location });
     onClose();
   };
 
@@ -996,13 +997,9 @@ export function InternalCommunicationsHub(_props: Props) {
   const [showChannelModal, setShowChannelModal] = useState(false);
   const [showRecognitionModal, setShowRecognitionModal] = useState(false);
 
-  // ── Employees ────────────────────────────────────────────────────────────
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  useEffect(() => {
-    supabase.from('employees').select('id, name, designation, department').then(({ data }) => {
-      if (data) setEmployees(data as Employee[]);
-    });
-  }, []);
+  // ── Employees — shared context, no per-component fetch ───────────────────
+  const { employees: contextEmployees } = useEmployees();
+  const employees = contextEmployees as unknown as Employee[];
 
   // ── Employee name lookup ─────────────────────────────────────────────────
   const empMap = useMemo(() => {
@@ -1027,6 +1024,91 @@ export function InternalCommunicationsHub(_props: Props) {
   useEffect(() => {
     loadRecognitions();
   }, [loadRecognitions]);
+
+  // ── Auto Birthday & Anniversary Announcements ────────────────────────────
+  useEffect(() => {
+    const isHrOrAdmin =
+      currentUser?.roles?.includes('hr') ||
+      currentUser?.roles?.includes('admin') ||
+      currentUser?.primaryRole === 'hr' ||
+      currentUser?.primaryRole === 'admin';
+    if (!isHrOrAdmin || !userId) return;
+
+    const autoAnnounce = async () => {
+      const today = new Date();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const todayStr = today.toISOString().slice(0, 10);
+
+      const { data: empRows } = await supabase
+        .from('employees')
+        .select('id, name, department, date_of_birth, date_of_joining')
+        .or(`date_of_birth.not.is.null,date_of_joining.not.is.null`);
+
+      if (!empRows?.length) return;
+
+      const { data: existingToday } = await supabase
+        .from('communications_announcements')
+        .select('title')
+        .gte('created_at', todayStr + 'T00:00:00')
+        .ilike('author_name', 'HR Team');
+
+      const existingTitles: string[] = existingToday?.map((r: any) => r.title) ?? [];
+
+      const toInsert: any[] = [];
+
+      for (const emp of empRows) {
+        // Birthday check
+        if (emp.date_of_birth) {
+          const dob = emp.date_of_birth.slice(5, 10); // MM-DD
+          if (dob === `${mm}-${dd}`) {
+            const title = `🎂 Happy Birthday, ${emp.name}!`;
+            if (!existingTitles.some((t) => t === title)) {
+              toInsert.push({
+                title,
+                content: `Join us in wishing ${emp.name} from ${emp.department ?? 'our team'} a wonderful birthday! 🎉`,
+                audience: 'all',
+                priority: 'low',
+                author_name: 'HR Team',
+                pinned: false,
+                created_at: new Date().toISOString(),
+              });
+            }
+          }
+        }
+
+        // Work anniversary check
+        if (emp.date_of_joining) {
+          const doj = emp.date_of_joining.slice(5, 10); // MM-DD
+          if (doj === `${mm}-${dd}`) {
+            const joinYear = parseInt(emp.date_of_joining.slice(0, 4), 10);
+            const years = today.getFullYear() - joinYear;
+            if (years > 0) {
+              const title = `🎉 Work Anniversary — ${emp.name}!`;
+              if (!existingTitles.some((t) => t === title)) {
+                toInsert.push({
+                  title,
+                  content: `Today marks ${years} year${years !== 1 ? 's' : ''} with us for ${emp.name} from ${emp.department ?? 'our team'}. Thank you for your dedication! 🌟`,
+                  audience: 'all',
+                  priority: 'low',
+                  author_name: 'HR Team',
+                  pinned: false,
+                  created_at: new Date().toISOString(),
+                });
+              }
+            }
+          }
+        }
+      }
+
+      if (toInsert.length > 0) {
+        await supabase.from('communications_announcements').insert(toInsert);
+      }
+    };
+
+    autoAnnounce().catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   const filteredRecognitions = useMemo(() => {
     if (!userId) return recognitions;

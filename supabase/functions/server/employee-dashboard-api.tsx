@@ -10,6 +10,18 @@ import { notifyManager, notifyUserId } from "./notify-helpers.tsx";
 
 const app = new Hono();
 
+// ── Workflow trigger helper ──────────────────────────────────────────────────
+// Fire-and-forget: triggers a workflow event without blocking the main request.
+function triggerWorkflowEvent(event: string, entity_type: string, entity_id: string, context: Record<string, unknown>, triggered_by?: string) {
+  const base = Deno.env.get("SUPABASE_URL")!;
+  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+  fetch(`${base}/functions/v1/make-server-1fe2c468/workflow/trigger`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
+    body: JSON.stringify({ event, entity_type, entity_id, context, triggered_by }),
+  }).catch(() => {/* fire-and-forget — never block on workflow failures */});
+}
+
 function getSupabase() {
   return createClient(
     Deno.env.get("SUPABASE_URL")!,
@@ -170,6 +182,19 @@ app.post("/leaves/apply", async (c) => {
       }).catch(() => {});
     }
 
+    // Fire workflow engine event (non-blocking)
+    if (data?.id) {
+      triggerWorkflowEvent("leave_applied", "leave", data.id, {
+        user_id: data.user_id,
+        employee_name: data.employee_name,
+        leave_type: data.leave_type,
+        days: data.days,
+        start_date: data.start_date,
+        end_date: data.end_date,
+        reason: data.reason,
+      }, data.user_id);
+    }
+
     return c.json(data);
   } catch (error) {
     return c.json({ error: error.message }, 500);
@@ -237,6 +262,13 @@ app.post("/leaves/approve", async (c) => {
         updateLeaveBalance(supabase, leave.user_id, year, leave.leave_type, leave.days);
       });
     }
+
+    // Fire workflow engine event — mark leave_approved for tracking
+    triggerWorkflowEvent("leave_approved", "leave", leaveId, {
+      approver: approverName,
+      leave_type: leave.leave_type,
+      days: leave.days,
+    }, leave.user_id);
 
     return c.json({ success: true });
   } catch (error) {
@@ -658,5 +690,55 @@ async function restoreLeaveBalance(supabase: any, userId: string, year: number, 
     .eq('user_id', userId)
     .eq('year', year);
 }
+
+// ==================== HR ORG-WIDE LEAVE MANAGEMENT ====================
+
+app.get("/leaves-all", async (c) => {
+  try {
+    const supabase = getSupabase();
+    const { status, leave_type, from_date, to_date, search, page = "1", per_page = "50" } = c.req.query();
+    const pageNum = Math.max(1, parseInt(page));
+    const perPage = Math.min(200, Math.max(1, parseInt(per_page)));
+    const offset = (pageNum - 1) * perPage;
+
+    let query = supabase.from('leaves').select('*', { count: 'exact' });
+    if (status) query = query.eq('status', status);
+    if (leave_type) query = query.eq('leave_type', leave_type);
+    if (from_date) query = query.gte('start_date', from_date);
+    if (to_date) query = query.lte('end_date', to_date);
+    if (search) query = query.ilike('employee_name', `%${search}%`);
+    query = query.order('created_at', { ascending: false }).range(offset, offset + perPage - 1);
+
+    const { data, error, count } = await query;
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json({ data: data || [], total: count || 0, page: pageNum, per_page: perPage });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
+
+app.get("/leaves-stats", async (c) => {
+  try {
+    const supabase = getSupabase();
+    const { year } = c.req.query();
+    const y = year || new Date().getFullYear().toString();
+
+    const { data: all } = await supabase
+      .from('leaves').select('status, leave_type, days')
+      .gte('start_date', `${y}-01-01`).lte('end_date', `${y}-12-31`);
+
+    const rows = all || [];
+    const pending = rows.filter(r => r.status === 'Pending').length;
+    const approved = rows.filter(r => r.status === 'Approved').length;
+    const rejected = rows.filter(r => r.status === 'Rejected').length;
+    const totalDays = rows.reduce((s, r) => s + (r.days || 0), 0);
+    const byType: Record<string, number> = {};
+    for (const r of rows) { byType[r.leave_type] = (byType[r.leave_type] || 0) + 1; }
+
+    return c.json({ total: rows.length, pending, approved, rejected, totalDays, byType });
+  } catch (err: any) {
+    return c.json({ error: err.message }, 500);
+  }
+});
 
 export default app;

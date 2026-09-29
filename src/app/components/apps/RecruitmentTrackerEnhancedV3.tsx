@@ -22,6 +22,7 @@ import {
 } from "../../../constants/apps/recruitment";
 import { DEPARTMENTS, LOCATIONS } from "../../../constants/apps/directory";
 import { API_BASE, apiHeaders, safeJson, supabase } from "../../utils/constants";
+import { useEmployees } from '../../context/EmployeesContext';
 
 // ==================== HELPERS ====================
 
@@ -214,22 +215,15 @@ function fillOfferTemplate(html: string, vars: Record<string, string>): string {
 interface EmployeeOption { id: string; name: string; designation: string }
 
 function useEmployeeList(): EmployeeOption[] {
-  const [employees, setEmployees] = useState<EmployeeOption[]>([]);
-  useEffect(() => {
-    fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() })
-      .then((r) => safeJson(r))
-      .then((raw) => {
-        const list: any[] = Array.isArray(raw) ? raw : (raw?.data ?? raw?.employees ?? []);
-        setEmployees(
-          list
-            .filter((e) => e.status !== "Inactive" && e.status !== "Resigned")
-            .map((e) => ({ id: e.id, name: e.name, designation: e.designation || e.job_title || "" }))
-            .sort((a, b) => a.name.localeCompare(b.name))
-        );
-      })
-      .catch(() => setEmployees([]));
-  }, []);
-  return employees;
+  const { employees: rawEmployees } = useEmployees();
+  return useMemo(
+    () =>
+      rawEmployees
+        .filter((e) => e.status !== "Inactive" && e.status !== "Resigned")
+        .map((e) => ({ id: e.id, name: e.name, designation: (e.designation || e.job_title || "") as string }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [rawEmployees],
+  );
 }
 
 // ==================== COMBOBOX ====================
@@ -549,7 +543,15 @@ function parseCSVText(text: string): Record<string, string>[] {
   }).filter((r) => Object.values(r).some((v) => v.trim()));
 }
 
-const TEMPLATE_HEADERS = ["Name", "Email", "Phone", "Position", "Department", "Experience", "Expected Salary", "Current Company", "Notice Period", "Source", "Skills", "Nationality", "Previous Company", "Notes"];
+const EXPERTISE_OPTIONS = [
+  "SAP MM", "SAP SD", "SAP FI", "SAP CO", "SAP HR", "SAP PP", "SAP WM",
+  "SAP Fiori", "SAP ABAP", "SAP Basis", "SAP BW/BI", "SAP S/4HANA",
+  "Salesforce", "ServiceNow", "Java", "Python", "React", "Angular",
+  "Full Stack", "DevOps", "Data Science", "QA/Testing", "Project Management",
+  "Business Analysis", "Other"
+];
+
+const TEMPLATE_HEADERS = ["Name", "Email", "Phone", "Position", "Department", "Experience", "Expected Salary", "Current Company", "Notice Period", "Source", "Skills", "Expertise", "Nationality", "Previous Company", "Notes"];
 const REQUIRED_COLS = ["Name", "Email", "Position", "Department"];
 
 interface ParsedRow { data: Record<string, string>; errors: string[] }
@@ -828,6 +830,7 @@ function CandidateForm({ initial, existingCandidates, onSave, onClose, onViewDup
     stage: initial?.stage ?? "Applied",
     hiringManager: initial?.hiringManager ?? "",
     skills: initial?.skills ?? [] as string[],
+    expertise: initial?.expertise ?? "",
     nationality: initial?.nationality ?? "",
     partOfOrganization: initial?.partOfOrganization ?? false,
     previousCompany: initial?.previousCompany ?? "",
@@ -1087,6 +1090,26 @@ function CandidateForm({ initial, existingCandidates, onSave, onClose, onViewDup
           <section>
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">{t("skills")}</p>
             <SkillsInput value={form.skills} onChange={(skills) => setForm((f) => ({ ...f, skills }))} />
+          </section>
+
+          {/* Expertise */}
+          <section>
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">Expertise / Profile</p>
+            <div>
+              <label className="text-sm font-medium">Expertise / Profile</label>
+              <input
+                list="expertise-options"
+                value={form.expertise}
+                onChange={e => setForm(f => ({ ...f, expertise: e.target.value }))}
+                placeholder="Select or type expertise..."
+                className="w-full mt-1 px-3 py-2 border rounded-lg text-sm bg-background"
+              />
+              <datalist id="expertise-options">
+                {EXPERTISE_OPTIONS.map(opt => (
+                  <option key={opt} value={opt} />
+                ))}
+              </datalist>
+            </div>
           </section>
 
           {/* Attachments */}
@@ -2753,6 +2776,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
   const [stageFilter, setStageFilter] = useState("All");
   const [pipelineView, setPipelineView] = useState<"list" | "kanban">("list");
   const [search, setSearch] = useState("");
+  const [filterExpertise, setFilterExpertise] = useState("");
 
   // Requisitions state
   const [requisitions, setRequisitions] = useState<Requisition[]>([]);
@@ -2861,9 +2885,9 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
       const matchStage = stageFilter === "All" || c.stage === stageFilter;
       const q = search.toLowerCase();
       const matchSearch = !q || c.name.toLowerCase().includes(q) || c.position.toLowerCase().includes(q) || (c.department ?? "").toLowerCase().includes(q);
-      return matchStage && matchSearch;
+      return matchStage && matchSearch && (!filterExpertise || c.expertise === filterExpertise);
     });
-  }, [candidates, stageFilter, search]);
+  }, [candidates, stageFilter, search, filterExpertise]);
 
   const derivedStats = useMemo(() => ({
     total: stats?.totalCandidates ?? candidates.length,
@@ -2966,10 +2990,16 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
             </div>
 
             {pipelineView === "list" && (
-              <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("searchCandidates")}
-                  className="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <div className="flex gap-2 flex-wrap">
+                <div className="relative flex-1 min-w-[180px]">
+                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("searchCandidates")}
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
+                <select value={filterExpertise} onChange={e => setFilterExpertise(e.target.value)} className="px-3 py-2 border border-border rounded-lg text-sm bg-background">
+                  <option value="">All Expertise</option>
+                  {EXPERTISE_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                </select>
               </div>
             )}
 
@@ -3032,12 +3062,13 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                     <th className="text-left px-4 py-3 font-medium hidden md:table-cell">{t("experience")}</th>
                     <th className="text-left px-4 py-3 font-medium hidden md:table-cell">{t("salary")}</th>
                     <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">Skills</th>
+                    <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">Expertise</th>
                     <th className="px-4 py-3" />
                   </tr>
                 </thead>
                 <tbody>
                   {filteredCandidates.length === 0 && (
-                    <tr><td colSpan={8} className="text-center py-10 text-muted-foreground text-sm">{t("noCandidates")}</td></tr>
+                    <tr><td colSpan={9} className="text-center py-10 text-muted-foreground text-sm">{t("noCandidates")}</td></tr>
                   )}
                   {filteredCandidates.map((c) => {
                     const needsFb = INTERVIEW_STAGES.includes(c.stage) && (c.feedback ?? []).length === 0;
@@ -3079,6 +3110,11 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                               <span className="text-xs text-muted-foreground">+{(c.skills ?? []).length - 3}</span>
                             )}
                           </div>
+                        </td>
+                        <td className="px-4 py-3 hidden lg:table-cell">
+                          {c.expertise ? (
+                            <span className="px-2 py-0.5 text-xs rounded-full bg-indigo-100 text-indigo-700 font-medium">{c.expertise}</span>
+                          ) : <span className="text-muted-foreground text-xs">—</span>}
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity justify-end">
@@ -3176,7 +3212,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                         <tr key={req.id} className="border-b border-gray-50 hover:bg-muted transition-colors">
                           <td className="px-4 py-3">
                             <p className="font-medium text-foreground">{req.title}</p>
-                            <p className="text-xs text-muted-foreground">{req.employment_type}</p>
+                            <p className="text-xs text-muted-foreground font-mono">{`JL-JRQ-${req.id.slice(0, 6).toUpperCase()}`} · {req.employment_type}</p>
                           </td>
                           <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground">{req.department}</td>
                           <td className="px-4 py-3 hidden md:table-cell text-muted-foreground">{req.number_of_positions}</td>

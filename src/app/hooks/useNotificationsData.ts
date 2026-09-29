@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../utils/constants';
+import { supabase, API_BASE, apiHeaders } from '../utils/constants';
 import { useUser } from '../context/UserContext';
 
 export interface Notification {
@@ -17,14 +17,22 @@ export interface Notification {
   severity?: string;
 }
 
+// Use || so that is_read=false, read=true → still true
 function normalize(row: Record<string, unknown>): Notification {
+  const isRead = Boolean(row.is_read) || Boolean(row.read);
   return {
     ...(row as Notification),
     body: (row.body ?? row.message ?? '') as string,
-    read: Boolean(row.is_read ?? row.read ?? false),
-    is_read: Boolean(row.is_read ?? row.read ?? false),
+    read: isRead,
+    is_read: isRead,
     app_filter: (row.app_filter ?? row.app ?? 'all') as string,
   };
+}
+
+// Custom event so all useNotifications() instances stay in sync
+const NOTIF_EVENT = 'jl-notifications-changed';
+export function dispatchNotifChanged() {
+  window.dispatchEvent(new Event(NOTIF_EVENT));
 }
 
 function showBrowserNotification(n: Notification) {
@@ -47,7 +55,6 @@ export function useNotifications() {
       setLoading(false);
       return;
     }
-    // Notifications may be inserted with auth UUID, app_users.id, or employee_id
     const ids = [...new Set([
       currentUser.id,
       currentUser.appUserId,
@@ -88,14 +95,18 @@ export function useNotifications() {
   useEffect(() => {
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 15000);
-    return () => clearInterval(interval);
+    // Re-fetch when another hook instance mutates data
+    window.addEventListener(NOTIF_EVENT, fetchNotifications);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener(NOTIF_EVENT, fetchNotifications);
+    };
   }, [fetchNotifications]);
 
   // Realtime subscription for instant updates
   useEffect(() => {
     if (!currentUser?.id) return;
     const notifUserId = currentUser.appUserId ?? currentUser.id;
-    // Use a unique channel name to avoid reusing an already-subscribed channel
     const channelName = `notif-hook-${notifUserId}-${Date.now()}`;
     const channel = supabase
       .channel(channelName)
@@ -118,26 +129,51 @@ export function useNotifications() {
   }, [currentUser?.id, currentUser?.appUserId]);
 
   const markRead = useCallback(async (id: string) => {
-    void supabase.from('notifications').update({ is_read: true, read_at: new Date().toISOString() }).eq('id', id);
+    // Optimistic update
     setNotifications((prev) => prev.map((n) => n.id === id ? { ...n, read: true, is_read: true } : n));
     setUnreadCount((prev) => Math.max(0, prev - 1));
+    // Route through service-role API to bypass RLS
+    try {
+      await fetch(`${API_BASE}/notifications/${id}/read`, {
+        method: 'PUT',
+        headers: apiHeaders(),
+      });
+    } catch {}
+    dispatchNotifChanged();
   }, []);
 
   const markAllRead = useCallback(async () => {
     if (!currentUser?.id) return;
     const ids = [...new Set([currentUser.id, currentUser.appUserId, currentUser.employeeId].filter(Boolean))] as string[];
-    void supabase.from('notifications').update({ is_read: true }).in('user_id', ids).eq('is_read', false);
+    // Optimistic update
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true, is_read: true })));
     setUnreadCount(0);
+    // Route through service-role API (supports multiple user_ids, bypasses RLS)
+    try {
+      await fetch(`${API_BASE}/notifications/read-all`, {
+        method: 'PUT',
+        headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: ids[0], userIds: ids }),
+      });
+    } catch {}
+    dispatchNotifChanged();
   }, [currentUser?.id, currentUser?.appUserId, currentUser?.employeeId]);
 
   const deleteNotification = useCallback(async (id: string) => {
-    void supabase.from('notifications').delete().eq('id', id);
+    // Optimistic update
     setNotifications((prev) => {
       const removed = prev.find((n) => n.id === id);
       if (removed && !removed.read) setUnreadCount((c) => Math.max(0, c - 1));
       return prev.filter((n) => n.id !== id);
     });
+    // Route through service-role API (users have no DELETE RLS policy)
+    try {
+      await fetch(`${API_BASE}/notifications/${id}`, {
+        method: 'DELETE',
+        headers: apiHeaders(),
+      });
+    } catch {}
+    dispatchNotifChanged();
   }, []);
 
   return { notifications, unreadCount, loading, markRead, markAllRead, deleteNotification, refresh: fetchNotifications };

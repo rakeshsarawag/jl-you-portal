@@ -1,7 +1,7 @@
 export const ASSET_TYPES = ["Laptop", "Desktop", "Monitor", "Phone", "Tablet", "Printer", "Server", "Networking", "Furniture", "Other"] as const;
 export const ASSET_STATUSES = ["Available", "Assigned", "In Repair", "Retired", "Lost"] as const;
 export const ASSET_CONDITIONS = ["Excellent", "Good", "Fair", "Poor"] as const;
-export const ASSET_TAG_PREFIX = "AST";
+export const ASSET_TAG_PREFIX = "JL-AST";
 export const MAINTENANCE_TYPES = ["Preventive", "Corrective", "Predictive", "Emergency"] as const;
 
 export const ASSET_CATEGORIES = [

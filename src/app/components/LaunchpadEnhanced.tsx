@@ -2,7 +2,7 @@
  * Launchpad — Persona-specific home screen
  * Standards: RBAC, i18n, constants, data isolation, error handling, loading states
  */
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import {
@@ -12,7 +12,7 @@ import {
   Brain, BarChart3, MessageSquare, HardDrive, Share2, Database,
   ChevronRight, Calendar, CheckSquare, ArrowUpRight, Star, Inbox,
   Briefcase, Award, BookOpen, LayoutDashboard, LucideIcon,
-  GitBranch, Lock, Cpu, Bug, Globe,
+  GitBranch, Lock, Cpu, Bug, Globe, Quote,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useUser } from '../context/UserContext';
@@ -22,6 +22,7 @@ import { APP_VERSION } from '../../constants/global';
 import { APP_BY_PATH } from '../../constants/appRegistry';
 import { usePermissions } from '../hooks/usePermissions';
 import { t } from '../../i18n/index';
+import { useEmployees } from '../context/EmployeesContext';
 
 // ── App tile definitions ───────────────────────────────────────────────────
 
@@ -64,6 +65,70 @@ const TILE_CONFIG = [
   { id: 'advanced-features',   titleKey: 'tile.advancedFeatures',   subKey: 'tile.sub.advancedFeatures',   icon: Zap,             path: '/advanced-features',   color: 'text-fuchsia-600', iconBg: 'bg-fuchsia-50', category: 'admin' },
   { id: 'documentation',       titleKey: 'tile.documentation',      subKey: 'tile.sub.documentation',      icon: BookOpen,        path: '/documentation',       color: 'text-sky-600',     iconBg: 'bg-sky-50',     category: 'admin' },
 ] as const;
+
+// ── Strategic tile groups ──────────────────────────────────────────────────
+
+const TILE_GROUPS: {
+  label: string;
+  description: string;
+  icon: LucideIcon;
+  accent: string;
+  headerBg: string;
+  iconColor: string;
+  ids: string[];
+  // optional: named sub-domains for dynamic label computation
+  segments?: { label: string; ids: string[] }[];
+}[] = [
+  {
+    label: 'People & Workforce',
+    description: 'Manage your team across the full employee lifecycle',
+    icon: Users,
+    accent: 'border-blue-400',
+    headerBg: 'bg-blue-50/60',
+    iconColor: 'text-blue-500',
+    ids: ['dashboard', 'directory', 'recruitment', 'onboarding', 'performance', 'training'],
+  },
+  {
+    label: 'Work & Operations',
+    description: 'Projects, services, assets, and day-to-day execution',
+    icon: Briefcase,
+    accent: 'border-lime-500',
+    headerBg: 'bg-lime-50/60',
+    iconColor: 'text-lime-600',
+    ids: ['projects', 'defect-tracker', 'it-services', 'assets', 'workflow-dashboard', 'okr'],
+  },
+  {
+    label: 'Communication, Insights & Finance',
+    description: 'Engage your organisation, track performance, and manage financials',
+    icon: MessageSquare,
+    accent: 'border-sky-400',
+    headerBg: 'bg-sky-50/60',
+    iconColor: 'text-sky-500',
+    ids: ['communications', 'linkedin', 'executive-dashboard', 'invoices', 'payroll'],
+    segments: [
+      { label: 'Communication', ids: ['communications', 'linkedin'] },
+      { label: 'Insights', ids: ['executive-dashboard'] },
+      { label: 'Finance', ids: ['invoices', 'payroll'] },
+    ],
+  },
+  {
+    label: 'Administration',
+    description: 'System configuration, access control, and platform settings',
+    icon: Shield,
+    accent: 'border-rose-400',
+    headerBg: 'bg-rose-50/60',
+    iconColor: 'text-rose-500',
+    ids: ['user-management', 'security-compliance', 'permissions', 'master-data', 'advanced-features', 'documentation'],
+  },
+];
+
+function resolveGroupLabel(group: typeof TILE_GROUPS[0], visibleIds: string[]): string {
+  if (!group.segments) return group.label;
+  const present = group.segments
+    .filter(s => s.ids.some(id => visibleIds.includes(id)))
+    .map(s => s.label);
+  return present.length > 0 ? present.join(' & ') : group.label;
+}
 
 // ── Quick action definitions per role ──────────────────────────────────────
 
@@ -191,7 +256,7 @@ function useLatestStats(keys: StatKey[]) {
   return { stats, loading };
 }
 
-// ── Stat tile helper ───────────────────────────────────────────────────────
+// ── Stat tile ──────────────────────────────────────────────────────────────
 
 function StatTile({ label, value, icon: Icon, color, loading }: {
   label: string; value: string | number; icon: LucideIcon; color: string; loading?: boolean;
@@ -225,6 +290,133 @@ function SectionHeading({ title, action, onAction }: { title: string; action?: s
         </button>
       )}
     </div>
+  );
+}
+
+// ── Hero background images — professional landscapes, no people ────────────
+// Rotates weekly (ISO week % array length). Index 7 = week 39 (current).
+
+const HERO_IMAGES = [
+  { id: 'photo-1673970825861-3469f8fe01d3', alt: 'Aerial view of rolling green hills and forest' },
+  { id: 'photo-1612729875065-1385f02852ef', alt: 'Green grass valley and mountains under clear blue sky' },
+  { id: 'photo-1536048810607-3dc7f86981cb', alt: 'Aerial photography of river winding between mountains' },
+  { id: 'photo-1515266591878-f93e32bc5937', alt: "Bird's eye view of mountain peaks" },
+  { id: 'photo-1651149164822-210246e81f99', alt: 'Expansive green landscape at dusk' },
+  { id: 'photo-1783371334593-098ce0d1721b', alt: 'Winding river path through a lush mountain valley' },
+  { id: 'photo-1784965445276-b49df0f1649e', alt: 'Frozen ocean meets rugged coastline at sunset' },
+  { id: 'photo-1661124280301-ca0e33ceb438', alt: 'Misty forest beside a calm lake at dawn' },
+];
+
+// Week number helper (ISO — same week = same index, changes every Monday)
+function isoWeek(d: Date): number {
+  const jan4 = new Date(d.getFullYear(), 0, 4);
+  const startOfWeek1 = new Date(jan4);
+  startOfWeek1.setDate(jan4.getDate() - ((jan4.getDay() + 6) % 7));
+  return Math.floor((d.getTime() - startOfWeek1.getTime()) / (7 * 86400000)) + 1;
+}
+
+// Day-of-year helper
+function dayOfYear(d: Date): number {
+  const start = new Date(d.getFullYear(), 0, 0);
+  return Math.floor((d.getTime() - start.getTime()) / 86400000);
+}
+
+// ── Inspirational quotes pool ─────────────────────────────────────────────
+
+const QUOTES = [
+  { text: "The only way to do great work is to love what you do.", author: "Steve Jobs" },
+  { text: "Success is not final, failure is not fatal: it is the courage to continue that counts.", author: "Winston Churchill" },
+  { text: "In the middle of every difficulty lies opportunity.", author: "Albert Einstein" },
+  { text: "It does not matter how slowly you go as long as you do not stop.", author: "Confucius" },
+  { text: "The future belongs to those who believe in the beauty of their dreams.", author: "Eleanor Roosevelt" },
+  { text: "Strive not to be a success, but rather to be of value.", author: "Albert Einstein" },
+  { text: "What you get by achieving your goals is not as important as what you become by achieving your goals.", author: "Zig Ziglar" },
+  { text: "The secret of getting ahead is getting started.", author: "Mark Twain" },
+  { text: "Believe you can and you're halfway there.", author: "Theodore Roosevelt" },
+  { text: "It always seems impossible until it's done.", author: "Nelson Mandela" },
+  { text: "Coming together is a beginning, staying together is progress, and working together is success.", author: "Henry Ford" },
+  { text: "The best way to predict the future is to create it.", author: "Peter Drucker" },
+  { text: "Quality means doing it right when no one is looking.", author: "Henry Ford" },
+  { text: "Innovation distinguishes between a leader and a follower.", author: "Steve Jobs" },
+  { text: "Excellence is not a skill. It is an attitude.", author: "Ralph Marston" },
+  { text: "The harder I work, the luckier I get.", author: "Samuel Goldwyn" },
+  { text: "Do not wait to strike till the iron is hot; make it hot by striking.", author: "William Butler Yeats" },
+  { text: "Opportunities don't happen. You create them.", author: "Chris Grosser" },
+  { text: "Great things in business are never done by one person.", author: "Steve Jobs" },
+  { text: "Your most unhappy customers are your greatest source of learning.", author: "Bill Gates" },
+  { text: "An investment in knowledge pays the best interest.", author: "Benjamin Franklin" },
+];
+
+// ── HeroSection component ─────────────────────────────────────────────────
+
+function HeroSection({ greeting, userName, today }: { greeting: string; userName: string; today: string }) {
+  const now = new Date();
+  // Image rotates weekly — same image for the entire week
+  const imgIdx = isoWeek(now) % HERO_IMAGES.length;
+  // Quote rotates daily — same quote for the entire day
+  const quoteIdx = dayOfYear(now) % QUOTES.length;
+
+  const img = HERO_IMAGES[imgIdx];
+  const quote = QUOTES[quoteIdx];
+  const bgUrl = `https://images.unsplash.com/${img.id}?w=1600&h=560&fit=crop&auto=format&q=80`;
+
+  return (
+    <div className="relative w-full overflow-hidden rounded-2xl" style={{ minHeight: 260 }}>
+      {/* Background image — static, no auto-rotation timer */}
+      <div
+        className="absolute inset-0 bg-center bg-cover"
+        style={{ backgroundImage: `url(${bgUrl})`, backgroundColor: '#1e293b' }}
+        role="img"
+        aria-label={img.alt}
+      />
+      {/* Layered overlays: heavier on left for text legibility, lighter on right */}
+      <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/55 to-black/30" />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-transparent" />
+
+      {/* Content grid */}
+      <div
+        className="relative z-10 grid grid-cols-1 md:grid-cols-2 gap-6 px-8 py-10 md:py-14 items-center"
+        style={{ minHeight: 260 }}
+      >
+        {/* Left — greeting */}
+        <div className="space-y-3">
+          <p className="text-white/55 text-xs font-semibold tracking-widest uppercase">{today}</p>
+          <h1 className="text-3xl md:text-[2.6rem] font-bold text-white leading-tight">
+            {greeting},<br />
+            <span className="text-white/90">{userName || 'Welcome back'}</span>
+          </h1>
+          <p className="text-white/50 text-sm">Your workspace is ready. Have a productive day.</p>
+        </div>
+
+        {/* Right — daily inspirational quote, fully transparent background */}
+        <div className="hidden md:flex flex-col justify-center px-2 py-1 space-y-3">
+          <Quote size={22} className="text-white/35" />
+          <p className="text-white/85 text-base font-medium leading-relaxed italic">
+            "{quote.text}"
+          </p>
+          <p className="text-white/50 text-sm tracking-wide">— {quote.author}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── AppTileCard ───────────────────────────────────────────────────────────
+
+function AppTileCard({ tile, navigate }: { tile: { id: string; title: string; subtitle: string; icon: LucideIcon; path: string; color: string; iconBg: string }; navigate: (path: string) => void }) {
+  return (
+    <button
+      onClick={() => navigate(tile.path)}
+      className="group flex flex-col items-center gap-3 p-4 pt-5 pb-4 rounded-2xl border border-border bg-card hover:border-primary/30 hover:shadow-md hover:bg-muted/30 transition-all duration-200 text-center min-w-0"
+    >
+      <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${tile.iconBg} shadow-sm group-hover:scale-105 transition-transform duration-200 flex-shrink-0`}>
+        <tile.icon size={26} className={tile.color} />
+      </div>
+      <div className="w-full space-y-0.5">
+        <p className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors leading-snug">{tile.title}</p>
+        <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{tile.subtitle}</p>
+      </div>
+    </button>
   );
 }
 
@@ -264,6 +456,24 @@ export function Launchpad({ accessToken, onLogout }: LaunchpadProps) {
     setGreeting(h < 12 ? t('greeting.morning') : h < 17 ? t('greeting.afternoon') : t('greeting.evening'));
   }, []);
 
+  // Speculatively prefetch the most-navigated route chunks once the launchpad
+  // has rendered so that first navigation to those pages doesn't stall on a
+  // network fetch for the JS bundle.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      // Top routes visited by almost every user role
+      import('./apps/EmployeeDashboardEnhancedV2');
+      import('./apps/ITServicesEnhancedV2');
+      import('./apps/LeaveManagementPage');
+      // Role-specific — admin/manager
+      if (primaryRole !== 'employee') {
+        import('./apps/UserManagement');
+        import('./apps/PayrollManagementEnhanced');
+      }
+    }, 2000); // defer 2s so critical render/data fetches complete first
+    return () => clearTimeout(timer);
+  }, [primaryRole]);
+
   // Load pending leaves for managers
   useEffect(() => {
     const roles = currentUser?.roles ?? [];
@@ -275,8 +485,7 @@ export function Launchpad({ accessToken, onLogout }: LaunchpadProps) {
   const userRoles = currentUser?.roles ?? ['employee'];
   const { canSeeApp, matrixLoaded } = usePermissions(userRoles, currentUser?.permissionOverrides ?? []);
 
-  // Translate tile titles and subtitles at render time (re-evaluated on each remount = locale change)
-  const ALL_TILES: AppTile[] = TILE_CONFIG.map(cfg => ({
+  const ALL_TILES = useMemo<AppTile[]>(() => TILE_CONFIG.map(cfg => ({
     id: cfg.id as any,
     title: t(cfg.titleKey),
     subtitle: t(cfg.subKey),
@@ -285,23 +494,22 @@ export function Launchpad({ accessToken, onLogout }: LaunchpadProps) {
     color: cfg.color,
     iconBg: cfg.iconBg,
     category: cfg.category,
-  }));
+  })), [t]);
 
-  const accessibleTiles = ALL_TILES.filter(tile => {
+  const accessibleTiles = useMemo(() => ALL_TILES.filter(tile => {
     const app = APP_BY_PATH[tile.path];
     if (!app) return false;
     if (userRoles.includes('admin')) return true;
-    // Show nothing until DB matrix is loaded — prevents flash of wrong tiles
     if (!matrixLoaded) return false;
     return canSeeApp(app.appId);
-  });
+  }), [ALL_TILES, userRoles, canSeeApp, matrixLoaded]);
 
-  const filteredTiles = search
+  const filteredTiles = useMemo(() => search
     ? accessibleTiles.filter(tile =>
         tile.title.toLowerCase().includes(search.toLowerCase()) ||
         tile.subtitle.toLowerCase().includes(search.toLowerCase())
       )
-    : accessibleTiles;
+    : accessibleTiles, [accessibleTiles, search]);
 
   // Translate quick action labels at render time
   const qaConfig = QA_CONFIG[primaryRole] ?? QA_CONFIG.employee;
@@ -335,85 +543,97 @@ export function Launchpad({ accessToken, onLogout }: LaunchpadProps) {
 
   return (
     <div className="min-h-screen bg-background">
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-8">
-        {/* ── Hero greeting ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35 }}
-          className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
-        >
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">
-              {greeting}, {userName || 'there'} 👋
-            </h1>
-            <p className="text-sm text-muted-foreground mt-0.5">{today}</p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {quickActions.map((action, i) => (
-              <button
-                key={i}
-                onClick={() => navigate(action.path)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                  action.variant === 'primary'
-                    ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                    : 'bg-muted text-foreground hover:bg-muted/80 border border-border'
-                }`}
-              >
-                <action.icon size={13} />
-                {action.label}
-              </button>
-            ))}
-          </div>
-        </motion.div>
+      <main className="w-full px-6 sm:px-10 py-6">
+        <div className="flex gap-6 items-start">
 
-        {/* ── Persona widgets ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, delay: 0.05 }}
-        >
-          {renderPersonaWidgets()}
-        </motion.div>
+          {/* ── Left / main column ─────────────────────────────────── */}
+          <div className="flex-1 min-w-0 space-y-8">
 
-        {/* ── Celebrations ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, delay: 0.09 }}
-        >
-          <CelebrationsWidget />
-        </motion.div>
+            {/* 1. Hero */}
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+              <HeroSection greeting={greeting} userName={userName} today={today} />
+            </motion.div>
 
-        {/* ── App launcher ── */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, delay: 0.1 }}
-        >
-          <SectionHeading title={search ? `Results for "${search}"` : t('launchpad.allApplications')} />
-          {filteredTiles.length === 0 ? (
-            <div className="text-center py-12 text-muted-foreground text-sm">{t('launchpad.noAppsMatch')}</div>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-              {filteredTiles.map(tile => (
-                <button
-                  key={tile.id}
-                  onClick={() => navigate(tile.path)}
-                  className="group bg-card border border-border rounded-xl p-4 text-left flex flex-col gap-2.5 hover:border-primary/40 hover:shadow-sm transition-all duration-200"
-                >
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${tile.iconBg}`}>
-                    <tile.icon size={18} className={tile.color} />
+            {/* 2. Persona widgets */}
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3, delay: 0.05 }}>
+              {renderPersonaWidgets()}
+            </motion.div>
+
+            {/* 3. App launcher */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.1 }}
+              className="space-y-6"
+            >
+              {search ? (
+                <>
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">Applications</h2>
+                    <p className="text-sm text-muted-foreground">
+                      Results for <span className="font-medium text-foreground">"{search}"</span>
+                    </p>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-foreground group-hover:text-primary transition-colors leading-tight">{tile.title}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5 leading-tight">{tile.subtitle}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </motion.div>
+                  {filteredTiles.length === 0 ? (
+                    <div className="text-center py-12 text-muted-foreground text-sm">{t('launchpad.noAppsMatch')}</div>
+                  ) : (
+                    <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+                      {filteredTiles.map(tile => <AppTileCard key={tile.id} tile={tile} navigate={navigate} />)}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <h2 className="text-sm font-semibold text-foreground uppercase tracking-wider">Applications</h2>
+                  {TILE_GROUPS.map(group => {
+                    const tiles = group.ids
+                      .map(id => accessibleTiles.find(t => t.id === id))
+                      .filter(Boolean) as typeof accessibleTiles;
+                    if (tiles.length === 0) return null;
+                    const visibleIds = tiles.map(t => t.id);
+                    const groupLabel = resolveGroupLabel(group, visibleIds);
+                    return (
+                      <div key={group.label} className={`rounded-xl border border-border border-l-4 ${group.accent} overflow-hidden`}>
+                        <div className={`flex items-center gap-3 px-4 py-3 ${group.headerBg} border-b border-border/60`}>
+                          <group.icon size={14} className={group.iconColor} />
+                          <div className="flex-1 min-w-0">
+                            <span className="text-sm font-semibold text-foreground">{groupLabel}</span>
+                          </div>
+                        </div>
+                        <div className="p-3 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2.5">
+                          {tiles.map(tile => <AppTileCard key={tile.id} tile={tile} navigate={navigate} />)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </motion.div>
+
+            {/* 4. Celebrations + Announcements (non-sidebar roles) */}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.15 }}
+              className="space-y-6"
+            >
+              <CelebrationsWidget />
+            </motion.div>
+
+          </div>{/* end left column */}
+
+          {/* ── Right sidebar (lg+) — shown for all roles ──────────── */}
+          <aside className="hidden lg:flex flex-col gap-3 w-72 flex-shrink-0 self-start sticky top-4 max-h-[calc(100vh-5rem)] overflow-y-auto pb-4">
+            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest px-1 pt-1">At a Glance</p>
+            {primaryRole === 'admin' && <AdminSidebarContent dash={dash} userId={userId} navigate={navigate} />}
+            {primaryRole === 'manager' && <ManagerSidebarContent dash={dash} userId={userId} navigate={navigate} />}
+            {primaryRole === 'hr' && <HRSidebarContent dash={dash} userId={userId} navigate={navigate} />}
+            {primaryRole === 'employee' && <EmployeeSidebarContent dash={dash} userId={userId} navigate={navigate} />}
+            {primaryRole === 'finance' && <FinanceSidebarContent userId={userId} navigate={navigate} />}
+            {!['admin', 'manager', 'hr', 'employee', 'finance'].includes(primaryRole) && <EmployeeSidebarContent dash={dash} userId={userId} navigate={navigate} />}
+          </aside>
+
+        </div>
       </main>
     </div>
   );
@@ -421,138 +641,15 @@ export function Launchpad({ accessToken, onLogout }: LaunchpadProps) {
 
 // ── Employee Widgets ───────────────────────────────────────────────────────
 
-function EmployeeWidgets({ dash, navigate }: { dash: ReturnType<typeof useEmployeeDashboard>; navigate: Function }) {
-  const { stats, todayAttendance, isCheckedIn, leaveBalance, upcomingTasks, loading } = dash;
-
-  return (
-    <div className="space-y-6">
-      {/* Stat row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatTile label="Present Days" value={stats.presentDays} icon={CheckCircle2} color="bg-green-500" loading={loading} />
-        <StatTile label="Leave Balance" value={Object.values(leaveBalance).reduce((a, b) => a + b, 0)} icon={Calendar} color="bg-blue-500" loading={loading} />
-        <StatTile label="Tasks Pending" value={stats.tasksPending} icon={CheckSquare} color="bg-orange-500" loading={loading} />
-        <StatTile label="Hours This Month" value={`${stats.hoursThisMonth.toFixed(0)}h`} icon={Clock} color="bg-purple-500" loading={loading} />
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Attendance card */}
-        <div className="bg-card border border-border rounded-xl p-4">
-          <SectionHeading title="Today's Attendance" />
-          {loading ? (
-            <div className="h-20 bg-muted animate-pulse rounded-lg" />
-          ) : todayAttendance ? (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Check-in</span>
-                <span className="font-medium">{todayAttendance.check_in ? new Date(todayAttendance.check_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Check-out</span>
-                <span className="font-medium">{todayAttendance.check_out ? new Date(todayAttendance.check_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Still in'}</span>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Status</span>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${todayAttendance.status === 'Present' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                  {todayAttendance.status}
-                </span>
-              </div>
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">Not checked in yet today.</p>
-          )}
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="mt-3 w-full text-xs font-medium text-primary flex items-center justify-center gap-1 hover:underline"
-          >
-            Go to Dashboard <ArrowUpRight size={12} />
-          </button>
-        </div>
-
-        {/* Leave balance */}
-        <div className="bg-card border border-border rounded-xl p-4">
-          <SectionHeading title="Leave Balance" action="Apply Leave" onAction={() => navigate('/dashboard')} />
-          {loading ? (
-            <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-5 bg-muted animate-pulse rounded" />)}</div>
-          ) : (
-            <div className="space-y-2">
-              {Object.entries(leaveBalance).map(([type, days]) => (
-                <div key={type} className="flex items-center justify-between">
-                  <span className="text-xs text-muted-foreground">{type}</span>
-                  <span className="text-sm font-semibold text-foreground">{days} <span className="text-xs font-normal text-muted-foreground">days</span></span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Upcoming tasks */}
-        <div className="bg-card border border-border rounded-xl p-4">
-          <SectionHeading title="Upcoming Tasks" action="View All" onAction={() => navigate('/dashboard')} />
-          {loading ? (
-            <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-8 bg-muted animate-pulse rounded" />)}</div>
-          ) : upcomingTasks.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No upcoming tasks. 🎉</p>
-          ) : (
-            <div className="space-y-2">
-              {upcomingTasks.slice(0, 4).map(task => (
-                <div key={task.id} className="flex items-center gap-2">
-                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${task.priority === 'High' ? 'bg-red-500' : task.priority === 'Medium' ? 'bg-yellow-500' : 'bg-green-500'}`} />
-                  <p className="text-xs text-foreground truncate flex-1">{task.title}</p>
-                  {task.due_date && <span className="text-xs text-muted-foreground whitespace-nowrap">{task.due_date}</span>}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+function EmployeeWidgets(_props: { dash: ReturnType<typeof useEmployeeDashboard>; navigate: Function }) {
+  return null;
 }
 
 // ── HR Widgets ─────────────────────────────────────────────────────────────
 
-function HRWidgets({ dash, navigate }: { dash: ReturnType<typeof useEmployeeDashboard>; navigate: Function }) {
-  const pendingCount = dash.pendingLeaves.length;
-  const { stats, loading: statsLoading } = useLatestStats(['it_open_tickets', 'active_recruitments', 'onboarding_in_progress']);
-
+function HRWidgets({ navigate }: { dash: ReturnType<typeof useEmployeeDashboard>; navigate: Function; userId?: string }) {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatTile label="Pending Leave Requests" value={pendingCount} icon={Inbox} color="bg-orange-500" loading={dash.loading} />
-        <StatTile label="Open IT Tickets" value={stats.it_open_tickets ?? '—'} icon={Laptop} color="bg-cyan-500" loading={statsLoading} />
-        <StatTile label="Active Recruitments" value={stats.active_recruitments ?? '—'} icon={UserPlus} color="bg-violet-500" loading={statsLoading} />
-        <StatTile label="Onboarding In Progress" value={stats.onboarding_in_progress ?? '—'} icon={Star} color="bg-pink-500" loading={statsLoading} />
-      </div>
-
-      {pendingCount > 0 && (
-        <div className="bg-card border border-border rounded-xl p-4">
-          <SectionHeading title="Pending Leave Approvals" action="View All" onAction={() => navigate('/dashboard')} />
-          <div className="divide-y divide-border">
-            {dash.pendingLeaves.slice(0, 4).map(leave => (
-              <div key={leave.id} className="py-2.5 flex items-center justify-between gap-2">
-                <div>
-                  <p className="text-sm font-medium text-foreground">{leave.employee_name}</p>
-                  <p className="text-xs text-muted-foreground">{leave.leave_type} · {leave.days} day{leave.days !== 1 ? 's' : ''} · {leave.start_date}</p>
-                </div>
-                <div className="flex gap-1.5 flex-shrink-0">
-                  <button
-                    onClick={() => dash.approveLeave(leave.id, 'hr')}
-                    className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded-md font-medium hover:bg-green-200 transition-colors"
-                  >
-                    Approve
-                  </button>
-                  <button
-                    onClick={() => dash.rejectLeave(leave.id, 'hr')}
-                    className="px-2 py-1 text-xs bg-red-100 text-red-700 rounded-md font-medium hover:bg-red-200 transition-colors"
-                  >
-                    Reject
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
@@ -600,25 +697,30 @@ function WorkflowActivityWidget({ userId }: { userId: string }) {
   }, [userId]);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-          <Zap className="w-4 h-4 text-purple-500" /> Workflow Activity
+    <div className="bg-card border border-border rounded-2xl p-5">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-semibold text-foreground flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-purple-100 dark:bg-purple-900/40 flex items-center justify-center">
+            <Zap className="w-4 h-4 text-purple-600" />
+          </div>
+          Workflow Activity
         </h3>
-        <a href="/workflow-dashboard" className="text-xs text-blue-600 hover:underline">View all →</a>
+        <a href="/workflow-dashboard" className="text-xs text-primary hover:underline font-medium flex items-center gap-1">
+          View all <ArrowUpRight size={11} />
+        </a>
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <div className="text-center p-2 bg-amber-50 rounded-lg">
+        <div className="text-center p-4 bg-amber-50 dark:bg-amber-950/30 rounded-xl border border-amber-100 dark:border-amber-900/40">
           <div className="text-2xl font-bold text-amber-600">{data.pending}</div>
-          <div className="text-xs text-gray-500">Pending Approvals</div>
+          <div className="text-xs text-muted-foreground mt-0.5 font-medium">Pending Approvals</div>
         </div>
-        <div className="text-center p-2 bg-purple-50 rounded-lg">
+        <div className="text-center p-4 bg-purple-50 dark:bg-purple-950/30 rounded-xl border border-purple-100 dark:border-purple-900/40">
           <div className="text-2xl font-bold text-purple-600">{data.running}</div>
-          <div className="text-xs text-gray-500">Active Workflows</div>
+          <div className="text-xs text-muted-foreground mt-0.5 font-medium">Active Workflows</div>
         </div>
       </div>
       {data.pending > 0 && (
-        <a href="/workflow-dashboard" className="mt-3 block text-center text-sm py-1.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600">
+        <a href="/workflow-dashboard" className="mt-3 block text-center text-sm py-2 bg-amber-500 text-white rounded-xl hover:bg-amber-600 font-medium transition-colors">
           Review {data.pending} Pending {data.pending === 1 ? 'Approval' : 'Approvals'}
         </a>
       )}
@@ -626,73 +728,33 @@ function WorkflowActivityWidget({ userId }: { userId: string }) {
   );
 }
 
-function ManagerWidgets({ dash, navigate, userId }: { dash: ReturnType<typeof useEmployeeDashboard>; navigate: Function; userId: string }) {
-  const { stats, loading: statsLoading } = useLatestStats(['active_okrs', 'open_projects']);
-
+function ManagerWidgets({ navigate }: { dash: ReturnType<typeof useEmployeeDashboard>; navigate: Function; userId: string }) {
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatTile label="Leave Approvals Pending" value={dash.pendingLeaves.length} icon={Inbox} color="bg-orange-500" loading={dash.loading} />
-        <StatTile label="Active OKRs" value={stats.active_okrs ?? '—'} icon={Target} color="bg-yellow-500" loading={statsLoading} />
-        <StatTile label="Open Projects" value={stats.open_projects ?? '—'} icon={Folder} color="bg-lime-500" loading={statsLoading} />
-        <StatTile label="Team Training %" value="—" icon={GraduationCap} color="bg-teal-500" />
-      </div>
-
-      <WorkflowActivityWidget userId={userId} />
-
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {[
-          { label: 'Performance', path: '/performance', icon: TrendingUp },
-          { label: 'OKR', path: '/okr', icon: Target },
-          { label: 'Projects', path: '/projects', icon: Folder },
-          { label: 'Training', path: '/training', icon: GraduationCap },
-        ].map(item => (
-          <button
-            key={item.path}
-            onClick={() => navigate(item.path)}
-            className="bg-card border border-border rounded-xl p-4 flex items-center gap-3 hover:border-primary/40 hover:shadow-sm transition-all text-left"
-          >
-            <item.icon size={18} className="text-muted-foreground" />
-            <span className="text-sm font-medium text-foreground">{item.label}</span>
-            <ChevronRight size={14} className="text-muted-foreground ml-auto" />
-          </button>
-        ))}
-      </div>
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {[
+        { label: 'Performance', path: '/performance', icon: TrendingUp },
+        { label: 'OKR', path: '/okr', icon: Target },
+        { label: 'Projects', path: '/projects', icon: Folder },
+        { label: 'Training', path: '/training', icon: GraduationCap },
+      ].map(item => (
+        <button
+          key={item.path}
+          onClick={() => navigate(item.path)}
+          className="bg-card border border-border rounded-xl p-4 flex items-center gap-3 hover:border-primary/40 hover:shadow-sm transition-all text-left"
+        >
+          <item.icon size={18} className="text-muted-foreground" />
+          <span className="text-sm font-medium text-foreground">{item.label}</span>
+          <ChevronRight size={14} className="text-muted-foreground ml-auto" />
+        </button>
+      ))}
     </div>
   );
 }
 
 // ── Finance Widgets ────────────────────────────────────────────────────────
 
-function FinanceWidgets({ navigate }: { navigate: Function }) {
-  const { stats, loading: statsLoading } = useLatestStats(['outstanding_invoices_amount', 'overdue_invoices']);
-
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatTile label="Outstanding Invoices" value={stats.outstanding_invoices_amount ?? '—'} icon={FileText} color="bg-green-500" loading={statsLoading} />
-        <StatTile label="Overdue" value={stats.overdue_invoices ?? '—'} icon={AlertCircle} color="bg-red-500" loading={statsLoading} />
-        <StatTile label="Next Payroll" value="—" icon={DollarSign} color="bg-blue-500" />
-        <StatTile label="Pending Approvals" value="—" icon={Inbox} color="bg-orange-500" />
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        {[
-          { label: 'Invoices', path: '/invoices', icon: FileText },
-          { label: 'Payroll', path: '/payroll', icon: DollarSign },
-        ].map(item => (
-          <button
-            key={item.path}
-            onClick={() => navigate(item.path)}
-            className="bg-card border border-border rounded-xl p-4 flex items-center gap-3 hover:border-primary/40 transition-all text-left"
-          >
-            <item.icon size={18} className="text-muted-foreground" />
-            <span className="text-sm font-medium text-foreground">{item.label}</span>
-            <ChevronRight size={14} className="text-muted-foreground ml-auto" />
-          </button>
-        ))}
-      </div>
-    </div>
-  );
+function FinanceWidgets(_props: { navigate: Function }) {
+  return null;
 }
 
 
@@ -707,23 +769,26 @@ const WORLD_CLOCKS = [
 function WorldClockTile() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
+    const id = setInterval(() => setNow(new Date()), 60000);
     return () => clearInterval(id);
   }, []);
 
   return (
-    <div className="bg-card border border-border rounded-xl p-3 sm:p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 col-span-2 sm:col-span-1">
-      <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center bg-violet-500 flex-shrink-0">
-        <Globe size={16} className="text-white" />
+    <div className="bg-card border border-border rounded-xl p-3 col-span-2 sm:col-span-1">
+      <div className="flex items-center gap-2 mb-2.5">
+        <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-violet-500 flex-shrink-0">
+          <Globe size={14} className="text-white" />
+        </div>
+        <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">World Clock</span>
       </div>
-      <div className="flex flex-1 items-center justify-between sm:justify-around w-full flex-wrap gap-2 sm:gap-0">
+      <div className="flex justify-around">
         {WORLD_CLOCKS.map(({ label, tz, flag }) => {
-          const timeStr = now.toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+          const timeStr = now.toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
           return (
-            <div key={tz} className="flex flex-col items-center gap-0.5 min-w-[3.5rem]">
-              <span className="text-sm sm:text-base leading-none">{flag}</span>
-              <span className="text-[9px] sm:text-[10px] text-muted-foreground font-medium">{label}</span>
-              <span className="text-[10px] sm:text-xs font-bold text-foreground font-mono tabular-nums">{timeStr}</span>
+            <div key={tz} className="flex flex-col items-center gap-0.5">
+              <span className="text-base leading-none">{flag}</span>
+              <span className="text-[10px] text-muted-foreground font-medium">{label}</span>
+              <span className="text-xs font-bold text-foreground font-mono tabular-nums">{timeStr}</span>
             </div>
           );
         })}
@@ -732,27 +797,386 @@ function WorldClockTile() {
   );
 }
 
-// ── Admin Widgets ──────────────────────────────────────────────────────────
+// ── Pending Approvals Widget ───────────────────────────────────────────────
 
-function AdminWidgets({ dash, navigate, userId }: { dash: ReturnType<typeof useEmployeeDashboard>; navigate: Function; userId: string }) {
-  const { stats, loading: statsLoading } = useLatestStats(['active_users', 'it_open_tickets']);
+interface PendingItem {
+  id: string;
+  title: string;
+  meta: string;
+  badge: string;
+  onApprove?: () => void;
+  onReject?: () => void;
+}
+
+function PendingApprovalsWidget({
+  dash, userId, role, navigate,
+}: {
+  dash: ReturnType<typeof useEmployeeDashboard>;
+  userId: string;
+  role: string;
+  navigate: Function;
+}) {
+  const [wfApprovals, setWfApprovals] = useState<any[]>([]);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
-    dash.loadPendingLeaves();
+    if (!userId) return;
+    fetch(`${API_BASE}/workflow/approvals/my?user_id=${userId}`, {
+      cache: 'no-store',
+      headers: { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+    })
+      .then(r => safeJson(r))
+      .then(d => setWfApprovals(Array.isArray(d?.data) ? d.data : []))
+      .catch(() => {});
+  }, [userId]);
+
+  const items: PendingItem[] = [
+    ...dash.pendingLeaves.map(l => ({
+      id: `leave-${l.id}`,
+      title: l.employee_name,
+      meta: `${l.leave_type} · ${l.days} day${l.days !== 1 ? 's' : ''} · ${l.start_date}`,
+      badge: 'Leave',
+      onApprove: () => dash.approveLeave(l.id, role),
+      onReject: () => dash.rejectLeave(l.id, role),
+    })),
+    ...wfApprovals.map(w => ({
+      id: `wf-${w.id}`,
+      title: w.title ?? w.workflow_name ?? 'Workflow Approval',
+      meta: w.requester_name ?? w.requested_by ?? '',
+      badge: 'Workflow',
+    })),
+  ];
+
+  if (items.length === 0) return null;
+
+  const visible = expanded ? items : items.slice(0, 2);
+
+  const badgeColors: Record<string, string> = {
+    Leave: 'bg-orange-100 text-orange-700',
+    Workflow: 'bg-purple-100 text-purple-700',
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-4">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-semibold text-foreground">Pending Approvals</h2>
+          <span className="text-[11px] bg-orange-100 text-orange-700 rounded-full px-2 py-0.5 font-semibold">{items.length}</span>
+        </div>
+        <button onClick={() => navigate('/dashboard')} className="text-xs text-primary font-medium flex items-center gap-1 hover:underline">
+          View All <ChevronRight size={12} />
+        </button>
+      </div>
+      <div className="space-y-3">
+        {visible.map(item => (
+          <div key={item.id} className="rounded-xl border border-border bg-muted/20 p-3 space-y-2.5">
+            {/* Header row: badge + name */}
+            <div className="flex items-center gap-2">
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${badgeColors[item.badge] ?? 'bg-muted text-muted-foreground'}`}>
+                {item.badge}
+              </span>
+              <p className="text-sm font-semibold text-foreground truncate">{item.title}</p>
+            </div>
+            {/* Meta */}
+            {item.meta && (
+              <p className="text-xs text-muted-foreground leading-relaxed">{item.meta}</p>
+            )}
+            {/* Actions */}
+            {(item.onApprove || item.onReject) && (
+              <div className="flex gap-1.5 pt-0.5">
+                {item.onApprove && (
+                  <button onClick={item.onApprove} className="px-3 py-0.5 text-[11px] font-semibold bg-green-500 text-white rounded-full hover:bg-green-600 transition-colors">
+                    Approve
+                  </button>
+                )}
+                {item.onReject && (
+                  <button onClick={item.onReject} className="px-3 py-0.5 text-[11px] font-semibold text-red-600 border border-red-300 rounded-full hover:bg-red-50 transition-colors">
+                    Reject
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {items.length > 2 && (
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="mt-2 w-full text-xs text-primary font-medium flex items-center justify-center gap-1 hover:underline"
+        >
+          {expanded ? 'Show less' : `Show ${items.length - 2} more`}
+          <ChevronRight size={12} className={`transition-transform ${expanded ? 'rotate-90' : ''}`} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Admin Widgets ──────────────────────────────────────────────────────────
+
+function AdminWidgets({ dash }: { dash: ReturnType<typeof useEmployeeDashboard>; navigate: Function; userId: string }) {
+  useEffect(() => { dash.loadPendingLeaves(); }, []);
+  return null;
+}
+
+// ── Sidebar: Org Announcements (compact) ──────────────────────────────────
+
+function SidebarAnnouncementsWidget({ navigate }: { navigate: Function }) {
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/communications/announcements`, {
+      cache: 'no-store', headers: { Authorization: `Bearer ${publicAnonKey}` },
+    })
+      .then(r => safeJson(r))
+      .then(data => {
+        const list = Array.isArray(data) ? data : (data?.data ?? data?.announcements ?? []);
+        setAnnouncements(list.slice(0, 3));
+      })
+      .catch(() => setAnnouncements([]))
+      .finally(() => setLoading(false));
   }, []);
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatTile label="Pending Leave Requests" value={dash.pendingLeaves.length} icon={Inbox} color="bg-orange-500" loading={dash.loading} />
-        <StatTile label="Active Users" value={stats.active_users ?? '—'} icon={Users} color="bg-blue-500" loading={statsLoading} />
-        <StatTile label="Active IT Tickets" value={stats.it_open_tickets ?? '—'} icon={Laptop} color="bg-cyan-500" loading={statsLoading} />
-        <WorldClockTile />
+    <div className="bg-card border border-border rounded-xl p-3">
+      <div className="flex items-center justify-between mb-2.5">
+        <p className="text-xs font-semibold text-foreground">Announcements</p>
+        <button onClick={() => navigate('/communications')} className="text-[10px] text-primary hover:underline font-medium">View all</button>
       </div>
-      {/* WorldClockTile spans full row on mobile via col-span-2, handled inside the tile */}
-
-      <WorkflowActivityWidget userId={userId} />
+      {loading ? (
+        <div className="space-y-2">{[1,2].map(i => <div key={i} className="h-8 bg-muted animate-pulse rounded" />)}</div>
+      ) : announcements.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground py-1">No announcements.</p>
+      ) : (
+        <div className="space-y-2.5">
+          {announcements.map(a => {
+            const raw = a.published_at ?? a.created_at ?? a.date;
+            const date = raw ? new Date(raw).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : '';
+            return (
+              <div key={a.id} className="border-l-2 border-primary/30 pl-2.5">
+                <p className="text-[11px] font-medium text-foreground leading-snug line-clamp-2">{a.title}</p>
+                {date && <p className="text-[10px] text-muted-foreground mt-0.5">{date}</p>}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
+  );
+}
+
+// ── Sidebar: Recent Activity ───────────────────────────────────────────────
+
+function formatRelativeTime(iso: string | undefined): string {
+  if (!iso) return '';
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'Just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function RecentActivityWidget({ userId }: { userId: string }) {
+  const [activities, setActivities] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!userId) { setLoading(false); return; }
+    fetch(`${API_BASE}/notifications?userId=${userId}`, {
+      cache: 'no-store',
+      headers: { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+    })
+      .then(r => safeJson(r))
+      .then(d => setActivities((Array.isArray(d?.data) ? d.data : []).slice(0, 5)))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [userId]);
+
+  const typeIcon: Record<string, string> = {
+    success: '✅', warning: '⚠️', error: '🔴', info: 'ℹ️',
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-3">
+      <div className="flex items-center justify-between mb-2.5">
+        <p className="text-xs font-semibold text-foreground">Recent Activity</p>
+        <a href="/notifications" className="text-[10px] text-primary hover:underline font-medium">See all</a>
+      </div>
+      {loading ? (
+        <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-7 bg-muted animate-pulse rounded" />)}</div>
+      ) : activities.length === 0 ? (
+        <p className="text-[11px] text-muted-foreground py-1 text-center">No recent activity</p>
+      ) : (
+        <div className="space-y-2">
+          {activities.map(a => (
+            <div key={a.id} className="flex items-start gap-2">
+              <span className="text-xs mt-0.5 flex-shrink-0">{typeIcon[a.type] ?? '🔔'}</span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-medium text-foreground leading-snug line-clamp-1">{a.title}</p>
+                <p className="text-[10px] text-muted-foreground">{formatRelativeTime(a.created_at)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Right sidebar content per role ────────────────────────────────────────
+
+function AdminSidebarContent({ dash, userId, navigate }: { dash: ReturnType<typeof useEmployeeDashboard>; userId: string; navigate: Function }) {
+  const { stats, loading } = useLatestStats(['active_users', 'it_open_tickets']);
+  return (
+    <>
+      <StatTile label="Leave Requests" value={dash.pendingLeaves.length} icon={Inbox} color="bg-orange-500" loading={dash.loading} />
+      <StatTile label="Active Users" value={stats.active_users ?? '—'} icon={Users} color="bg-blue-500" loading={loading} />
+      <StatTile label="IT Tickets" value={stats.it_open_tickets ?? '—'} icon={Laptop} color="bg-cyan-500" loading={loading} />
+      <WorldClockTile />
+      <PendingApprovalsWidget dash={dash} userId={userId} role="admin" navigate={navigate} />
+      <WorkflowActivityWidget userId={userId} />
+      <SidebarAnnouncementsWidget navigate={navigate} />
+      <RecentActivityWidget userId={userId} />
+    </>
+  );
+}
+
+function ManagerSidebarContent({ dash, userId, navigate }: { dash: ReturnType<typeof useEmployeeDashboard>; userId: string; navigate: Function }) {
+  const { stats, loading } = useLatestStats(['active_okrs', 'open_projects']);
+  return (
+    <>
+      <StatTile label="Leave Approvals" value={dash.pendingLeaves.length} icon={Inbox} color="bg-orange-500" loading={dash.loading} />
+      <StatTile label="Active OKRs" value={stats.active_okrs ?? '—'} icon={Target} color="bg-yellow-500" loading={loading} />
+      <StatTile label="Open Projects" value={stats.open_projects ?? '—'} icon={Folder} color="bg-lime-500" loading={loading} />
+      <WorldClockTile />
+      <PendingApprovalsWidget dash={dash} userId={userId} role="manager" navigate={navigate} />
+      <WorkflowActivityWidget userId={userId} />
+      <SidebarAnnouncementsWidget navigate={navigate} />
+      <RecentActivityWidget userId={userId} />
+    </>
+  );
+}
+
+function HRSidebarContent({ dash, userId, navigate }: { dash: ReturnType<typeof useEmployeeDashboard>; userId: string; navigate: Function }) {
+  const { stats, loading } = useLatestStats(['it_open_tickets', 'active_recruitments', 'onboarding_in_progress']);
+  return (
+    <>
+      <StatTile label="Leave Requests" value={dash.pendingLeaves.length} icon={Inbox} color="bg-orange-500" loading={dash.loading} />
+      <StatTile label="IT Tickets" value={stats.it_open_tickets ?? '—'} icon={Laptop} color="bg-cyan-500" loading={loading} />
+      <StatTile label="Recruitments" value={stats.active_recruitments ?? '—'} icon={UserPlus} color="bg-violet-500" loading={loading} />
+      <StatTile label="Onboarding" value={stats.onboarding_in_progress ?? '—'} icon={Star} color="bg-pink-500" loading={loading} />
+      <WorldClockTile />
+      <PendingApprovalsWidget dash={dash} userId={userId} role="hr" navigate={navigate} />
+      <SidebarAnnouncementsWidget navigate={navigate} />
+      <RecentActivityWidget userId={userId} />
+    </>
+  );
+}
+
+function EmployeeSidebarContent({ dash, userId, navigate }: { dash: ReturnType<typeof useEmployeeDashboard>; userId: string; navigate: Function }) {
+  const { stats, todayAttendance, leaveBalance, upcomingTasks, loading } = dash;
+  return (
+    <>
+      <StatTile label="Present Days" value={stats.presentDays} icon={CheckCircle2} color="bg-green-500" loading={loading} />
+      <StatTile label="Leave Balance" value={Object.values(leaveBalance).reduce((a, b) => a + b, 0)} icon={Calendar} color="bg-blue-500" loading={loading} />
+      <StatTile label="Tasks Pending" value={stats.tasksPending} icon={CheckSquare} color="bg-orange-500" loading={loading} />
+      <StatTile label="Hours This Month" value={`${stats.hoursThisMonth.toFixed(0)}h`} icon={Clock} color="bg-purple-500" loading={loading} />
+
+      {/* Compact Attendance */}
+      <div className="bg-card border border-border rounded-xl p-3">
+        <p className="text-xs font-semibold text-foreground mb-2">{"Today's Attendance"}</p>
+        {loading ? (
+          <div className="h-14 bg-muted animate-pulse rounded" />
+        ) : todayAttendance ? (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Check-in</span>
+              <span className="font-medium">{todayAttendance.check_in ? new Date(todayAttendance.check_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Check-out</span>
+              <span className="font-medium">{todayAttendance.check_out ? new Date(todayAttendance.check_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Still in'}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground">Status</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${todayAttendance.status === 'Present' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                {todayAttendance.status}
+              </span>
+            </div>
+          </div>
+        ) : (
+          <p className="text-[11px] text-muted-foreground">Not checked in yet.</p>
+        )}
+        <button onClick={() => navigate('/dashboard')} className="mt-2 w-full text-[10px] text-primary flex items-center justify-center gap-1 hover:underline font-medium">
+          Go to Dashboard <ArrowUpRight size={10} />
+        </button>
+      </div>
+
+      {/* Compact Leave Balance */}
+      <div className="bg-card border border-border rounded-xl p-3">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-semibold text-foreground">Leave Balance</p>
+          <button onClick={() => navigate('/dashboard')} className="text-[10px] text-primary hover:underline font-medium">Apply</button>
+        </div>
+        {loading ? (
+          <div className="space-y-1.5">{[1,2,3].map(i => <div key={i} className="h-4 bg-muted animate-pulse rounded" />)}</div>
+        ) : (
+          <div className="space-y-1.5">
+            {Object.entries(leaveBalance).map(([type, days]) => (
+              <div key={type} className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">{type}</span>
+                <span className="text-xs font-semibold text-foreground">{days} <span className="text-[10px] font-normal text-muted-foreground">days</span></span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Compact Upcoming Tasks */}
+      <div className="bg-card border border-border rounded-xl p-3">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-semibold text-foreground">Upcoming Tasks</p>
+          <button onClick={() => navigate('/dashboard')} className="text-[10px] text-primary hover:underline font-medium">View all</button>
+        </div>
+        {loading ? (
+          <div className="space-y-1.5">{[1,2,3].map(i => <div key={i} className="h-6 bg-muted animate-pulse rounded" />)}</div>
+        ) : upcomingTasks.length === 0 ? (
+          <p className="text-[11px] text-muted-foreground">No upcoming tasks.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {upcomingTasks.slice(0, 4).map(task => (
+              <div key={task.id} className="flex items-center gap-2">
+                <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${task.priority === 'High' ? 'bg-red-500' : task.priority === 'Medium' ? 'bg-yellow-500' : 'bg-green-500'}`} />
+                <p className="text-[11px] text-foreground truncate flex-1">{task.title}</p>
+                {task.due_date && <span className="text-[10px] text-muted-foreground whitespace-nowrap">{task.due_date}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <WorldClockTile />
+      <SidebarAnnouncementsWidget navigate={navigate} />
+      <RecentActivityWidget userId={userId} />
+    </>
+  );
+}
+
+function FinanceSidebarContent({ userId, navigate }: { userId: string; navigate: Function }) {
+  const { stats, loading } = useLatestStats(['outstanding_invoices_amount', 'overdue_invoices']);
+  return (
+    <>
+      <StatTile label="Outstanding Invoices" value={stats.outstanding_invoices_amount ?? '—'} icon={FileText} color="bg-green-500" loading={loading} />
+      <StatTile label="Overdue" value={stats.overdue_invoices ?? '—'} icon={AlertCircle} color="bg-red-500" loading={loading} />
+      <StatTile label="Next Payroll" value="—" icon={DollarSign} color="bg-blue-500" />
+      <StatTile label="Pending Approvals" value="—" icon={Inbox} color="bg-orange-500" />
+      <WorldClockTile />
+      <SidebarAnnouncementsWidget navigate={navigate} />
+      <RecentActivityWidget userId={userId} />
+    </>
   );
 }
 
@@ -815,47 +1239,42 @@ function getDaysFromToday(dateStr: string): number | null {
 }
 
 function CelebrationsWidget() {
+  const { employees: empList, loading } = useEmployees();
   const [celebrations, setCelebrations] = useState<Celebration[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE}/directory/employees?limit=200`, {
-      cache: 'no-store', headers: { Authorization: `Bearer ${publicAnonKey}` },
-    })
-      .then(r => safeJson(r))
-      .then(data => {
-        const list: Employee[] = Array.isArray(data) ? data : (data?.data ?? data?.employees ?? []);
-        const today = new Date();
-        const currentYear = today.getFullYear();
-        const results: Celebration[] = [];
+    if (loading) return;
+    const list = empList as any[];
+    const today = new Date();
+    const currentYear = today.getFullYear();
+    const results: Celebration[] = [];
 
-        for (const emp of list) {
-          const name = emp.full_name ?? emp.name ?? 'Unknown';
-          const dob = emp.date_of_birth;
-          const joinDate = emp.joined_at ?? emp.hire_date ?? emp.start_date;
+    for (const emp of list) {
+      const name = emp.full_name ?? emp.name ?? 'Unknown';
+      const dob = emp.date_of_birth;
+      const joinDate = emp.joined_at ?? emp.hire_date ?? emp.start_date;
 
-          if (dob) {
-            const diff = getDaysFromToday(dob);
-            if (diff !== null && diff >= -3 && diff <= 3) {
-              results.push({ id: `b-${emp.id}`, name, type: 'birthday', daysFromToday: diff });
-            }
-          }
-
-          if (joinDate) {
-            const diff = getDaysFromToday(joinDate);
-            const joinYear = parseInt(joinDate.split(/[-T]/)[0], 10);
-            if (!isNaN(joinYear) && joinYear < currentYear && diff !== null && diff >= -3 && diff <= 3) {
-              results.push({ id: `a-${emp.id}`, name, type: 'anniversary', daysFromToday: diff, yearsAtCompany: currentYear - joinYear });
-            }
-          }
+      if (dob) {
+        const diff = getDaysFromToday(dob);
+        if (diff !== null && diff >= -3 && diff <= 3) {
+          results.push({ id: `b-${emp.id}`, name, type: 'birthday', daysFromToday: diff });
         }
+      }
 
-        results.sort((a, b) => Math.abs(a.daysFromToday) - Math.abs(b.daysFromToday));
-        setCelebrations(results);
-      })
-      .catch(() => setCelebrations([]))
-      .finally(() => setLoaded(true));
-  }, []);
+      if (joinDate) {
+        const diff = getDaysFromToday(joinDate);
+        const joinYear = parseInt(joinDate.split(/[-T]/)[0], 10);
+        if (!isNaN(joinYear) && joinYear < currentYear && diff !== null && diff >= -3 && diff <= 3) {
+          results.push({ id: `a-${emp.id}`, name, type: 'anniversary', daysFromToday: diff, yearsAtCompany: currentYear - joinYear });
+        }
+      }
+    }
+
+    results.sort((a, b) => Math.abs(a.daysFromToday) - Math.abs(b.daysFromToday));
+    setCelebrations(results);
+    setLoaded(true);
+  }, [empList, loading]);
 
   if (!loaded || celebrations.length === 0) return null;
 
@@ -875,50 +1294,40 @@ function CelebrationsWidget() {
   }
 
   return (
-    <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl border border-purple-100 p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-lg">🎉</span>
-        <h3 className="text-sm font-semibold text-purple-900">Celebrations This Week</h3>
-      </div>
-
-      <div className="space-y-4">
-        {birthdays.length > 0 && (
+    <div className="relative rounded-2xl overflow-hidden bg-gradient-to-br from-violet-500 to-pink-500 p-px">
+      <div className="rounded-2xl bg-card p-5">
+        <div className="flex items-center gap-2.5 mb-4">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500 to-pink-500 flex items-center justify-center text-base shadow-sm">🎉</div>
           <div>
-            <p className="text-xs font-medium text-purple-700 mb-2 uppercase tracking-wide">Birthdays</p>
-            <div className="space-y-2">
-              {birthdays.map(c => (
-                <div key={c.id} className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-purple-200 text-purple-800 flex items-center justify-center text-xs font-semibold flex-shrink-0">
-                    {initials(c.name)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{c.name}</p>
-                    <p className="text-xs text-purple-600">🎂 {dayLabel(c.daysFromToday)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <h3 className="text-sm font-semibold text-foreground">Celebrations This Week</h3>
+            <p className="text-xs text-muted-foreground">{celebrations.length} upcoming celebration{celebrations.length !== 1 ? 's' : ''}</p>
           </div>
-        )}
+        </div>
 
-        {anniversaries.length > 0 && (
-          <div>
-            <p className="text-xs font-medium text-pink-700 mb-2 uppercase tracking-wide">Work Anniversaries</p>
-            <div className="space-y-2">
-              {anniversaries.map(c => (
-                <div key={c.id} className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-full bg-pink-200 text-pink-800 flex items-center justify-center text-xs font-semibold flex-shrink-0">
-                    {initials(c.name)}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">{c.name}</p>
-                    <p className="text-xs text-pink-600">🏆 {c.yearsAtCompany} year{c.yearsAtCompany !== 1 ? 's' : ''} at company — {dayLabel(c.daysFromToday)}</p>
-                  </div>
-                </div>
-              ))}
+        <div className="flex flex-wrap gap-3">
+          {birthdays.map(c => (
+            <div key={c.id} className="flex items-center gap-3 bg-violet-50 dark:bg-violet-950/30 rounded-xl px-3 py-2.5 border border-violet-100 dark:border-violet-800/40">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-400 to-purple-600 flex items-center justify-center text-xs font-bold text-white shrink-0 shadow-sm">
+                {initials(c.name)}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-foreground truncate">{c.name}</p>
+                <p className="text-xs text-violet-600 dark:text-violet-400">🎂 {dayLabel(c.daysFromToday)}</p>
+              </div>
             </div>
-          </div>
-        )}
+          ))}
+          {anniversaries.map(c => (
+            <div key={c.id} className="flex items-center gap-3 bg-pink-50 dark:bg-pink-950/30 rounded-xl px-3 py-2.5 border border-pink-100 dark:border-pink-800/40">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-pink-400 to-rose-600 flex items-center justify-center text-xs font-bold text-white shrink-0 shadow-sm">
+                {initials(c.name)}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-foreground truncate">{c.name}</p>
+                <p className="text-xs text-pink-600 dark:text-pink-400">🏆 {c.yearsAtCompany}yr anniversary — {dayLabel(c.daysFromToday)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -953,7 +1362,7 @@ function OrgAnnouncementsWidget({ navigate }: { navigate: Function }) {
   };
 
   return (
-    <div className="bg-card border border-border rounded-xl p-4">
+    <div className="bg-card border border-border rounded-2xl p-4">
       <SectionHeading
         title="Org Announcements"
         action="View All"

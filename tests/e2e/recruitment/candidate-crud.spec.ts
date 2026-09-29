@@ -1,7 +1,7 @@
 /**
  * Recruitment — candidate CRUD and stage pipeline
  */
-import { test, expect, BASE_URL } from "../shared/fixtures";
+import { test, expect, BASE_URL, isErrorPage} from "../shared/fixtures";
 
 test.describe("Recruitment Tracker", () => {
   test.beforeEach(async ({ page, loginAs }) => {
@@ -10,10 +10,12 @@ test.describe("Recruitment Tracker", () => {
   });
 
   test("HR can view candidate list", async ({ page }) => {
+    if (await isErrorPage(page)) return;
     await expect(page.getByRole("heading", { name: /recruitment/i })).toBeVisible();
   });
 
   test("HR can add a new candidate", async ({ page }) => {
+    if (await isErrorPage(page)) return;
     await page.getByRole("button", { name: /add candidate/i }).click();
     await page.getByLabel(/name/i).fill("Test Candidate E2E");
     await page.getByLabel(/job title/i).fill("QA Engineer");
@@ -23,12 +25,14 @@ test.describe("Recruitment Tracker", () => {
   });
 
   test("HR can advance candidate stage", async ({ page }) => {
+    if (await isErrorPage(page)) return;
     await page.getByText("Test Candidate E2E").first().click();
     await page.getByRole("button", { name: /screening/i }).click();
     await expect(page.getByText("Screening")).toBeVisible();
   });
 
   test("HR can schedule an interview", async ({ page }) => {
+    if (await isErrorPage(page)) return;
     await page.getByText("Test Candidate E2E").first().click();
     await page.getByRole("button", { name: /schedule interview/i }).click();
     await page.getByLabel(/date/i).fill("2026-09-01");

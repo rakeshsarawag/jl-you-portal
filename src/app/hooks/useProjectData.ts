@@ -47,6 +47,16 @@ export interface ProjectMember {
   joinedDate: string;
 }
 
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  authorId?: string;
+  authorName: string;
+  content: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface ProjectTask {
   id: string;
   projectId: string;
@@ -68,6 +78,7 @@ export interface ProjectTask {
   startedAt?: string;
   completedDate?: string;
   closedAt?: string;
+  comments?: TaskComment[];
 }
 
 export interface Project {
@@ -221,7 +232,7 @@ export function useProjectData(_userEmail?: string) {
       endDate: data.endDate || null,
       budget: data.budget ?? null,
       ragStatus: data.ragStatus ?? 'Green',
-      members: (data.members ?? []).map((m: any) => ({ employeeName: m.employeeName ?? m.name, role: m.role ?? 'Member' })),
+      members: (data.members ?? []).map((m: any) => ({ employeeName: m.employeeName ?? m.name, employeeId: m.employeeId ?? null, role: m.role ?? 'Member' })),
     });
     const raw = json.data;
     const project = normalizeProject(raw, raw?.project_members ?? [], raw?.project_tasks ?? []);
@@ -311,7 +322,6 @@ export function useProjectData(_userEmail?: string) {
   }, []);
 
   const updateTask = useCallback(async (projectId: string, taskId: string, updates: Partial<ProjectTask>): Promise<ProjectTask> => {
-    const now = new Date().toISOString();
     const json = await pmApiPut(`/tasks/${taskId}`, {
       title: updates.title,
       description: updates.description,
@@ -326,10 +336,6 @@ export function useProjectData(_userEmail?: string) {
       actualHours: updates.loggedHours,
       sprintId: (updates as any).sprintId,
       sprintChangeReason: (updates as any).sprintChangeReason,
-      // Audit timestamps driven by status transitions
-      startedAt: updates.status === 'In Progress' ? now : undefined,
-      completedAt: updates.status === 'Done' ? now : undefined,
-      closedAt: updates.status === 'Cancelled' ? now : undefined,
     });
     const task = normalizeTask(json.data);
     setProjects(prev => prev.map(p =>
@@ -380,6 +386,41 @@ export function useProjectData(_userEmail?: string) {
     return updateProject(projectId, { ragStatus });
   }, [updateProject]);
 
+  const getTaskComments = useCallback(async (taskId: string): Promise<TaskComment[]> => {
+    const json = await pmApi(`/tasks/${taskId}/comments`);
+    return (json.data ?? []).map((c: any) => ({
+      id: c.id,
+      taskId: c.task_id,
+      authorId: c.author_id,
+      authorName: c.author_name ?? '',
+      content: c.content,
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
+    }));
+  }, []);
+
+  const addTaskComment = useCallback(async (
+    taskId: string,
+    content: string,
+    author: { authorId?: string; authorName: string }
+  ): Promise<TaskComment> => {
+    const json = await pmApi(`/tasks/${taskId}/comments`, {
+      content,
+      authorId: author.authorId,
+      authorName: author.authorName,
+    });
+    const c = json.data;
+    return {
+      id: c.id,
+      taskId: c.task_id,
+      authorId: c.author_id,
+      authorName: c.author_name ?? '',
+      content: c.content,
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
+    };
+  }, []);
+
   return {
     projects,
     stats,
@@ -397,5 +438,7 @@ export function useProjectData(_userEmail?: string) {
     deleteTask,
     logTime,
     updateRAG,
+    getTaskComments,
+    addTaskComment,
   };
 }
