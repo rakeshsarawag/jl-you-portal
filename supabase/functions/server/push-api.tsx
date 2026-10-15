@@ -20,6 +20,7 @@
  * Generate keys: npx web-push generate-vapid-keys
  */
 
+import { requireFields, requireParam } from "./validate.ts";
 import { Hono } from "npm:hono";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import { sendPushToUser, broadcastPush, ensureVapid } from "./push-utils.tsx";

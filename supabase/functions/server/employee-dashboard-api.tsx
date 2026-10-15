@@ -7,6 +7,7 @@ import { Hono } from "npm:hono@4";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
 import { notifyManager, notifyUserId } from "./notify-helpers.tsx";
+import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -148,7 +149,9 @@ app.get("/attendance/:userId", async (c) => {
 app.post("/leaves/apply", async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['employeeId', 'type', 'startDate', 'endDate']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const start = new Date(body.startDate);
     const end = new Date(body.endDate);
@@ -575,6 +578,8 @@ app.post('/leave-encashment', async (c) => {
 
 app.put('/leave-encashment/:id', async (c) => {
   const supabase = getSupabase();
+  const pv = requireParam(c, 'id');
+  if (!pv.ok) return pv.response;
   const { id } = c.req.param();
   const body = await c.req.json();
   try {

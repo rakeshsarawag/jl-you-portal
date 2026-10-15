@@ -5,7 +5,7 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import { API_BASE, publicAnonKey, safeJson, apiHeaders, supabase } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, apiHeaders, supabase, apiFetch }from '../utils/constants';
 import { DEPARTMENTS, EMPLOYEE_STATUSES, LIFECYCLE_STATUSES } from '../../constants/apps/directory';
 
 export { LIFECYCLE_STATUSES };
@@ -13,7 +13,7 @@ export { LIFECYCLE_STATUSES };
 const DIR_URL = `${API_BASE}/directory`;
 
 async function api(path: string, options: RequestInit = {}, userEmail?: string) {
-  const res = await fetch(`${DIR_URL}${path}`, {
+  const res = await apiFetch(`${DIR_URL}${path}`, {
     ...options,
     headers: apiHeaders(userEmail),
   });

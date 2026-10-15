@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE, publicAnonKey, safeJson, apiHeaders } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, apiHeaders, apiFetch }from '../utils/constants';
 import { toast } from 'sonner';
 
 const LINKEDIN_URL = `${API_BASE}/linkedin`;
 
 async function api(url: string, options?: RequestInit, userEmail?: string) {
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     ...options,
     headers: apiHeaders(userEmail),
   });

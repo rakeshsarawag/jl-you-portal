@@ -1,4 +1,5 @@
 import { Hono } from "npm:hono";
+import { requireFields, requireParam } from "./validate.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 import { sendPushToUser } from "./push-utils.tsx";
 
@@ -49,12 +50,10 @@ app.get("/", async (c) => {
 // POST / — create a notification
 app.post("/", async (c) => {
   try {
-    const body = await c.req.json();
-    const { userId, title, body: notifBody, type, link } = body;
-
-    if (!userId || !title || !notifBody) {
-      return c.json({ success: false, error: "userId, title, and body are required" }, 400);
-    }
+    const v = await requireFields(c, ["userId", "title", "body"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
+    const { userId, title, body: notifBody, type, link } = body as any;
 
     const supabase = getSupabase();
     const notification = {

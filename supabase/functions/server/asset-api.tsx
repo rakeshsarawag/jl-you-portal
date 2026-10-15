@@ -1,6 +1,7 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
+import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -57,7 +58,9 @@ app.get('/:id', async (c) => {
 app.post('/create', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['name', 'type']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const { data, error } = await supabase
       .from('assets')
@@ -91,6 +94,8 @@ app.post('/create', async (c) => {
 app.put('/:id', async (c) => {
   try {
     const supabase = getSupabase();
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
     const body = await c.req.json();
 
     const { data, error } = await supabase
@@ -137,7 +142,9 @@ app.delete('/:id', async (c) => {
 app.post('/assign', async (c) => {
   try {
     const supabase = getSupabase();
-    const { assetId, employeeId, employeeName } = await c.req.json();
+    const v = await requireFields(c, ['assetId', 'employeeId', 'employeeName']);
+    if (!v.ok) return v.response;
+    const { assetId, employeeId, employeeName } = v.body as any;
 
     // Update asset status
     await supabase

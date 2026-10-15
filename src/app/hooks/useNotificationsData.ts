@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { supabase, API_BASE, apiHeaders } from '../utils/constants';
+import { supabase, API_BASE, apiHeaders, apiFetch }from '../utils/constants';
 import { useUser } from '../context/UserContext';
 
 export interface Notification {
@@ -134,7 +134,7 @@ export function useNotifications() {
     setUnreadCount((prev) => Math.max(0, prev - 1));
     // Route through service-role API to bypass RLS
     try {
-      await fetch(`${API_BASE}/notifications/${id}/read`, {
+      await apiFetch(`${API_BASE}/notifications/${id}/read`, {
         method: 'PUT',
         headers: apiHeaders(),
       });
@@ -150,7 +150,7 @@ export function useNotifications() {
     setUnreadCount(0);
     // Route through service-role API (supports multiple user_ids, bypasses RLS)
     try {
-      await fetch(`${API_BASE}/notifications/read-all`, {
+      await apiFetch(`${API_BASE}/notifications/read-all`, {
         method: 'PUT',
         headers: { ...apiHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: ids[0], userIds: ids }),
@@ -168,7 +168,7 @@ export function useNotifications() {
     });
     // Route through service-role API (users have no DELETE RLS policy)
     try {
-      await fetch(`${API_BASE}/notifications/${id}`, {
+      await apiFetch(`${API_BASE}/notifications/${id}`, {
         method: 'DELETE',
         headers: apiHeaders(),
       });

@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react';
 import { UserWithRole, UserRole } from '../../types/rbac';
 import { getPrimaryRole } from '../../utils/rbac/permissionChecker';
-import { projectId, publicAnonKey, safeJson, apiHeaders } from '../utils/constants';
+import { projectId, publicAnonKey, safeJson, apiHeaders, apiFetch }from '../utils/constants';
 import { toast } from 'sonner';
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468`;
@@ -19,7 +19,7 @@ export function useUserManagement(userEmail?: string) {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE}/users`, {
+      const response = await apiFetch(`${API_BASE}/users`, {
         headers: apiHeaders(userEmail),
       });
 
@@ -58,7 +58,7 @@ export function useUserManagement(userEmail?: string) {
         createdAt: new Date().toISOString(),
       };
 
-      const response = await fetch(`${API_BASE}/users`, {
+      const response = await apiFetch(`${API_BASE}/users`, {
         method: 'POST',
         headers: apiHeaders(userEmail),
         body: JSON.stringify(newUser),
@@ -81,7 +81,7 @@ export function useUserManagement(userEmail?: string) {
     updates: Partial<UserWithRole>
   ): Promise<boolean> => {
     try {
-      const response = await fetch(`${API_BASE}/users/${userId}`, {
+      const response = await apiFetch(`${API_BASE}/users/${userId}`, {
         method: 'PUT',
         headers: apiHeaders(userEmail),
         body: JSON.stringify(updates),
@@ -101,7 +101,7 @@ export function useUserManagement(userEmail?: string) {
   // Delete user
   const deleteUser = async (userId: string): Promise<boolean> => {
     try {
-      const response = await fetch(`${API_BASE}/users/${userId}`, {
+      const response = await apiFetch(`${API_BASE}/users/${userId}`, {
         method: 'DELETE',
         headers: apiHeaders(userEmail),
       });
@@ -122,7 +122,7 @@ export function useUserManagement(userEmail?: string) {
     try {
       const primaryRole = getPrimaryRole(roles);
 
-      const response = await fetch(`${API_BASE}/users/${userId}/roles`, {
+      const response = await apiFetch(`${API_BASE}/users/${userId}/roles`, {
         method: 'PUT',
         headers: apiHeaders(userEmail),
         body: JSON.stringify({ roles, primaryRole }),
@@ -147,7 +147,7 @@ export function useUserManagement(userEmail?: string) {
 
       const newStatus = user.status === 'active' ? 'inactive' : 'active';
 
-      const response = await fetch(`${API_BASE}/users/${userId}/status`, {
+      const response = await apiFetch(`${API_BASE}/users/${userId}/status`, {
         method: 'PUT',
         headers: apiHeaders(userEmail),
         body: JSON.stringify({ status: newStatus }),

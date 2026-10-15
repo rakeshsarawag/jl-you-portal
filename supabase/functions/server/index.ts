@@ -1,7 +1,8 @@
 import { Hono } from "npm:hono";
 import { cors } from "npm:hono/cors";
 import { logger } from "npm:hono/logger";
-import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
+import { jwtVerify } from "npm:jose@5";
+import { roleGuard } from "./role-guard.ts";
 
 import directoryApi from "./directory-api.tsx";
 import usersApi from "./users.ts";
@@ -108,8 +109,50 @@ app.use("/*", async (c, next) => {
 });
 
 app.get(`${base}/health`, (c) =>
-  c.json({ status: "ok", version: "2026-08-26-AUDIT-COLUMNS" })
+  c.json({ status: "ok", version: "2026-10-01-SECURE" })
 );
+
+// ── JWT Authentication Middleware ────────────────────────────────────────────
+// Uses SUPABASE_JWT_SECRET for LOCAL cryptographic verification — no network
+// call, no anon key bypass. Tokens without a `sub` (user UUID) or with
+// role="anon" are rejected as unauthenticated even if the signature is valid.
+const _jwtSecret = new TextEncoder().encode(Deno.env.get("SUPABASE_JWT_SECRET")!);
+
+app.use(`${base}/*`, async (c, next) => {
+  if (c.req.method === "OPTIONS") { await next(); return; }
+
+  const authHeader = c.req.header("authorization") ?? "";
+  const token = authHeader.replace(/^Bearer\s+/i, "").trim();
+
+  if (!token) {
+    return c.json({ error: "Unauthorized: no token provided" }, 401);
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    const { payload: p } = await jwtVerify(token, _jwtSecret);
+    payload = p as Record<string, unknown>;
+  } catch {
+    return c.json({ error: "Unauthorized: invalid or expired token" }, 401);
+  }
+
+  // The anon key JWT has role="anon" and no `sub` — reject it explicitly.
+  // Only real user session tokens have role="authenticated" and a UUID sub.
+  if (!payload.sub || payload.role === "anon") {
+    return c.json({ error: "Unauthorized: login required" }, 401);
+  }
+
+  // Attach verified identity for downstream handlers and role guard
+  c.set("userId" as never, payload.sub as string);
+  c.set("userEmail" as never, (payload.email ?? "") as string);
+
+  await next();
+});
+
+// ── Role-based access control middleware ─────────────────────────────────────
+// Runs after JWT verification. Looks up the user's primary_role from app_users
+// and blocks the request if the role is not permitted for this route + method.
+app.use(`${base}/*`, roleGuard(base));
 
 app.route(`${base}/directory`, directoryApi);
 app.route(`${base}/users`, usersApi);

@@ -6,6 +6,7 @@
 
 import { Hono } from "npm:hono";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
+import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -228,7 +229,9 @@ app.get("/custom-roles", async (c) => {
 
 app.post("/custom-roles", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ['name']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const authHeader = c.req.header("Authorization");
     const supabase = getSupabase();
     const { data, error } = await supabase

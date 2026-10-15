@@ -1,11 +1,11 @@
 import { useState, useCallback } from 'react';
-import { API_BASE, apiHeaders } from '../utils/constants';
+import { API_BASE, apiHeaders, apiFetch } from '../utils/constants';
 
 const PM_HEADERS = () => apiHeaders();
 
 async function pmApi(path: string, body?: unknown) {
   const isDelete = body === null;
-  const res = await fetch(`${API_BASE}/projects${path}`, {
+  const res = await apiFetch(`${API_BASE}/projects${path}`, {
     method: isDelete ? 'DELETE' : body !== undefined ? 'POST' : 'GET',
     headers: PM_HEADERS(),
     body: body && !isDelete ? JSON.stringify(body) : undefined,
@@ -16,7 +16,7 @@ async function pmApi(path: string, body?: unknown) {
 }
 
 async function pmApiPut(path: string, body: unknown) {
-  const res = await fetch(`${API_BASE}/projects${path}`, {
+  const res = await apiFetch(`${API_BASE}/projects${path}`, {
     method: 'PUT',
     headers: PM_HEADERS(),
     body: JSON.stringify(body),
@@ -27,7 +27,7 @@ async function pmApiPut(path: string, body: unknown) {
 }
 
 async function pmApiDelete(path: string) {
-  const res = await fetch(`${API_BASE}/projects${path}`, {
+  const res = await apiFetch(`${API_BASE}/projects${path}`, {
     method: 'DELETE',
     headers: PM_HEADERS(),
   });

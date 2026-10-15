@@ -1,4 +1,5 @@
 import { Hono } from "npm:hono";
+import { requireFields, requireParam } from "./validate.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
 
 const app = new Hono();
@@ -62,7 +63,9 @@ app.get("/departments/:id", async (c) => {
 
 app.post("/departments", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -80,7 +83,9 @@ app.post("/departments", async (c) => {
 
 app.put("/departments/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -156,7 +161,9 @@ app.get("/locations/:id", async (c) => {
 
 app.post("/locations", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -174,7 +181,9 @@ app.post("/locations", async (c) => {
 
 app.put("/locations/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -250,7 +259,9 @@ app.get("/job-titles/:id", async (c) => {
 
 app.post("/job-titles", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -268,7 +279,9 @@ app.post("/job-titles", async (c) => {
 
 app.put("/job-titles/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -344,7 +357,9 @@ app.get("/clients/:id", async (c) => {
 
 app.post("/clients", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -362,7 +377,9 @@ app.post("/clients", async (c) => {
 
 app.put("/clients/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -438,7 +455,9 @@ app.get("/employment-types/:id", async (c) => {
 
 app.post("/employment-types", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -456,7 +475,9 @@ app.post("/employment-types", async (c) => {
 
 app.put("/employment-types/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -532,7 +553,9 @@ app.get("/skills/:id", async (c) => {
 
 app.post("/skills", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -550,7 +573,9 @@ app.post("/skills", async (c) => {
 
 app.put("/skills/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -626,7 +651,9 @@ app.get("/currencies/:id", async (c) => {
 
 app.post("/currencies", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -644,7 +671,9 @@ app.post("/currencies", async (c) => {
 
 app.put("/currencies/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -720,7 +749,9 @@ app.get("/value-helps/:id", async (c) => {
 
 app.post("/value-helps", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["config_group", "config_key"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -767,7 +798,9 @@ app.post("/value-helps/seed", async (c) => {
 
 app.put("/value-helps/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -824,7 +857,9 @@ app.get("/holidays", async (c) => {
 
 app.post("/holidays", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const supabase = getSupabase();
     const { data, error } = await supabase
       .from("holidays")
@@ -841,7 +876,9 @@ app.post("/holidays", async (c) => {
 
 app.put("/holidays/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -893,7 +930,9 @@ app.get("/leave-policies", async (c) => {
 
 app.post("/leave-policies", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const supabase = getSupabase();
     const { data, error } = await supabase
       .from("leave_policies")
@@ -910,7 +949,9 @@ app.post("/leave-policies", async (c) => {
 
 app.put("/leave-policies/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -949,7 +990,9 @@ app.get("/email-templates", async (c) => {
 
 app.put("/email-templates/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1020,7 +1063,9 @@ app.get("/ticket-categories/:id", async (c) => {
 
 app.post("/ticket-categories", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1049,7 +1094,9 @@ app.post("/ticket-categories", async (c) => {
 
 app.put("/ticket-categories/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1142,7 +1189,9 @@ app.get("/sla-policies/:id", async (c) => {
 
 app.post("/sla-policies", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1171,7 +1220,9 @@ app.post("/sla-policies", async (c) => {
 
 app.put("/sla-policies/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1269,7 +1320,9 @@ app.get("/vendors/:id", async (c) => {
 
 app.post("/vendors", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1300,7 +1353,9 @@ app.post("/vendors", async (c) => {
 
 app.put("/vendors/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1398,7 +1453,9 @@ app.get("/asset-categories/:id", async (c) => {
 
 app.post("/asset-categories", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1426,7 +1483,9 @@ app.post("/asset-categories", async (c) => {
 
 app.put("/asset-categories/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1499,7 +1558,9 @@ app.get("/maintenance-types", async (c) => {
 
 app.post("/maintenance-types", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1520,7 +1581,9 @@ app.post("/maintenance-types", async (c) => {
 
 app.put("/maintenance-types/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1585,7 +1648,9 @@ app.get("/project-methodologies", async (c) => {
 
 app.post("/project-methodologies", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1606,7 +1671,9 @@ app.post("/project-methodologies", async (c) => {
 
 app.put("/project-methodologies/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1675,7 +1742,9 @@ app.get("/resolution-codes", async (c) => {
 
 app.post("/resolution-codes", async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ["name"]);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const id = body.id || crypto.randomUUID();
     const supabase = getSupabase();
     const { data, error } = await supabase
@@ -1696,7 +1765,9 @@ app.post("/resolution-codes", async (c) => {
 
 app.put("/resolution-codes/:id", async (c) => {
   try {
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const supabase = getSupabase();
     const { data, error } = await supabase

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE, publicAnonKey, safeJson, apiHeaders } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, apiHeaders, apiFetch }from '../utils/constants';
 import { useUser } from '../context/UserContext';
 import { toast } from 'sonner';
 
@@ -145,7 +145,7 @@ export function useCommunicationsData() {
       toast.success('Announcement created');
       // Fire broadcast notification (best-effort)
       try {
-        await fetch(`${API_BASE}/notifications`, {
+        await apiFetch(`${API_BASE}/notifications`, {
           method: 'POST',
           headers: apiHeaders(userEmail),
           body: JSON.stringify({

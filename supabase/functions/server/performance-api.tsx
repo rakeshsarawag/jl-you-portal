@@ -1,6 +1,7 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
+import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -31,7 +32,9 @@ app.get('/reviews', async (c) => {
 app.post('/reviews', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['employeeId', 'reviewerId', 'period']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const { data, error } = await supabase
       .from('performance_reviews')
@@ -94,6 +97,8 @@ app.post('/reviews/update', async (c) => {
 app.put('/reviews/:id', async (c) => {
   try {
     const supabase = getSupabase();
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
     const body = await c.req.json();
 
     const { data, error } = await supabase

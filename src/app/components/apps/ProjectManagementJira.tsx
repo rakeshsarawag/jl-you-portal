@@ -1946,6 +1946,7 @@ function TeamTab({
   const [empCode, setEmpCode] = useState("");
   const [role, setRole] = useState(MEMBER_ROLES[0]);
   const [saving, setSaving] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState<ProjectMember | null>(null);
   const { employees: allEmployees } = useEmployees();
 
   const existingNames = new Set(members.map(m => m.employeeName?.toLowerCase()));
@@ -2072,15 +2073,7 @@ function TeamTab({
                   </div>
                   {canManage && (
                     <button
-                      onClick={async () => {
-                        if (!confirm(t("project.removeMemberConfirm").replace("{name}", m.employeeName))) return;
-                        try {
-                          await onRemoveMember(m.id);
-                          toast.success(t("project.memberRemoved"));
-                        } catch {
-                          toast.error(t("project.memberRemoveFailed"));
-                        }
-                      }}
+                      onClick={() => setConfirmRemove(m)}
                       className="opacity-0 group-hover:opacity-100 transition-opacity text-red-400 hover:text-red-600 flex-shrink-0 p-1 rounded hover:bg-red-50"
                       title="Remove member"
                     >
@@ -2099,6 +2092,25 @@ function TeamTab({
             );
           })}
         </div>
+      )}
+
+      {confirmRemove && (
+        <ConfirmDialog
+          title="Remove Team Member"
+          message={`Remove ${confirmRemove.employeeName} from this project? They will lose access to all project tasks.`}
+          confirmLabel="Remove"
+          onConfirm={async () => {
+            const m = confirmRemove;
+            setConfirmRemove(null);
+            try {
+              await onRemoveMember(m.id);
+              toast.success(t("project.memberRemoved"));
+            } catch {
+              toast.error(t("project.memberRemoveFailed"));
+            }
+          }}
+          onCancel={() => setConfirmRemove(null)}
+        />
       )}
     </div>
   );
@@ -8818,8 +8830,8 @@ export function ProjectManagementJira({
           onDeleteTask={(taskId) => deleteTask(selectedProject.id, taskId)}
           onLogTime={(taskId, h, type, desc, logDate, billable) => logTime(taskId, h, type, desc, { logDate, billable, projectId: selectedProject?.id })}
           onAddComment={(taskId, content) => addTaskComment(taskId, content, {
-            authorId: currentUser?.id,
-            authorName: currentUser?.name ?? '',
+            authorId: currentUser?.employeeId ?? undefined,
+            authorName: currentUser?.name ?? currentUser?.fullName ?? '',
           })}
           currentUser={currentUser ? { id: currentUser.id, name: currentUser.name ?? '' } : undefined}
           onAddMember={(data) => addMember(selectedProject.id, data)}

@@ -8,13 +8,13 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import { API_BASE, publicAnonKey, safeJson, apiHeaders, supabase } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, apiHeaders, supabase, apiFetch }from '../utils/constants';
 import { LEAVE_TYPES, ATTENDANCE_STATUSES, DEFAULT_LEAVE_BALANCES } from '../../constants/apps/leave';
 
 const DASH_URL = `${API_BASE}/employee-dashboard`;
 
 async function api(path: string, options: RequestInit = {}, userEmail?: string) {
-  const res = await fetch(`${DASH_URL}${path}`, {
+  const res = await apiFetch(`${DASH_URL}${path}`, {
     cache: 'no-store',
     ...options,
     headers: apiHeaders(userEmail),
@@ -25,7 +25,7 @@ async function api(path: string, options: RequestInit = {}, userEmail?: string) 
 }
 
 async function apiDirect(url: string, userEmail?: string) {
-  const res = await fetch(url, {
+  const res = await apiFetch(url, {
     cache: 'no-store',
     headers: apiHeaders(userEmail),
   });
@@ -254,14 +254,14 @@ export function useEmployeeDashboard(userId: string, userName: string, userEmail
       // Send notification to manager — fetch manager's app_users.id then POST to notifications
       const notifyManager = async () => {
         try {
-          const mgrRes = await fetch(`${DASH_URL}/manager/${userId}`, {
+          const mgrRes = await apiFetch(`${DASH_URL}/manager/${userId}`, {
             headers: apiHeaders(userEmail),
           });
           if (!mgrRes.ok) return;
           const mgrData = await mgrRes.json();
           const targetUserId = mgrData?.manager_app_user_id;
           if (!targetUserId) return;
-          await fetch(`${API_BASE}/notifications`, {
+          await apiFetch(`${API_BASE}/notifications`, {
             method: 'POST',
             headers: apiHeaders(userEmail),
             body: JSON.stringify({

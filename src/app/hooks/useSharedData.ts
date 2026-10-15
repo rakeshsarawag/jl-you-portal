@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import DataService from '../services/dataService';
-import { API_BASE, publicAnonKey, safeJson, apiHeaders } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, apiHeaders, apiFetch }from '../utils/constants';
 import { useEmployees } from '../context/EmployeesContext';
 // Re-export useUser so any stale import from this file still resolves
 export { useUser } from '../context/UserContext';
@@ -247,7 +247,7 @@ export function useMasterDataDirect(endpoint: string, userEmail?: string) {
     }
     try {
       setLoading(true);
-      const response = await fetch(url, { headers: apiHeaders(userEmail) });
+      const response = await apiFetch(url, { headers: apiHeaders(userEmail) });
       if (!response.ok) { setData([]); return; }
       const result = await safeJson(response);
       const rows = result?.data || result || [];

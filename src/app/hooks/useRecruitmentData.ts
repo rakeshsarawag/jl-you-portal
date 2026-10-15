@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { API_BASE, safeJson, apiHeaders } from "../utils/constants";
+import { API_BASE, safeJson, apiHeaders, apiFetch }from "../utils/constants";
 import { toast } from "sonner";
 
 const RECRUIT_URL = `${API_BASE}/recruitment`;
@@ -272,7 +272,7 @@ function shapedCandidate(c: any): Candidate {
 // ==================== API HELPER ====================
 
 async function api(path: string, options: RequestInit = {}, userEmail?: string) {
-  const res = await fetch(path, {
+  const res = await apiFetch(path, {
     ...options,
     headers: apiHeaders(userEmail),
   });

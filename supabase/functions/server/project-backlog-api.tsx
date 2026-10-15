@@ -1,5 +1,6 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
+import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -44,7 +45,9 @@ app.get('/backlog', async (c) => {
 app.post('/backlog', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['projectId', 'title']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     async function nextItemId(): Promise<string> {
       const { data: seqData, error: seqErr } = await supabase.rpc('nextval_backlog_item_id');
@@ -105,6 +108,8 @@ app.post('/backlog', async (c) => {
 app.put('/backlog/:id', async (c) => {
   try {
     const supabase = getSupabase();
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
     const body = await c.req.json();
 
     const { data, error } = await supabase

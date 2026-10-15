@@ -2,6 +2,7 @@ import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate, logAuditFromContext } from "./audit-helpers.ts";
 import { notifyByEmail, notifyByEmployeeId } from "./notify-helpers.tsx";
+import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -508,7 +509,9 @@ app.get('/:id', async (c) => {
 app.post('/create', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['name']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const { data, error } = await supabase
       .from('projects')
@@ -602,6 +605,8 @@ app.post('/update', async (c) => {
 app.put('/:id', async (c) => {
   try {
     const supabase = getSupabase();
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
     const body = await c.req.json();
 
     const { data, error } = await supabase
@@ -660,7 +665,9 @@ app.get('/:id/tasks', async (c) => {
 app.post('/tasks/create', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['projectId', 'title']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     // Build insert using only guaranteed base-schema columns.
     // Columns added by later ALTER TABLE migrations (task_type, start_date, sprint_id)
@@ -718,6 +725,8 @@ app.post('/tasks/create', async (c) => {
 app.put('/tasks/:id', async (c) => {
   try {
     const supabase = getSupabase();
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
     const body = await c.req.json();
 
     // Fetch current task to accumulate actual_hours if additionalHours given
@@ -834,12 +843,12 @@ app.get('/tasks/:id/comments', async (c) => {
 app.post('/tasks/:id/comments', async (c) => {
   try {
     const supabase = getSupabase();
-    const taskId = c.req.param('id');
-    const body = await c.req.json();
-
-    if (!body.content?.trim()) {
-      return c.json({ success: false, error: 'Comment content is required' }, 400);
-    }
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
+    const taskId = pv.value;
+    const v = await requireFields(c, ['content']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const { data, error } = await supabase
       .from('task_comments')

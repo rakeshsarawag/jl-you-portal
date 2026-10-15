@@ -1,3 +1,4 @@
+import { requireFields, requireParam } from "./validate.ts";
 import { Hono } from 'npm:hono';
 import * as kv from './kv_store.tsx';
 
@@ -51,7 +52,9 @@ app.post('/projects', async (c) => {
   try {
     const userId = c.req.header('X-User-Id') || 'admin';
     const key = `projects_${userId}`;
-    const body = await c.req.json();
+    const v = await requireFields(c, ['name']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const projects = await kv.get(key) as Project[] || [];
     
     const newProject: Project = {

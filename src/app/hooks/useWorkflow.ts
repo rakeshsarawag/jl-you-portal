@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { publicAnonKey, API_BASE as BASE_URL, safeJson, apiHeaders } from '../utils/constants';
+import { publicAnonKey, API_BASE as BASE_URL, safeJson, apiHeaders, apiFetch }from '../utils/constants';
 import { useUser } from '../context/UserContext';
 import { WorkflowDefinition, WorkflowInstance, ApprovalRequest } from '../services/workflowEngine';
 
@@ -52,7 +52,7 @@ export function useWorkflow() {
   const createDefinition = async (
     def: Omit<WorkflowDefinition, 'id' | 'createdAt' | 'updatedAt' | 'version'>
   ) => {
-    const res = await fetch(`${BASE}/definitions`, {
+    const res = await apiFetch(`${BASE}/definitions`, {
       method: 'POST',
       headers: apiHeaders(userEmail),
       body: JSON.stringify({ ...def, createdBy: currentUser?.id }),
@@ -62,7 +62,7 @@ export function useWorkflow() {
   };
 
   const updateDefinition = async (id: string, updates: Partial<WorkflowDefinition>) => {
-    await fetch(`${BASE}/definitions/${id}`, {
+    await apiFetch(`${BASE}/definitions/${id}`, {
       method: 'PUT',
       headers: apiHeaders(userEmail),
       body: JSON.stringify(updates),
@@ -71,7 +71,7 @@ export function useWorkflow() {
   };
 
   const deleteDefinition = async (id: string) => {
-    await fetch(`${BASE}/definitions/${id}`, { method: 'DELETE', headers: apiHeaders(userEmail) });
+    await apiFetch(`${BASE}/definitions/${id}`, { method: 'DELETE', headers: apiHeaders(userEmail) });
     await fetchAll();
   };
 
@@ -81,7 +81,7 @@ export function useWorkflow() {
     entityId: string,
     context: Record<string, unknown> = {}
   ) => {
-    const res = await fetch(`${BASE}/trigger`, {
+    const res = await apiFetch(`${BASE}/trigger`, {
       method: 'POST',
       headers: apiHeaders(userEmail),
       body: JSON.stringify({
@@ -97,7 +97,7 @@ export function useWorkflow() {
   };
 
   const startWorkflow = async (definitionId: string, context: Record<string, unknown> = {}) => {
-    const res = await fetch(`${BASE}/instances`, {
+    const res = await apiFetch(`${BASE}/instances`, {
       method: 'POST',
       headers: apiHeaders(userEmail),
       body: JSON.stringify({
@@ -111,7 +111,7 @@ export function useWorkflow() {
   };
 
   const cancelInstance = async (instanceId: string) => {
-    await fetch(`${BASE}/instances/${instanceId}/cancel`, { method: 'POST', headers: apiHeaders(userEmail) });
+    await apiFetch(`${BASE}/instances/${instanceId}/cancel`, { method: 'POST', headers: apiHeaders(userEmail) });
     await fetchAll();
   };
 
@@ -120,7 +120,7 @@ export function useWorkflow() {
     status: 'approved' | 'rejected',
     comment = ''
   ) => {
-    await fetch(`${BASE}/approvals/${approvalId}/respond`, {
+    await apiFetch(`${BASE}/approvals/${approvalId}/respond`, {
       method: 'POST',
       headers: apiHeaders(userEmail),
       body: JSON.stringify({ status, comment, responded_by: currentUser?.id }),

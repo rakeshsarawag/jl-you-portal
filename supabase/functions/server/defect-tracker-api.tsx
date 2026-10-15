@@ -1,4 +1,5 @@
 import { Hono } from 'npm:hono';
+import { requireFields, requireParam } from "./validate.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { notifyUserId } from './notify-helpers.tsx';
 
@@ -216,7 +217,9 @@ app.get('/defects/:id', async (c) => {
 app.post('/defects', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['projectId', 'title']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const { data: lastDef } = await supabase.from('project_defects').select('defect_id').like('defect_id', 'DEF%').order('defect_id', { ascending: false }).limit(1);
     let defNext = 1;
@@ -297,8 +300,12 @@ app.post('/defects', async (c) => {
 app.put('/defects/:id', async (c) => {
   try {
     const supabase = getSupabase();
-    const id = c.req.param('id');
-    const body = await c.req.json();
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
+    const v = await requireFields(c, ['title']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const updates: any = { updated_at: new Date().toISOString() };
 
@@ -468,8 +475,12 @@ app.delete('/defects/:id', async (c) => {
 app.post('/defects/:id/comments', async (c) => {
   try {
     const supabase = getSupabase();
-    const defectId = c.req.param('id');
-    const body = await c.req.json();
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
+    const defectId = pv.value;
+    const v = await requireFields(c, ['content']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const { data, error } = await supabase.from('defect_comments').insert([{
       defect_id: defectId,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { API_BASE, publicAnonKey, safeJson, apiHeaders } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, apiHeaders, apiFetch }from '../utils/constants';
 
 const ONB_URL = `${API_BASE}/onboarding`;
 
@@ -77,7 +77,7 @@ export interface WorkflowTemplate {
 // ==================== API HELPER ====================
 
 async function api(path: string, options: RequestInit = {}, userEmail?: string) {
-  const res = await fetch(`${ONB_URL}${path}`, {
+  const res = await apiFetch(`${ONB_URL}${path}`, {
     ...options,
     headers: apiHeaders(userEmail),
   });
@@ -197,7 +197,7 @@ export function useOnboardingData(userEmail?: string) {
   const bulkUpload = useCallback(async (file: File) => {
     const formData = new FormData();
     formData.append('file', file);
-    const res = await fetch(`${ONB_URL}/employees/bulk-upload`, {
+    const res = await apiFetch(`${ONB_URL}/employees/bulk-upload`, {
       method: 'POST',
       headers: apiHeaders(userEmail),
       body: formData,

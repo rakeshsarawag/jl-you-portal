@@ -4,6 +4,7 @@
  */
 
 import { Hono } from 'npm:hono';
+import { requireFields, requireParam } from "./validate.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
 
@@ -108,6 +109,7 @@ app.post('/', async (c) => {
   try {
     const supabase = getSupabase();
     const requestData = await c.req.json();
+    if (!requestData || (!requestData.email && !requestData.users)) return c.json({ success: false, error: 'Missing required fields: email or users array' }, 400);
 
     // Batch update
     if (requestData.users && Array.isArray(requestData.users)) {
@@ -177,7 +179,9 @@ app.post('/', async (c) => {
 app.put('/:id', async (c) => {
   try {
     const supabase = getSupabase();
-    const id = c.req.param('id');
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const updates = await c.req.json();
 
     const { data, error } = await supabase

@@ -40,6 +40,9 @@
 \i 11_drop_chat_tables.sql
 \i 18_task_comments.sql
 \i 19_project_tasks_timestamps.sql
+\i 20_enforce_auth_rls.sql
+\i 21_auth_hook_and_row_rls.sql
+\i 22_deny_anon_rest_api.sql
 
 -- ============================================================
 -- Done. All migrations applied.

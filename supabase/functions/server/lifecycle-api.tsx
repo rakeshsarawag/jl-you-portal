@@ -1,3 +1,4 @@
+import { requireFields, requireParam } from "./validate.ts";
 import { Hono } from "npm:hono@4";
 import * as kv from "./kv_store.tsx";
 
@@ -8,7 +9,9 @@ const app = new Hono();
 // Create demo employee
 app.post("/make-server-1fe2c468/lifecycle/employee", async (c) => {
   try {
-    const employee = await c.req.json();
+    const v = await requireFields(c, ["id", "name"]);
+    if (!v.ok) return v.response;
+    const employee = v.body;
     console.log("Creating lifecycle demo employee:", employee.id);
     
     await kv.set(`lifecycle:employee:${employee.id}`, {
@@ -45,7 +48,9 @@ app.get("/make-server-1fe2c468/lifecycle/employee/:id", async (c) => {
 // Mark lifecycle step as complete
 app.post("/make-server-1fe2c468/lifecycle/step-complete", async (c) => {
   try {
-    const { employeeId, stepId, completedAt } = await c.req.json();
+    const v = await requireFields(c, ["employeeId", "stepId"]);
+    if (!v.ok) return v.response;
+    const { employeeId, stepId, completedAt } = v.body as any;
     console.log(`Completing step ${stepId} for employee ${employeeId}`);
     
     const employee = await kv.get(`lifecycle:employee:${employeeId}`);

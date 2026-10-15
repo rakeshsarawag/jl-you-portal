@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { API_BASE, publicAnonKey, safeJson, apiHeaders } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, apiHeaders, apiFetch }from '../utils/constants';
 import { SLA_HOURS } from '../../constants/apps/it-services';
 
 const IT_URL = `${API_BASE}/it-services`;
@@ -51,7 +51,7 @@ export interface SLAStatus {
 // ── API Helper ───────────────────────────────────────────────────────────────
 
 async function api(path: string, options: RequestInit = {}, userEmail?: string) {
-  const res = await fetch(`${IT_URL}${path}`, {
+  const res = await apiFetch(`${IT_URL}${path}`, {
     ...options,
     headers: apiHeaders(userEmail),
   });

@@ -1,6 +1,7 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
+import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -137,7 +138,9 @@ app.get('/:id', async (c) => {
 app.post('/create', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['clientName']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const invoiceNumber = body.invoiceNumber || await getNextInvoiceNumber(supabase);
     const lineItems = body.lineItems || body.descriptions || [];

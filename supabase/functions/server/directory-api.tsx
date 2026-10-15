@@ -1,6 +1,7 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
+import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -56,7 +57,9 @@ app.get('/employees', async (c) => {
 app.post('/employees', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['name', 'email']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const ec = body.emergencyContact ?? body.emergency_contact ?? null;
     const record: Record<string, any> = {
@@ -114,8 +117,12 @@ app.post('/employees', async (c) => {
 app.put('/employees/:id', async (c) => {
   try {
     const supabase = getSupabase();
-    const id = c.req.param('id');
-    const body = await c.req.json();
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
+    const v = await requireFields(c, ['name']);
+    if (!v.ok) return v.response;
+    const body = v.body;
 
     const putEc = body.emergencyContact ?? body.emergency_contact;
     const putRecord: Record<string, any> = {

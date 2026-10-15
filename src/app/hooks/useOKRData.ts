@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { API_BASE, publicAnonKey, safeJson, apiHeaders } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, apiHeaders, apiFetch }from '../utils/constants';
 
 const OKR_URL = `${API_BASE}/okr`;
 
@@ -62,7 +62,7 @@ export interface OKRStats {
 
 async function api<T>(path: string, options: RequestInit = {}, userId?: string, userEmail?: string): Promise<T> {
   const headers = { ...apiHeaders(userEmail), ...(userId ? { 'X-User-Id': userId } : {}) };
-  const res = await fetch(`${OKR_URL}${path}`, { ...options, headers });
+  const res = await apiFetch(`${OKR_URL}${path}`, { ...options, headers });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);

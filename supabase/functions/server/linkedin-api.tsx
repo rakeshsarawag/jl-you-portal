@@ -1,5 +1,6 @@
 import { Hono } from "npm:hono@4";
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
+import { requireFields, requireParam } from "./validate.ts";
 
 const linkedinApp = new Hono();
 
@@ -41,7 +42,9 @@ linkedinApp.get("/posts", async (c) => {
 linkedinApp.post("/posts", async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['content']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const now = new Date().toISOString();
     const post = {
       ...body,
@@ -77,7 +80,9 @@ linkedinApp.get("/posts/:id", async (c) => {
 linkedinApp.put("/posts/:id", async (c) => {
   try {
     const supabase = getSupabase();
-    const id = c.req.param("id");
+    const pv = requireParam(c, "id");
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const { data, error } = await supabase
       .from("linkedin_posts")

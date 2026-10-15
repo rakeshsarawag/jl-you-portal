@@ -1,6 +1,7 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
+import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -34,7 +35,9 @@ app.get('/posts', async (c) => {
 app.post('/posts', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['content', 'channelId']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const { data, error } = await supabase.from('communications_posts').insert({...body, ...auditCreate(c)}).select('*');
     if (error) return c.json({ error: error.message }, 500);
     return c.json({ success: true, post: data?.[0] });
@@ -47,7 +50,9 @@ app.post('/posts', async (c) => {
 app.put('/posts/:id', async (c) => {
   try {
     const supabase = getSupabase();
-    const id = c.req.param('id');
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
+    const id = pv.value;
     const body = await c.req.json();
     const { data, error } = await supabase.from('communications_posts').update({...body, ...auditUpdate(c)}).eq('id', id).select('*');
     if (error) return c.json({ error: error.message }, 500);
@@ -95,7 +100,9 @@ app.get('/announcements', async (c) => {
 app.post('/announcements', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['title', 'content']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const record = {
       ...body,
       attachments: body.attachments ?? [],
@@ -159,7 +166,9 @@ app.get('/polls', async (c) => {
 app.post('/polls', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['question']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const { data, error } = await supabase.from('communications_polls').insert({...body, ...auditCreate(c)}).select('*');
     if (error) return c.json({ error: error.message }, 500);
     return c.json({ success: true, poll: data?.[0] });
@@ -206,7 +215,9 @@ app.get('/events', async (c) => {
 app.post('/events', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['title']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const { data, error } = await supabase.from('communications_events').insert({...body, ...auditCreate(c)}).select('*');
     if (error) return c.json({ error: error.message }, 500);
     return c.json({ success: true, event: data?.[0] });
@@ -266,7 +277,9 @@ app.get('/channels', async (c) => {
 app.post('/channels', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['name']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const { data, error } = await supabase.from('communications_channels').insert({...body, ...auditCreate(c)}).select('*');
     if (error) return c.json({ error: error.message }, 500);
     return c.json({ success: true, channel: data?.[0] });

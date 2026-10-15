@@ -4,10 +4,37 @@ import { createClient } from '@supabase/supabase-js';
 // Export for direct use
 export { projectId, publicAnonKey };
 
-// Supabase client singleton
+// Supabase client singleton — always used with the user's live session.
+// supabase-js v2 automatically reads the session from its internal storage
+// and attaches the JWT to every request. RLS policies enforce auth server-side.
 export const supabase = createClient(
   `https://${projectId}.supabase.co`,
-  publicAnonKey
+  publicAnonKey,
+  {
+    auth: {
+      // Keep session in memory; supabase-js still persists to localStorage
+      // for page-refresh survival but the server enforces auth via RLS/JWT.
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: true,
+    },
+    global: {
+      // Always inject the current JWT for direct supabase.from() calls.
+      // getSession() is sync after the first await on module init below.
+      fetch: async (url: RequestInfo, options: RequestInit = {}) => {
+        const { data: { session } } = await supabase.auth.getSession();
+        const token = session?.access_token ?? publicAnonKey;
+        return fetch(url, {
+          ...options,
+          headers: {
+            ...(options.headers as Record<string, string> ?? {}),
+            apikey: publicAnonKey,
+            Authorization: `Bearer ${token}`,
+          },
+        });
+      },
+    },
+  }
 );
 
 // API Base URL — includes the route prefix used by all hooks and components
@@ -26,6 +53,19 @@ supabase.auth.getSession().then(({ data: { session } }) => {
 supabase.auth.onAuthStateChange((_event, session) => {
   _sessionToken = session?.access_token ?? null;
 });
+
+/**
+ * Global 401 handler — called by API helpers when any endpoint returns 401.
+ * Signs the user out and reloads the page so the login screen appears.
+ * Debounced so a burst of simultaneous 401s only triggers one sign-out.
+ */
+let _signingOut = false;
+export async function handleUnauthorized() {
+  if (_signingOut) return;
+  _signingOut = true;
+  await supabase.auth.signOut();
+  window.location.reload();
+}
 
 /**
  * Standard headers for all API requests.
@@ -58,6 +98,20 @@ export async function safeJson(res: Response): Promise<any> {
     console.warn(`[API] Non-JSON response (${res.status}) from ${res.url}: ${text.slice(0, 120)}`);
     return null;
   }
+}
+
+/**
+ * Authenticated fetch wrapper used by all data hooks.
+ * Automatically signs the user out and reloads if the server returns 401.
+ */
+export async function apiFetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
+  const res = await fetch(input, init);
+  if (res.status === 401) {
+    handleUnauthorized();
+    // Return a never-resolving promise so the caller never processes a 401 body
+    return new Promise(() => {});
+  }
+  return res;
 }
 
 // ── Defect Tracker — typed fallback constants ─────────────────────────────────

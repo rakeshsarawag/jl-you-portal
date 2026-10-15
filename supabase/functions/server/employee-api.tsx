@@ -5,6 +5,7 @@
  */
 
 import { Hono } from 'npm:hono';
+import { requireFields, requireParam } from "./validate.ts";
 import * as kv from './kv_store.tsx';
 
 const app = new Hono();
@@ -88,7 +89,9 @@ app.get('/:id', async (c) => {
 // Create employee
 app.post('/create', async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ['email', 'name']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     
     // Check if email already exists
     const allEmployees = await kv.getByPrefix('employee_') as Employee[];
@@ -132,7 +135,9 @@ app.post('/create', async (c) => {
 // Update employee
 app.post('/update', async (c) => {
   try {
-    const body = await c.req.json();
+    const v = await requireFields(c, ['id']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const employeeId = body.id;
     
     if (!employeeId) {

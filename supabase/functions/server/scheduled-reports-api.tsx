@@ -1,5 +1,6 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
+import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -236,7 +237,9 @@ app.get('/', async (c) => {
 app.post('/', async (c) => {
   try {
     const supabase = getSupabase();
-    const body = await c.req.json();
+    const v = await requireFields(c, ['name', 'report_type']);
+    if (!v.ok) return v.response;
+    const body = v.body;
     const nextRun = calcNextRun(body.schedule);
     const { data, error } = await supabase
       .from('scheduled_reports')
@@ -263,6 +266,8 @@ app.post('/', async (c) => {
 app.patch('/:id', async (c) => {
   try {
     const supabase = getSupabase();
+    const pv = requireParam(c, 'id');
+    if (!pv.ok) return pv.response;
     const body = await c.req.json();
     const { data, error } = await supabase
       .from('scheduled_reports')
