@@ -2,6 +2,7 @@
   "name": "@figma/my-make-file",
   "private": true,
   "version": "0.0.1",
+  "packageManager": "pnpm@10.34.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
