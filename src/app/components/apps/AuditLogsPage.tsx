@@ -3,8 +3,8 @@ import {
   Shield, Search, Download, RefreshCw, AlertTriangle,
   CheckCircle, XCircle, Info, AlertCircle, Filter, ChevronLeft, ChevronRight,
 } from 'lucide-react';
-import { API_BASE, apiHeaders, safeJson } from '../utils/constants';
-import { useUser } from '../context/UserContext';
+import { API_BASE, apiHeaders, safeJson } from '../../utils/constants';
+import { useUser } from '../../context/UserContext';
 
 const AUDIT_URL = `${API_BASE}/audit-logs`;
 

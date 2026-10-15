@@ -96,7 +96,6 @@ const en = {
   "recruitment.budgetMin": "Budget Min",
   "recruitment.budgetMax": "Budget Max",
   "recruitment.targetStartDate": "Target Start Date",
-  "recruitment.employmentType": "Employment Type",
   "recruitment.approveRequisition": "Approve",
   "recruitment.rejectRequisition": "Reject",
   "recruitment.convertToJob": "Convert to Job Opening",
@@ -165,7 +164,6 @@ const en = {
   "dashboard.title": "Employee Dashboard",
   "dashboard.checkIn": "Check In",
   "dashboard.checkOut": "Check Out",
-  "dashboard.applyLeave": "Apply Leave",
   "dashboard.leaveBalance": "Leave Balance",
   "dashboard.attendanceHistory": "Attendance History",
   "dashboard.myTasks": "My Tasks",
@@ -988,13 +986,11 @@ const en = {
   // ── Knowledge Base ─────────────────────────────────────────────────────────
   "knowledge.title": "Knowledge Base",
   "knowledge.newArticle": "New Article",
-  "knowledge.searchArticles": "Search articles...",
   "knowledge.category": "Category",
   "knowledge.author": "Author",
   "knowledge.views": "Views",
   "knowledge.likes": "Likes",
   "knowledge.featured": "Featured",
-  "knowledge.publish": "Publish",
 
   // ── Directory ─────────────────────────────────────────────────────────────
   "directory.title": "Employee Directory",
@@ -1008,7 +1004,6 @@ const en = {
   "directory.manager": "Reporting Manager",
   "directory.skills": "Skills",
   "directory.export": "Export CSV",
-  "directory.orgChart": "Org Chart",
   "directory.listView": "List View",
   "directory.noEmployees": "No employees found.",
 
@@ -1067,7 +1062,6 @@ const en = {
   "knowledge.noArticles": "No articles found.",
 
   // ── Executive Dashboard ───────────────────────────────────────────────────
-  "exec.title": "Executive Dashboard",
   "exec.overview": "Overview",
   "exec.people": "People & HR",
   "exec.finance": "Finance",
@@ -1079,8 +1073,6 @@ const en = {
   "exec.revenue": "Invoice Revenue",
   "exec.openTickets": "Open IT Tickets",
   "exec.trainingRate": "Training Completion",
-  "exec.lastUpdated": "Last updated",
-  "exec.refresh": "Refresh",
   "exec.dataUnavailable": "Data unavailable",
   "exec.newJoiners": "New Joiners",
 
@@ -1211,17 +1203,6 @@ const en = {
   "validation.text.tooLong": "Exceeds maximum allowed length",
 
   // ── Validation — Recruitment ───────────────────────────────────────────────
-  // ── Validation — Training ─────────────────────────────────────────────────
-  "validation.training.title": "Course title is required",
-  "validation.training.instructor": "Instructor name is required",
-  "validation.training.duration": "Duration must be a positive number",
-  "validation.enrollment.course": "Please select a course",
-  "validation.enrollment.employee": "Please select an employee",
-  "validation.enrollment.dateRange": "Due date must be after today",
-  "validation.learningPath.name": "Learning path name is required",
-  "validation.progress.range": "Progress must be between 0 and 100",
-
-  // ── Validation — Recruitment ───────────────────────────────────────────────
   "validation.candidate.name": "Candidate name is required",
   "validation.candidate.email": "Candidate email is required",
   "validation.candidate.email.format": "Please enter a valid candidate email",
@@ -1341,15 +1322,9 @@ const en = {
   "validation.user.bulkSelection": "Please select at least one user",
 
   // ── Validation — Communications ────────────────────────────────────────────
-  "validation.announcement.title": "Announcement title is required",
-  "validation.announcement.body": "Announcement body is required",
-  "validation.event.title": "Event title is required",
-  "validation.event.date": "Event date is required",
-  "validation.event.date.future": "Event date must be in the future",
   "validation.poll.question": "Poll question is required",
   "validation.poll.options": "At least 2 non-empty options are required",
   "validation.channel.name": "Channel name is required",
-  "validation.post.content": "Post content is required",
 
   // ── Validation — Knowledge Base ────────────────────────────────────────────
   "validation.article.title": "Article title is required",
@@ -2555,7 +2530,6 @@ const en = {
   "collaborationHub.type": "Type",
   "collaborationHub.channelPublic": "Public",
   "collaborationHub.channelPrivate": "Private",
-  "collaborationHub.browseChannels": "Browse All Channels →",
   "collaborationHub.newMessage": "New Message",
   "collaborationHub.newDM": "New Direct Message",
   "collaborationHub.newGroupDM": "New Group Message",
@@ -2573,7 +2547,6 @@ const en = {
   "collaborationHub.deleteMessage": "Delete message",
   "collaborationHub.deleteConfirm": "Delete this message?",
   "collaborationHub.react": "React",
-  "collaborationHub.pinMessage": "Pin message",
   "collaborationHub.copyLink": "Copy link",
   "collaborationHub.savePlaceholder": "Save",
   "collaborationHub.cancelPlaceholder": "Cancel",
