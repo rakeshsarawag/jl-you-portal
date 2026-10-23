@@ -749,7 +749,7 @@ app.get("/value-helps/:id", async (c) => {
 
 app.post("/value-helps", async (c) => {
   try {
-    const v = await requireFields(c, ["config_group", "config_key"]);
+    const v = await requireFields(c, ["entity", "field", "label", "value"]);
     if (!v.ok) return v.response;
     const body = v.body;
     const id = body.id || crypto.randomUUID();

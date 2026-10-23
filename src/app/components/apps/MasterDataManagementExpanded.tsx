@@ -205,7 +205,10 @@ async function apiCall(method: string, path: string, body?: unknown) {
     headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) {
+    const errorBody = await safeJson(res);
+    throw new Error(errorBody?.error || `API error: ${res.status}`);
+  }
   return safeJson(res);
 }
 
