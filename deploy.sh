@@ -31,25 +31,14 @@ echo " Project: ${PROJECT_REF}"
 echo " Function: ${FUNCTION_NAME}"
 echo "=========================================="
 
-# ── 1. Write config.toml ──────────────────────────────────────────────────────
-echo ""
-echo "→ Writing supabase/config.toml..."
-cat > supabase/config.toml << EOF
-[project]
-id = "${PROJECT_REF}"
-
-[functions.${FUNCTION_NAME}]
-verify_jwt = false
-EOF
-echo "  Done."
-
-# ── 2. Build the function bundle folder ───────────────────────────────────────
+# ── 1. Build the function bundle folder ───────────────────────────────────────
 echo ""
 echo "→ Building function bundle at ${DEST}..."
 rm -rf "${DEST}"
 mkdir -p "${DEST}"
 
-# Copy every file from server/ into the bundle (skip index.tsx — we write index.ts below)
+# Copy the canonical server implementation. index.tsx is an obsolete Make stub;
+# index.ts is the authenticated production entry point.
 for f in "${SRC}"/*.tsx; do
   name="$(basename "$f")"
   [[ "$name" == "index.tsx" ]] && continue
@@ -61,102 +50,22 @@ echo "  Files bundled:"
 ls "${DEST}"
 echo "  Done."
 
-# ── 3. Patch index.ts — remove kv_store import, wire all API routes ───────────
-echo ""
-echo "→ Patching index.ts with all API routes..."
-cat > "${DEST}/index.ts" << 'INDEXEOF'
-import { Hono } from "npm:hono";
-import { cors } from "npm:hono/cors";
-import { logger } from "npm:hono/logger";
-import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
-
-import directoryApi from "./directory-api.tsx";
-import usersApi from "./users.ts";
-import recruitmentApi from "./recruitment-api.tsx";
-import onboardingApi from "./onboarding-api.tsx";
-import employeeDashboardApi from "./employee-dashboard-api.tsx";
-import performanceApi from "./performance-api.tsx";
-import trainingApi from "./training-api.tsx";
-import itServicesApi from "./it-services-api.tsx";
-import payrollApi from "./payroll-api.tsx";
-import invoiceApi from "./invoice-api.tsx";
-import projectManagementApi from "./project-management-api.tsx";
-import assetApi from "./asset-api.tsx";
-import okrApi from "./okr-api.tsx";
-import knowledgeApi from "./knowledge-api.tsx";
-import masterDataApi from "./master-data-api.tsx";
-import permissionsApi from "./permissions.ts";
-import communicationsApi from "./communications-api.tsx";
-import { linkedinApp } from "./linkedin-api.tsx";
-import notificationsApi from "./notifications-api.tsx";
-import pushApi from "./push-api.tsx";
-import workflowApi from "./workflow-api.tsx";
-import employeeApi from "./employee-api.tsx";
-import lifecycleApi from "./lifecycle-api.tsx";
-import demoDataApi from "./demo-data-api.tsx";
-
-const app = new Hono();
-const base = "/make-server-1fe2c468";
-
-app.use("*", logger(console.log));
-
-app.use("/*", cors({
-  origin: "*",
-  allowHeaders: ["Content-Type", "Authorization", "apikey", "x-user-email"],
-  allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  exposeHeaders: ["Content-Length"],
-  maxAge: 600,
-}));
-
-app.get(`${base}/health`, (c) =>
-  c.json({ status: "ok", version: "2026-08-26-AUDIT-COLUMNS" })
-);
-
-app.route(`${base}/directory`, directoryApi);
-app.route(`${base}/users`, usersApi);
-app.route(`${base}/recruitment`, recruitmentApi);
-app.route(`${base}/onboarding`, onboardingApi);
-app.route(`${base}/employee-dashboard`, employeeDashboardApi);
-app.route(`${base}/performance`, performanceApi);
-app.route(`${base}/training`, trainingApi);
-app.route(`${base}/it-services`, itServicesApi);
-app.route(`${base}/payroll`, payrollApi);
-app.route(`${base}/invoices`, invoiceApi);
-app.route(`${base}/projects`, projectManagementApi);
-app.route(`${base}/assets`, assetApi);
-app.route(`${base}/okr`, okrApi);
-app.route(`${base}/knowledge`, knowledgeApi);
-app.route(`${base}/master-data`, masterDataApi);
-app.route(`${base}/permissions`, permissionsApi);
-app.route(`${base}/communications`, communicationsApi);
-app.route(`${base}/linkedin`, linkedinApp);
-app.route(`${base}/notifications`, notificationsApi);
-app.route(`${base}/push`, pushApi);
-app.route(`${base}/workflow`, workflowApi);
-app.route(`${base}/employees`, employeeApi);
-app.route(`${base}/demo`, demoDataApi);
-app.route("/", lifecycleApi);
-
-Deno.serve(app.fetch);
-INDEXEOF
-echo "  Done."
-
-# ── 4. Deploy edge function ───────────────────────────────────────────────────
+# ── 2. Deploy edge function with gateway JWT verification enabled ─────────────
 echo ""
 echo "→ Deploying edge function '${FUNCTION_NAME}'..."
-${SUPABASE_CMD} functions deploy "${FUNCTION_NAME}" --project-ref "${PROJECT_REF}" --no-verify-jwt
+${SUPABASE_CMD} functions deploy "${FUNCTION_NAME}" --project-ref "${PROJECT_REF}"
 echo "  Deployed!"
 
-# ── 5. Verify health endpoint ─────────────────────────────────────────────────
+# ── 3. Verify unauthenticated requests are denied ──────────────────────────────
 echo ""
-echo "→ Verifying health endpoint..."
+echo "→ Verifying anonymous access is blocked..."
 HEALTH_URL="https://${PROJECT_REF}.supabase.co/functions/v1/${FUNCTION_NAME}/health"
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${HEALTH_URL}")
-if [ "${HTTP_STATUS}" = "200" ]; then
-  echo "  ✓ Health check passed (HTTP ${HTTP_STATUS})"
+if [ "${HTTP_STATUS}" = "401" ] || [ "${HTTP_STATUS}" = "403" ]; then
+  echo "  Anonymous request correctly denied (HTTP ${HTTP_STATUS})"
   echo "  URL: ${HEALTH_URL}"
 else
-  echo "  ✗ Health check returned HTTP ${HTTP_STATUS}"
+  echo "  SECURITY FAILURE: anonymous request returned HTTP ${HTTP_STATUS}" >&2
   echo "  URL: ${HEALTH_URL}"
   echo "  Check logs: ${SUPABASE_CMD} functions logs ${FUNCTION_NAME} --project-ref ${PROJECT_REF}"
   exit 1

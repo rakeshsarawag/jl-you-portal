@@ -63,21 +63,18 @@ bash deploy.sh
 ```
 
 This script:
-1. Creates `supabase/config.toml`
-2. Bundles all API files into `supabase/functions/make-server-1fe2c468/`
-3. Patches `index.ts` with all route mounts (no `kv_store` dependency)
-4. Deploys the edge function to Supabase
-5. Verifies the health endpoint
+1. Bundles the canonical authenticated server into `supabase/functions/make-server-1fe2c468/`
+2. Deploys the edge function with Supabase gateway JWT verification enabled
+3. Verifies that an unauthenticated request is rejected
 
-### Verify deployment
+### Verify anonymous access is blocked
 ```bash
-curl https://icmexriwtsjwpswexyrb.supabase.co/functions/v1/make-server-1fe2c468/make-server-4c07aff1/health
+SUPABASE_URL=https://icmexriwtsjwpswexyrb.supabase.co \
+SUPABASE_ANON_KEY=your-anon-key \
+pnpm test:security:no-anon
 ```
 
-Expected response:
-```json
-{ "status": "ok", "version": "2026-08-21-RELATIONAL-SCHEMA-V1" }
-```
+Every edge-function check and the direct REST check must return HTTP 401 or 403.
 
 ### View logs
 ```bash
@@ -98,6 +95,11 @@ supabase db push --project-ref icmexriwtsjwpswexyrb
 ```
 
 Or paste the SQL directly in the [Supabase SQL Editor](https://supabase.com/dashboard/project/icmexriwtsjwpswexyrb/sql/new).
+
+For an existing project, run pending migrations in numeric order. In
+particular, `22_deny_anon_rest_api.sql` and
+`23_close_remaining_anon_surfaces.sql` must both be applied before considering
+anonymous REST access closed.
 
 ---
 

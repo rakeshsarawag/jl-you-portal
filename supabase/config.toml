@@ -2,4 +2,4 @@
 id = "icmexriwtsjwpswexyrb"
 
 [functions.make-server-1fe2c468]
-verify_jwt = false
+verify_jwt = true
