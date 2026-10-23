@@ -14,7 +14,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { UserRole, PermissionAction, ApplicationId } from '../../types/rbac';
-import { API_BASE, publicAnonKey, apiFetch }from '../utils/constants';
+import { API_BASE, apiFetch, apiHeaders }from '../utils/constants';
 import { ALL_ROLES, buildDefaultPermissions } from '../../constants/permissionSections';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -48,7 +48,7 @@ async function seedDefaultsToDB(matrix: Record<string, RolePermissionBlob>): Pro
   await apiFetch(`${API_BASE}/permissions`, {
     method: 'POST',
     cache: 'no-store',
-    headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+    headers: apiHeaders(),
     body: JSON.stringify({ permissionMatrix: matrix, updatedBy: 'system:auto-seed' }),
   });
 }
@@ -64,7 +64,7 @@ async function fetchMatrix(): Promise<Record<string, RolePermissionBlob>> {
     try {
       const res = await apiFetch(`${API_BASE}/permissions`, {
         cache: 'no-store',
-        headers: { Authorization: `Bearer ${publicAnonKey}` },
+        headers: apiHeaders(),
       });
 
       if (res.status === 503) {

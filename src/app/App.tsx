@@ -15,7 +15,7 @@ import { DisplaySettingsProvider } from './context/DisplaySettingsContext';
 import { useLocale } from '../i18n/LocaleContext';
 import { PWAService } from './services/pwaService';
 import { PWAStatus } from './components/mobile/PWAStatus';
-import { supabase, MASTER_DATA_SEED_RECORDS } from './utils/constants';
+import { supabase, MASTER_DATA_SEED_RECORDS, setApiSessionToken } from './utils/constants';
 import { createAppRouter } from './routes';
 import { useSessionTimeout } from './hooks/useSessionTimeout';
 import { SessionTimeoutWarning } from './components/SessionTimeoutWarning';
@@ -44,9 +44,11 @@ export default function App() {
           setUserId(null);
           setAccessToken(null);
         } else if (session?.access_token) {
+          setApiSessionToken(session.access_token);
           setUserId(session.user?.id ?? null);
           setAccessToken(session.access_token);
         } else {
+          setApiSessionToken(null);
           setUserId(null);
           setAccessToken(null);
         }
@@ -64,9 +66,11 @@ export default function App() {
       // INITIAL_SESSION is handled by checkSession() above — skip to avoid double render
       if (event === 'INITIAL_SESSION') return;
       if (session?.access_token) {
+        setApiSessionToken(session.access_token);
         setUserId(session.user?.id ?? null);
         setAccessToken(session.access_token);
       } else {
+        setApiSessionToken(null);
         invalidatePermissionsCache();
         setUserId(null);
         setAccessToken(null);
@@ -95,12 +99,14 @@ export default function App() {
 
   const handleLoginSuccess = (token: string) => {
     setLogoutReason(null);
+    setApiSessionToken(token);
     setAccessToken(token);
   };
 
   const handleLogout = useCallback(async () => {
     try {
       invalidatePermissionsCache();
+      setApiSessionToken(null);
       await supabase.auth.signOut();
       // Clear all SW caches so no previous user's API responses survive
       if ('caches' in window) {

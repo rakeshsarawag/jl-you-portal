@@ -14,7 +14,7 @@ import {
   useCallback,
   ReactNode,
 } from 'react';
-import { API_BASE, publicAnonKey, safeJson } from '../utils/constants';
+import { API_BASE, apiHeaders, safeJson } from '../utils/constants';
 
 export interface Employee {
   id: string;
@@ -54,8 +54,6 @@ const EmployeesContext = createContext<EmployeesContextValue>({
   byEmail: () => undefined,
 });
 
-const HEADERS = { Authorization: `Bearer ${publicAnonKey}` };
-
 // Module-level cache so navigating between apps never re-fetches within a session
 let _cache: Employee[] | null = null;
 let _cacheTs = 0;
@@ -73,7 +71,7 @@ export function EmployeesProvider({ children }: { children: ReactNode }) {
       return;
     }
     try {
-      const res = await fetch(`${API_BASE}/directory/employees`, { headers: HEADERS });
+      const res = await fetch(`${API_BASE}/directory/employees`, { headers: apiHeaders() });
       const json = await safeJson(res);
       const list: Employee[] = Array.isArray(json?.data)
         ? json.data

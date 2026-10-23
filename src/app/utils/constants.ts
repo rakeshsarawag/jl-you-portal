@@ -44,14 +44,23 @@ export const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-serv
 // apiHeaders() reads this synchronously so callers need no async changes.
 let _sessionToken: string | null = null;
 
+/**
+ * Synchronize the token cache before authenticated React providers mount.
+ * Supabase's auth event is asynchronous, so relying on that event alone can
+ * briefly make the first API requests use the public anon key after login.
+ */
+export function setApiSessionToken(token: string | null) {
+  _sessionToken = token;
+}
+
 // Initialise from the current session immediately (handles page refresh).
 supabase.auth.getSession().then(({ data: { session } }) => {
-  _sessionToken = session?.access_token ?? null;
+  setApiSessionToken(session?.access_token ?? null);
 });
 
 // Keep the cache fresh across sign-in / sign-out / token-refresh events.
 supabase.auth.onAuthStateChange((_event, session) => {
-  _sessionToken = session?.access_token ?? null;
+  setApiSessionToken(session?.access_token ?? null);
 });
 
 /**
@@ -105,11 +114,35 @@ export async function safeJson(res: Response): Promise<any> {
  * Automatically signs the user out and reloads if the server returns 401.
  */
 export async function apiFetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
-  const res = await fetch(input, init);
-  if (res.status === 401) {
-    handleUnauthorized();
-    // Return a never-resolving promise so the caller never processes a 401 body
+  const { data: { session } } = await supabase.auth.getSession();
+  const token = session?.access_token ?? _sessionToken;
+
+  if (!token) {
+    await handleUnauthorized();
     return new Promise(() => {});
+  }
+
+  setApiSessionToken(token);
+
+  // Always replace caller-supplied Authorization values. Several legacy
+  // callers still pass the public anon key; forwarding it would turn a valid
+  // login into a 401 and trigger the global sign-out handler.
+  const headers = new Headers(input instanceof Request ? input.headers : undefined);
+  new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+  headers.set('apikey', publicAnonKey);
+  headers.set('Authorization', `Bearer ${token}`);
+
+  const res = await fetch(input, { ...init, headers });
+  if (res.status === 401) {
+    const { data: { session: refreshed }, error } = await supabase.auth.refreshSession();
+    if (!error && refreshed?.access_token) {
+      setApiSessionToken(refreshed.access_token);
+      headers.set('Authorization', `Bearer ${refreshed.access_token}`);
+      const retry = await fetch(input, { ...init, headers });
+      if (retry.status !== 401) return retry;
+    }
+
+    await handleUnauthorized();
   }
   return res;
 }

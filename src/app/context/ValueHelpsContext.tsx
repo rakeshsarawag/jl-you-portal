@@ -5,7 +5,7 @@
  */
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { API_BASE, publicAnonKey } from '../utils/constants';
+import { API_BASE, apiHeaders } from '../utils/constants';
 
 export interface VHOption {
   label: string;
@@ -50,7 +50,7 @@ export function ValueHelpsProvider({ children }: { children: ReactNode }) {
   const load = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/master-data/value-helps`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}` },
+        headers: apiHeaders(),
       });
       if (!res.ok) return;
       const json = await res.json();

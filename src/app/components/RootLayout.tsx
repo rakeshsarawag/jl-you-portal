@@ -5,7 +5,7 @@ import { EmployeesProvider } from '../context/EmployeesContext';
 import { UnsavedChangesProvider } from '../context/UnsavedChangesContext';
 import { Toaster } from './ui/sonner';
 import { useEffect, useState } from 'react';
-import { API_BASE } from '../utils/constants';
+import { API_BASE, apiHeaders } from '../utils/constants';
 import { AlertTriangle, X } from 'lucide-react';
 import { AppHeader } from './AppHeader';
 import { useLocale } from '../../i18n/LocaleContext';
@@ -27,7 +27,10 @@ function ServerStatusBanner() {
     // Defer health check so it doesn't compete with critical data fetches on mount
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(5000) });
+        const res = await fetch(`${API_BASE}/health`, {
+          headers: apiHeaders(),
+          signal: AbortSignal.timeout(5000),
+        });
         setOffline(!res.ok && res.status === 404);
       } catch {
         setOffline(true);
