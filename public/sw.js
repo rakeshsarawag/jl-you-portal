@@ -1,27 +1,45 @@
 // Service Worker for Portal Jeshan Labs PWA
-const CACHE_NAME = 'jeshan-portal-v1.1.0';
-const DATA_CACHE_NAME = 'jeshan-portal-data-v1.1.0';
+const CACHE_NAME = 'jeshan-portal-v1.2.0';
+const DATA_CACHE_NAME = 'jeshan-portal-data-v1.2.0';
 
 // Files to cache immediately on install
 const STATIC_CACHE_URLS = [
   '/',
-  '/index.html',
   '/manifest.json',
-  '/icons/icon-192x192.png',
-  '/icons/icon-512x512.png'
+  '/vite.svg'
 ];
+
+async function cacheAvailableUrls(cacheName, urls) {
+  const cache = await caches.open(cacheName);
+  const results = await Promise.allSettled(
+    urls.map(async (url) => {
+      const response = await fetch(new Request(url, { cache: 'reload' }));
+      if (!response.ok) {
+        throw new Error(`${url} returned ${response.status}`);
+      }
+      await cache.put(url, response);
+    })
+  );
+
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') {
+      console.warn('[ServiceWorker] Skipped precache URL', urls[index], result.reason);
+    }
+  });
+}
 
 // Install event - cache static resources
 self.addEventListener('install', (event) => {
   console.log('[ServiceWorker] Install');
-  
+
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log('[ServiceWorker] Caching app shell');
-      return cache.addAll(STATIC_CACHE_URLS);
-    }).then(() => {
-      return self.skipWaiting();
-    })
+    cacheAvailableUrls(CACHE_NAME, STATIC_CACHE_URLS)
+      .catch((error) => {
+        // A cache/storage failure must not prevent a newer worker from replacing
+        // a stale worker that may be serving obsolete application bundles.
+        console.warn('[ServiceWorker] App shell precache unavailable', error);
+      })
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -72,9 +90,29 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Handle static assets - cache first, then network
+  // HTML must be network-first so a deployment cannot leave cached markup
+  // pointing at hashed JavaScript bundles that no longer exist.
+  if (request.mode === 'navigate' || request.destination === 'document') {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response.ok) {
+            const responseToCache = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put('/', responseToCache));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cache = await caches.open(CACHE_NAME);
+          return (await cache.match('/')) || Response.error();
+        })
+    );
+    return;
+  }
+
+  // Versioned static assets are safe to serve cache-first.
   event.respondWith(
-    caches.match(request).then((response) => {
+    caches.open(CACHE_NAME).then((cache) => cache.match(request)).then((response) => {
       if (response) {
         return response;
       }
@@ -88,17 +126,10 @@ self.addEventListener('fetch', (event) => {
         // Clone the response
         const responseToCache = response.clone();
 
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(request, responseToCache);
-        });
+        caches.open(CACHE_NAME).then((cache) => cache.put(request, responseToCache));
 
         return response;
       });
-    }).catch(() => {
-      // Return offline page if available
-      if (request.destination === 'document') {
-        return caches.match('/offline.html');
-      }
     })
   );
 });
@@ -187,9 +218,7 @@ self.addEventListener('message', (event) => {
   
   if (event.data.type === 'CACHE_URLS') {
     event.waitUntil(
-      caches.open(CACHE_NAME).then((cache) => {
-        return cache.addAll(event.data.urls);
-      })
+      cacheAvailableUrls(CACHE_NAME, event.data.urls)
     );
   }
 });
