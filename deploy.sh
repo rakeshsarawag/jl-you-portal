@@ -25,6 +25,30 @@ else
   SUPABASE_CMD="supabase"
 fi
 
+# Function deployment uses a Supabase Management API personal access token.
+# The project's anon JWT, service-role JWT, and database password are not valid
+# CLI credentials.
+if [ -n "${SUPABASE_ACCESS_TOKEN:-}" ] &&
+   [[ "${SUPABASE_ACCESS_TOKEN}" == eyJ* ]]; then
+  echo "ERROR: SUPABASE_ACCESS_TOKEN contains a project JWT, not a Management API token." >&2
+  echo "Create a personal access token under Supabase Dashboard → Account → Access Tokens." >&2
+  echo "Then run: supabase login --token <personal-access-token>" >&2
+  exit 1
+fi
+
+echo "→ Verifying Supabase CLI authentication..."
+if ! ${SUPABASE_CMD} projects list >/dev/null 2>&1; then
+  echo "ERROR: Supabase CLI authentication failed." >&2
+  echo "The deploy command requires a valid Management API personal access token," >&2
+  echo "not the project anon key or service-role key." >&2
+  echo "" >&2
+  echo "Create a new token: Supabase Dashboard → Account → Access Tokens" >&2
+  echo "Authenticate locally: supabase login --token <personal-access-token>" >&2
+  echo "For CI: set SUPABASE_ACCESS_TOKEN to that personal access token." >&2
+  exit 1
+fi
+echo "  Authentication verified."
+
 echo "=========================================="
 echo " Supabase Deploy Script"
 echo " Project: ${PROJECT_REF}"
