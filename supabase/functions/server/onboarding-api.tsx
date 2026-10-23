@@ -1,7 +1,7 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
-import { requireFields, requireParam } from "./validate.ts";
+import { requireParam } from "./validate.ts";
 
 const app = new Hono();
 
@@ -99,11 +99,13 @@ async function updateOnboardingStatus(supabase: any, onboardingId: string) {
 function shapeRecord(record: any) {
   return {
     id: record.id,
+    name: record.employee_name,
     employeeName: record.employee_name,
     email: record.email,
     phone: record.phone || '',
     department: record.department || '',
     position: record.position || '',
+    joiningDate: record.start_date || '',
     startDate: record.start_date || '',
     manager: record.manager || '',
     buddy: record.buddy || '',
@@ -117,6 +119,7 @@ function shapeRecord(record: any) {
     authUserId: record.auth_user_id || null,
     accountCreatedDate: record.account_created_date || null,
     employeeId: record.employee_id || null,
+    recruitmentCandidateId: record.candidate_id || null,
     candidateId: record.candidate_id || null,
     tasks: record.onboarding_tasks || [],
     documents: record.onboarding_documents || [],
@@ -153,17 +156,31 @@ app.get('/employees', async (c) => {
 app.post('/employees', async (c) => {
   try {
     const supabase = getSupabase();
-    const v = await requireFields(c, ['employeeId', 'employeeName']);
-    if (!v.ok) return v.response;
-    const body = v.body;
+    const body = await c.req.json<Record<string, any>>().catch(() => null);
+    if (!body) {
+      return c.json({ success: false, error: 'Invalid or missing JSON body' }, 400);
+    }
+
+    const employeeName = String(body.employeeName || body.name || '').trim();
+    const email = String(body.email || '').trim();
+    const missing: string[] = [];
+    if (!employeeName) missing.push('employeeName');
+    if (!email) missing.push('email');
+
+    if (missing.length) {
+      return c.json({
+        success: false,
+        error: `Missing required fields: ${missing.join(', ')}`,
+      }, 400);
+    }
 
     const { data: record, error } = await supabase
       .from('onboarding_records')
       .insert([{
         employee_id: body.employeeId || null,
-        candidate_id: body.candidateId || null,
-        employee_name: body.employeeName || body.name || '',
-        email: body.email,
+        candidate_id: body.candidateId || body.recruitmentCandidateId || null,
+        employee_name: employeeName,
+        email,
         phone: body.phone || '',
         department: body.department || '',
         position: body.position || '',
