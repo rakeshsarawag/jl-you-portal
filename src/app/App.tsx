@@ -39,13 +39,20 @@ export default function App() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [logoutReason, setLogoutReason] = useState<'idle_timeout' | null>(null);
+  const [passwordRecovery, setPasswordRecovery] = useState(
+    () => window.location.pathname === '/reset-password',
+  );
 
   // Check for existing session on mount
   useEffect(() => {
     const checkSession = async () => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
-        if (error) {
+        if (window.location.pathname === '/reset-password') {
+          setApiSessionToken(session?.access_token ?? null);
+          setUserId(null);
+          setAccessToken(null);
+        } else if (error) {
           setUserId(null);
           setAccessToken(null);
         } else if (session?.access_token) {
@@ -78,6 +85,14 @@ export default function App() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       // INITIAL_SESSION is handled by checkSession() above — skip to avoid double render
       if (event === 'INITIAL_SESSION') return;
+
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecovery(true);
+        setApiSessionToken(session?.access_token ?? null);
+        setUserId(null);
+        setAccessToken(null);
+        return;
+      }
 
       // Fresh sign-ins are admitted only by handleLoginSuccess after its
       // backend check. Token refreshes can update an already admitted session.
@@ -129,6 +144,15 @@ export default function App() {
     setAccessToken(token);
     return true;
   };
+
+  const handlePasswordResetComplete = useCallback(async () => {
+    setApiSessionToken(null);
+    setAccessToken(null);
+    setUserId(null);
+    await supabase.auth.signOut({ scope: 'local' });
+    window.history.replaceState({}, '', '/');
+    setPasswordRecovery(false);
+  }, []);
 
   const handleLogout = useCallback(async () => {
     try {
@@ -213,7 +237,12 @@ export default function App() {
           </UserProvider>
         </DisplaySettingsProvider>
       ) : (
-        <LoginPage onLoginSuccess={handleLoginSuccess} logoutReason={logoutReason} />
+        <LoginPage
+          onLoginSuccess={handleLoginSuccess}
+          onPasswordResetComplete={handlePasswordResetComplete}
+          logoutReason={logoutReason}
+          passwordRecovery={passwordRecovery}
+        />
       )}
       <Toaster />
       <PWAStatus />
