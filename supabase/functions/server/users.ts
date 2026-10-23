@@ -7,6 +7,7 @@ import { Hono } from 'npm:hono';
 import { requireFields, requireParam } from "./validate.ts";
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
+import { invalidateUserRoleCache } from "./role-guard.ts";
 
 const app = new Hono();
 
@@ -28,6 +29,7 @@ app.get('/', async (c) => {
     const { data, error } = await supabase
       .from('app_users')
       .select('*')
+      .is('deleted_at', null)
       .order('name');
 
     if (error) return c.json({ error: error.message }, 500);
@@ -209,25 +211,153 @@ app.put('/:id', async (c) => {
   }
 });
 
-// Delete user
+// Soft-delete a portal account while retaining the employee and business history.
 app.delete('/:id', async (c) => {
   try {
     const supabase = getSupabase();
     const id = c.req.param('id');
 
-    const { data: existing } = await supabase
+    const { data: existing, error: fetchError } = await supabase
       .from('app_users')
-      .select('name, email')
+      .select('id, name, email, auth_user_id, employee_id, deleted_at')
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
+    if (fetchError) return c.json({ error: fetchError.message }, 500);
     if (!existing) return c.json({ error: 'User not found' }, 404);
+    if (existing.deleted_at) return c.json({ error: 'User is already deleted' }, 409);
+    if (existing.auth_user_id && existing.auth_user_id === (c as any).get('userId')) {
+      return c.json({ error: 'You cannot delete your own account' }, 400);
+    }
 
-    await supabase.from('app_users').delete().eq('id', id);
-    await logAudit(supabase, existing.email, 'USER_DELETED', `User ${existing.name} deleted`);
-    return c.json({ message: 'User deleted successfully' });
+    const now = new Date();
+    const purgeScheduledAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+    if (existing.auth_user_id) {
+      const { error: authError } = await supabase.auth.admin.updateUserById(
+        existing.auth_user_id,
+        { ban_duration: '876000h' },
+      );
+      if (authError) {
+        return c.json({ error: 'Authentication access could not be revoked' }, 500);
+      }
+    }
+
+    const { error: deleteError } = await supabase
+      .from('app_users')
+      .update({
+        status: 'inactive',
+        deleted_at: now.toISOString(),
+        purge_scheduled_at: purgeScheduledAt.toISOString(),
+        ...auditUpdate(c),
+      })
+      .eq('id', id);
+
+    if (deleteError) {
+      if (existing.auth_user_id) {
+        await supabase.auth.admin.updateUserById(
+          existing.auth_user_id,
+          { ban_duration: 'none' },
+        );
+      }
+      return c.json({ error: deleteError.message }, 500);
+    }
+
+    invalidateUserRoleCache(existing.auth_user_id);
+
+    const cleanupTasks = [
+      supabase.from('app_user_sessions').update({
+        revoked: true,
+        revoked_at: now.toISOString(),
+      }).eq('user_id', id).eq('revoked', false),
+      supabase.from('temporary_access_grants').update({
+        is_revoked: true,
+        revoked_at: now.toISOString(),
+      }).eq('user_id', id).eq('is_revoked', false),
+      supabase.from('push_subscriptions').delete().in(
+        'user_id',
+        [id, existing.auth_user_id, existing.employee_id].filter(Boolean),
+      ),
+    ];
+
+    if (existing.employee_id) {
+      cleanupTasks.push(
+        supabase.from('user_push_subscriptions').delete().eq('employee_id', existing.employee_id),
+      );
+    }
+    await Promise.allSettled(cleanupTasks);
+
+    await logAudit(
+      supabase,
+      existing.email,
+      'USER_SOFT_DELETED',
+      `User ${existing.name} archived; authentication and active access revoked; purge scheduled for ${purgeScheduledAt.toISOString()}`,
+    );
+    return c.json({
+      success: true,
+      message: 'User archived successfully',
+      purgeScheduledAt: purgeScheduledAt.toISOString(),
+    });
   } catch (error) {
+    console.error('Error deleting user:', error);
     return c.json({ error: 'Failed to delete user' }, 500);
+  }
+});
+
+// Restore an archived portal account. Historical grants and sessions stay revoked.
+app.post('/:id/restore', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const id = c.req.param('id');
+    const { data: existing, error: fetchError } = await supabase
+      .from('app_users')
+      .select('id, name, email, auth_user_id, deleted_at')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchError) return c.json({ error: fetchError.message }, 500);
+    if (!existing) return c.json({ error: 'User not found' }, 404);
+    if (!existing.deleted_at) return c.json({ error: 'User is not deleted' }, 409);
+
+    if (existing.auth_user_id) {
+      const { error: authError } = await supabase.auth.admin.updateUserById(
+        existing.auth_user_id,
+        { ban_duration: 'none' },
+      );
+      if (authError) return c.json({ error: authError.message }, 500);
+    }
+
+    const { error: restoreError } = await supabase
+      .from('app_users')
+      .update({
+        status: 'active',
+        deleted_at: null,
+        purge_scheduled_at: null,
+        ...auditUpdate(c),
+      })
+      .eq('id', id);
+
+    if (restoreError) {
+      if (existing.auth_user_id) {
+        await supabase.auth.admin.updateUserById(
+          existing.auth_user_id,
+          { ban_duration: '876000h' },
+        );
+      }
+      return c.json({ error: restoreError.message }, 500);
+    }
+
+    invalidateUserRoleCache(existing.auth_user_id);
+    await logAudit(
+      supabase,
+      existing.email,
+      'USER_RESTORED',
+      `User ${existing.name} restored; previous sessions and temporary grants remain revoked`,
+    );
+    return c.json({ success: true, message: 'User restored successfully' });
+  } catch (error) {
+    console.error('Error restoring user:', error);
+    return c.json({ error: 'Failed to restore user' }, 500);
   }
 });
 

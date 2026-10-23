@@ -2401,7 +2401,6 @@ export function UserManagement({ accessToken, onLogout }: Props) {
     (supabase as any)
       .from('app_users')
       .select('*')
-      .eq('status', 'deleted')
       .not('deleted_at', 'is', null)
       .order('deleted_at', { ascending: false })
       .then(({ data }: any) => setDeletedUsers(data ?? []))
@@ -2509,37 +2508,18 @@ export function UserManagement({ accessToken, onLogout }: Props) {
 
   // Enhanced delete: soft-delete
   const handleSoftDelete = async (user: UserWithRole) => {
-    try {
-      const now = new Date();
-      const purge = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-      const { error } = await (supabase as any)
-        .from('app_users')
-        .update({
-          deleted_at: now.toISOString(),
-          purge_scheduled_at: purge.toISOString(),
-          status: 'deleted',
-        })
-        .eq('id', user.id);
-      if (error) throw error;
+    const deleted = await um.deleteUser(user.id);
+    if (deleted) {
       toast.success(`${user.name} soft-deleted. Purge in 30 days.`);
-      um.refreshUsers?.();
-    } catch (err: any) {
-      toast.error(err?.message ?? 'Failed to delete user');
     }
   };
 
   // Restore deleted user
   const handleRestore = async (user: UserWithRole) => {
-    try {
-      void (supabase as any)
-        .from('app_users')
-        .update({ deleted_at: null, purge_scheduled_at: null, status: 'active' })
-        .eq('id', user.id);
+    const restored = await um.restoreUser(user.id);
+    if (restored) {
       toast.success(`${user.name} restored`);
       setDeletedUsers(prev => prev.filter(u => u.id !== user.id));
-      um.refreshUsers?.();
-    } catch (err: any) {
-      toast.error(err?.message ?? 'Failed to restore user');
     }
   };
 

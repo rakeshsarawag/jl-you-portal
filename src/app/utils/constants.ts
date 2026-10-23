@@ -24,13 +24,12 @@ export const supabase = createClient(
       fetch: async (url: RequestInfo, options: RequestInit = {}) => {
         const { data: { session } } = await supabase.auth.getSession();
         const token = session?.access_token ?? publicAnonKey;
+        const headers = new Headers(options.headers);
+        headers.set('apikey', publicAnonKey);
+        headers.set('Authorization', `Bearer ${token}`);
         return fetch(url, {
           ...options,
-          headers: {
-            ...(options.headers as Record<string, string> ?? {}),
-            apikey: publicAnonKey,
-            Authorization: `Bearer ${token}`,
-          },
+          headers,
         });
       },
     },

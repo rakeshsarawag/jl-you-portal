@@ -98,6 +98,10 @@ const ROUTE_RULES: Record<string, RouteRule> = {
 const _roleCache = new Map<string, { role: AppRole; employeeId: string | null; cachedAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+export function invalidateUserRoleCache(authUserId: string | null | undefined) {
+  if (authUserId) _roleCache.delete(authUserId);
+}
+
 async function lookupUserRole(
   authUserId: string,
   verifiedEmail: string,

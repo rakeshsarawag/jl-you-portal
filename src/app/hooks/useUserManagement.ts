@@ -106,13 +106,37 @@ export function useUserManagement(userEmail?: string) {
         headers: apiHeaders(userEmail),
       });
 
-      if (!response.ok) throw new Error('Failed to delete user');
+      if (!response.ok) {
+        const body = await safeJson(response);
+        throw new Error(body?.error || 'Failed to delete user');
+      }
 
       await fetchUsers(); // Refresh list
       return true;
     } catch (error) {
       console.error('Error deleting user:', error);
-      toast.error('Failed to delete user');
+      toast.error(error instanceof Error ? error.message : 'Failed to delete user');
+      return false;
+    }
+  };
+
+  const restoreUser = async (userId: string): Promise<boolean> => {
+    try {
+      const response = await apiFetch(`${API_BASE}/users/${userId}/restore`, {
+        method: 'POST',
+        headers: apiHeaders(userEmail),
+      });
+
+      if (!response.ok) {
+        const body = await safeJson(response);
+        throw new Error(body?.error || 'Failed to restore user');
+      }
+
+      await fetchUsers();
+      return true;
+    } catch (error) {
+      console.error('Error restoring user:', error);
+      toast.error(error instanceof Error ? error.message : 'Failed to restore user');
       return false;
     }
   };
@@ -171,6 +195,7 @@ export function useUserManagement(userEmail?: string) {
     createUser,
     updateUser,
     deleteUser,
+    restoreUser,
     assignRoles,
     toggleUserStatus,
     refreshUsers: fetchUsers,
