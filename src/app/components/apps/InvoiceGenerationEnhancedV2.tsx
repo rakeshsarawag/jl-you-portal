@@ -39,7 +39,7 @@ import { toast } from 'sonner';
 import { t } from '../../../i18n';
 import { useUser } from '../../context/UserContext';
 import { useSectionPermission } from "../SectionGuard";
-import { API_BASE, publicAnonKey } from '../../utils/constants';
+import { API_BASE, publicAnonKey, getApiAccessToken } from '../../utils/constants';
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { useClientOptions } from '../../hooks/useSharedData';
 
@@ -123,7 +123,7 @@ export function InvoiceGenerationDB({ accessToken, onLogout }: InvoiceGeneration
     try {
       const endpoint = (isAdmin || isFinance) ? `${API_BASE}/invoices/all` : `${API_BASE}/invoices`;
       const res = await fetch(endpoint, {
-        headers: { Authorization: `Bearer ${publicAnonKey}` },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}` },
       });
       if (res.ok) {
         const json = await res.json();
@@ -154,7 +154,7 @@ export function InvoiceGenerationDB({ accessToken, onLogout }: InvoiceGeneration
     try {
       await fetch(`${API_BASE}/invoices/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getApiAccessToken()}` },
         body: JSON.stringify({ id: invoiceId, status, ...extra }),
       });
       await loadInvoices();
@@ -248,7 +248,7 @@ export function InvoiceGenerationDB({ accessToken, onLogout }: InvoiceGeneration
     try {
       const res = await fetch(`${API_BASE}/invoices/create`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getApiAccessToken()}` },
         body: JSON.stringify({
           clientName: formData.get('clientName'),
           billToName: formData.get('clientName'),
@@ -302,7 +302,7 @@ export function InvoiceGenerationDB({ accessToken, onLogout }: InvoiceGeneration
     try {
       const res = await fetch(`${API_BASE}/invoices/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${publicAnonKey}` },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getApiAccessToken()}` },
         body: JSON.stringify({
           id: editingInvoice.id,
           clientName: formData.get('clientName'),
@@ -343,7 +343,7 @@ export function InvoiceGenerationDB({ accessToken, onLogout }: InvoiceGeneration
         try {
           const res = await fetch(`${API_BASE}/invoices/${invoiceId}`, {
             method: 'DELETE',
-            headers: { Authorization: `Bearer ${publicAnonKey}` },
+            headers: { Authorization: `Bearer ${getApiAccessToken()}` },
           });
           if (res.ok) {
             toast.success('Invoice deleted!');
@@ -386,7 +386,7 @@ export function InvoiceGenerationDB({ accessToken, onLogout }: InvoiceGeneration
         toast.info('Invoice submitted for approval');
         fetch(`${API_BASE}/workflow/trigger`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+          headers: { 'Content-Type': 'application/json', apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
           body: JSON.stringify({
             event: 'invoice.submitted',
             entity_type: 'invoice',
@@ -449,7 +449,11 @@ ${invoice.notes ? `Notes: ${invoice.notes}` : ''}
         try {
           await fetch(`${API_BASE}/notifications`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'apikey': publicAnonKey },
+            headers: {
+              'Content-Type': 'application/json',
+              apikey: publicAnonKey,
+              Authorization: `Bearer ${getApiAccessToken()}`,
+            },
             body: JSON.stringify({
               userId: 'finance',
               title: 'Overdue Invoice Reminder Sent',

@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { t } from '../../i18n';
 
 interface LoginPageProps {
-  onLoginSuccess: (accessToken: string) => void;
+  onLoginSuccess: (accessToken: string, userId: string) => Promise<boolean>;
   logoutReason?: 'idle_timeout' | null;
 }
 
@@ -53,8 +53,15 @@ export function LoginPage({ onLoginSuccess, logoutReason }: LoginPageProps) {
         return;
       }
       if (data.session?.access_token) {
-        toast.success(t('login.loginSuccess'));
-        onLoginSuccess(data.session.access_token);
+        const accepted = await onLoginSuccess(
+          data.session.access_token,
+          data.session.user.id,
+        );
+        if (accepted) {
+          toast.success(t('login.loginSuccess'));
+        } else {
+          toast.error('Backend server is unavailable. Sign-in is blocked until service is restored.');
+        }
       } else {
         toast.error(t('login.loginFailed'));
       }
@@ -75,8 +82,15 @@ export function LoginPage({ onLoginSuccess, logoutReason }: LoginPageProps) {
         return;
       }
       if (data.session?.access_token) {
-        toast.success(t('login.loginSuccess'));
-        onLoginSuccess(data.session.access_token);
+        const accepted = await onLoginSuccess(
+          data.session.access_token,
+          data.session.user.id,
+        );
+        if (accepted) {
+          toast.success(t('login.loginSuccess'));
+        } else {
+          toast.error('Backend server is unavailable. Sign-in is blocked until service is restored.');
+        }
       } else {
         toast.error(t('login.loginFailed'));
       }

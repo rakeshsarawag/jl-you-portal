@@ -8,7 +8,7 @@ import { usePayrollData, PayrollRecord } from '../../hooks/usePayrollData';
 import { useUser } from '../../context/UserContext';
 import { t } from '../../../i18n';
 import { toast } from 'sonner';
-import { API_BASE, publicAnonKey, safeJson, supabase } from '../../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, supabase, getApiAccessToken } from '../../utils/constants';
 import { PAYROLL_MONTHS, PAYROLL_STATUSES } from '../../../constants/apps/payroll';
 import {
   calculatePF,
@@ -294,7 +294,7 @@ async function apiFetch(url: string, options?: RequestInit) {
     ...options,
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${publicAnonKey}`,
+      'Authorization': `Bearer ${getApiAccessToken()}`,
       ...(options?.headers || {}),
     },
   });

@@ -17,7 +17,7 @@ import {
 import { motion } from 'motion/react';
 import { useUser } from '../context/UserContext';
 import { useEmployeeDashboard } from '../hooks/useEmployeeDashboard';
-import { API_BASE, publicAnonKey, safeJson } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../utils/constants';
 import { APP_VERSION } from '../../constants/global';
 import { APP_BY_PATH } from '../../constants/appRegistry';
 import { usePermissions } from '../hooks/usePermissions';
@@ -187,7 +187,7 @@ type StatKey =
   | 'system_version';
 
 async function fetchStat(url: string, transform: (data: any) => number | string): Promise<number | string> {
-  const res = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${publicAnonKey}` } });
+  const res = await fetch(url, { cache: 'no-store', headers: { Authorization: `Bearer ${getApiAccessToken()}` } });
   if (!res.ok) throw new Error('fetch error');
   const data = await safeJson(res);
   return transform(data);
@@ -683,10 +683,10 @@ function WorkflowActivityWidget({ userId }: { userId: string }) {
   useEffect(() => {
     Promise.allSettled([
       fetch(`${API_BASE}/workflow/approvals/my?user_id=${userId}`, {
-        cache: 'no-store', headers: { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+        cache: 'no-store', headers: { apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
       }).then(r => safeJson(r)),
       fetch(`${API_BASE}/workflow/stats`, {
-        cache: 'no-store', headers: { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+        cache: 'no-store', headers: { apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
       }).then(r => safeJson(r)),
     ]).then(([appRes, statsRes]) => {
       setData({
@@ -823,7 +823,7 @@ function PendingApprovalsWidget({
     if (!userId) return;
     fetch(`${API_BASE}/workflow/approvals/my?user_id=${userId}`, {
       cache: 'no-store',
-      headers: { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+      headers: { apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
     })
       .then(r => safeJson(r))
       .then(d => setWfApprovals(Array.isArray(d?.data) ? d.data : []))
@@ -927,7 +927,7 @@ function SidebarAnnouncementsWidget({ navigate }: { navigate: Function }) {
 
   useEffect(() => {
     fetch(`${API_BASE}/communications/announcements`, {
-      cache: 'no-store', headers: { Authorization: `Bearer ${publicAnonKey}` },
+      cache: 'no-store', headers: { Authorization: `Bearer ${getApiAccessToken()}` },
     })
       .then(r => safeJson(r))
       .then(data => {
@@ -987,7 +987,7 @@ function RecentActivityWidget({ userId }: { userId: string }) {
     if (!userId) { setLoading(false); return; }
     fetch(`${API_BASE}/notifications?userId=${userId}`, {
       cache: 'no-store',
-      headers: { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+      headers: { apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
     })
       .then(r => safeJson(r))
       .then(d => setActivities((Array.isArray(d?.data) ? d.data : []).slice(0, 5)))
@@ -1339,7 +1339,7 @@ function OrgAnnouncementsWidget({ navigate }: { navigate: Function }) {
 
   useEffect(() => {
     fetch(`${API_BASE}/communications/announcements`, {
-      cache: 'no-store', headers: { Authorization: `Bearer ${publicAnonKey}` },
+      cache: 'no-store', headers: { Authorization: `Bearer ${getApiAccessToken()}` },
     })
       .then(r => safeJson(r))
       .then(data => {

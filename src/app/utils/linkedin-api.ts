@@ -1,10 +1,10 @@
-import { projectId, publicAnonKey } from '../utils/constants';
+import { projectId, publicAnonKey, getApiAccessToken } from '../utils/constants';
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468/linkedin`;
 
 const getHeaders = () => ({
   'Content-Type': 'application/json',
-  'Authorization': `Bearer ${publicAnonKey}`,
+  'Authorization': `Bearer ${getApiAccessToken()}`,
 });
 
 // ============ POSTS API ============

@@ -12,7 +12,7 @@ import { useUser } from '../../context/UserContext';
 import { useSectionPermission } from "../SectionGuard";
 import { useTrainingData, Course, Enrollment } from '../../hooks/useTrainingData';
 import { t } from '../../../i18n/index';
-import { supabase, API_BASE, publicAnonKey } from '../../utils/constants';
+import { supabase, API_BASE, publicAnonKey, getApiAccessToken } from '../../utils/constants';
 import {
   TRAINING_STATUSES,
   COURSE_CATEGORIES,
@@ -2893,7 +2893,7 @@ export function TrainingTrackerEnhanced({
                 try {
                   await fetch(`${API_BASE}/training/courses`, {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+                    headers: { 'Authorization': `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
                     body: JSON.stringify(restCourse),
                   });
                   await loadAll();

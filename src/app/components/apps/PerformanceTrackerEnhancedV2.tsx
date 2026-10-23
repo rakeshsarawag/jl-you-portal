@@ -11,7 +11,7 @@ import ConfirmDialog from '../ui/ConfirmDialog';
 import { toast } from 'sonner';
 import { useUser } from '../../context/UserContext';
 import { useSectionPermission } from '../SectionGuard';
-import { API_BASE, publicAnonKey, safeJson, supabase } from '../../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, supabase, getApiAccessToken } from '../../utils/constants';
 import {
   usePerformanceData,
   type PerformanceReview,
@@ -2187,7 +2187,7 @@ function CalibrationSection({ reviews, userId }: { reviews: PerformanceReview[];
       await Promise.all(entries.map(([id, rating]) =>
         fetch(`${API_BASE}/performance/reviews/${id}`, {
           method: 'PUT',
-          headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+          headers: { 'Authorization': `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ calibrated_rating: rating, calibrated_by: userId, calibrated_at: new Date().toISOString() }),
         })
       ));
@@ -2649,7 +2649,7 @@ export function PerformanceTrackerEnhancedV2({
     if (!canApprove) return;
     setCyclesLoading(true);
     fetch(`${API_BASE}/performance/cycles`, {
-      headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
     })
       .then(r => safeJson(r))
       .then(j => { if (j?.success) setCycles(j?.data ?? []); })
@@ -2660,7 +2660,7 @@ export function PerformanceTrackerEnhancedV2({
   const handleCreateCycle = async (data: Partial<ReviewCycle>) => {
     const res = await fetch(`${API_BASE}/performance/cycles`, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     });
     const j = await safeJson(res);
@@ -2672,7 +2672,7 @@ export function PerformanceTrackerEnhancedV2({
   const handleActivateCycle = async (id: string) => {
     const res = await fetch(`${API_BASE}/performance/cycles/${id}`, {
       method: 'PUT',
-      headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'Active' }),
     });
     const j = await safeJson(res);
@@ -2684,7 +2684,7 @@ export function PerformanceTrackerEnhancedV2({
   const handleCloseCycle = async (id: string) => {
     const res = await fetch(`${API_BASE}/performance/cycles/${id}`, {
       method: 'PUT',
-      headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'Closed' }),
     });
     const j = await safeJson(res);
@@ -2702,7 +2702,7 @@ export function PerformanceTrackerEnhancedV2({
         setConfirmState(null);
         const res = await fetch(`${API_BASE}/performance/cycles/${id}`, {
           method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${publicAnonKey}` },
+          headers: { 'Authorization': `Bearer ${getApiAccessToken()}` },
         });
         const j = await safeJson(res);
         if (!j?.success) { toast.error(j?.error || 'Failed to delete cycle'); return; }

@@ -15,7 +15,7 @@ import { useUser } from '../../context/UserContext';
 import { useSectionPermission } from '../SectionGuard';
 import { AppLayout } from './AppLayout';
 import { t } from '../../../i18n';
-import { API_BASE, publicAnonKey, safeJson } from '../../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../../utils/constants';
 
 interface KnowledgeBaseEnhancedProps {
   accessToken?: string;
@@ -117,7 +117,7 @@ function ArticleModal({ article, onClose, onLike, onEdit, onDelete, canEdit, use
     if (versionsLoaded) return;
     try {
       const res = await fetch(`${API_BASE}/knowledge/articles/${article.id}/versions`, {
-        headers: { 'Authorization': `Bearer ${publicAnonKey}` },
+        headers: { 'Authorization': `Bearer ${getApiAccessToken()}` },
       });
       const d = await safeJson(res);
       if (d?.success) setVersions(d?.data ?? []);
@@ -133,7 +133,7 @@ function ArticleModal({ article, onClose, onLike, onEdit, onDelete, canEdit, use
     setVersionLoading(true);
     try {
       const res = await fetch(`${API_BASE}/knowledge/articles/${article.id}/versions/${v.id}`, {
-        headers: { 'Authorization': `Bearer ${publicAnonKey}` },
+        headers: { 'Authorization': `Bearer ${getApiAccessToken()}` },
       });
       const d = await safeJson(res);
       if (d?.success) setSelectedVersion(d?.data);
@@ -159,7 +159,7 @@ function ArticleModal({ article, onClose, onLike, onEdit, onDelete, canEdit, use
     try {
       const res = await fetch(`${API_BASE}/knowledge/articles/${article.id}`, {
         method: 'PUT',
-        headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        headers: { 'Authorization': `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: v.title, content: v.content_snapshot }),
       });
       const d = await safeJson(res);
@@ -191,7 +191,7 @@ function ArticleModal({ article, onClose, onLike, onEdit, onDelete, canEdit, use
 
   useEffect(() => {
     fetch(`${API_BASE}/knowledge/articles/${article.id}/comments`, {
-      headers: { 'Authorization': `Bearer ${publicAnonKey}` },
+      headers: { 'Authorization': `Bearer ${getApiAccessToken()}` },
     })
       .then(r => safeJson(r))
       .then(d => { if (d?.success) setComments(d?.data ?? []); })
@@ -205,7 +205,7 @@ function ArticleModal({ article, onClose, onLike, onEdit, onDelete, canEdit, use
     try {
       const res = await fetch(`${API_BASE}/knowledge/articles/${article.id}/comments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${publicAnonKey}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${getApiAccessToken()}` },
         body: JSON.stringify({ authorId: userId, authorName: userName ?? 'Anonymous', content }),
       });
       const d = await safeJson(res);
@@ -237,7 +237,7 @@ function ArticleModal({ article, onClose, onLike, onEdit, onDelete, canEdit, use
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
         },
         body: JSON.stringify({ helpful: positive, userId }),
       });
@@ -745,7 +745,7 @@ export function KnowledgeBaseEnhanced({ onLogout }: KnowledgeBaseEnhancedProps) 
             try {
               await fetch(`${API_BASE}/knowledge/articles`, {
                 method: 'POST',
-                headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+                headers: { 'Authorization': `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify(restArticle),
               });
               await refresh();
@@ -795,7 +795,7 @@ export function KnowledgeBaseEnhanced({ onLogout }: KnowledgeBaseEnhancedProps) 
                 headers: {
                   'Content-Type': 'application/json',
                   apikey: publicAnonKey,
-                  Authorization: `Bearer ${publicAnonKey}`,
+                  Authorization: `Bearer ${getApiAccessToken()}`,
                 },
                 body: JSON.stringify({
                   title: `New Knowledge Article: ${newArticleTitle}`,

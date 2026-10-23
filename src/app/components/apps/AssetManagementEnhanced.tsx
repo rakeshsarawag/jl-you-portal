@@ -11,7 +11,7 @@ import { useUser } from '../../context/UserContext';
 import { useSectionPermission } from '../SectionGuard';
 import { useAssetData, Asset, MaintenanceLog } from '../../hooks/useAssetData';
 import { t } from '../../../i18n/index';
-import { API_BASE, publicAnonKey, apiHeaders, supabase } from '../../utils/constants';
+import { API_BASE, publicAnonKey, apiHeaders, supabase, getApiAccessToken } from '../../utils/constants';
 import {
   ASSET_TYPES,
   ASSET_STATUSES,
@@ -568,7 +568,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
               try {
                 await fetch(`${API_BASE}/assets/assets`, {
                   method: 'POST',
-                  headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+                  headers: { 'Authorization': `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
                   body: JSON.stringify(restAsset),
                 });
                 await refresh();

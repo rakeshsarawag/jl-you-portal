@@ -1,4 +1,4 @@
-import { projectId, publicAnonKey } from '../utils/constants';
+import { projectId, publicAnonKey, getApiAccessToken } from '../utils/constants';
 import { format, subDays, subMonths, startOfMonth, endOfMonth } from 'date-fns';
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468`;
@@ -99,7 +99,7 @@ export class AnalyticsService {
     try {
       const response = await fetch(`${API_BASE}/kv/${key}`, {
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
         },
       });
 

@@ -12,7 +12,7 @@ import {
   CheckSquare, Square, Minus, RefreshCw, History, Clock, Plus, Trash2, Ban,
 } from 'lucide-react';
 import { useUser } from '../../context/UserContext';
-import { API_BASE, publicAnonKey, apiHeaders } from '../../utils/constants';
+import { API_BASE, publicAnonKey, apiHeaders, getApiAccessToken } from '../../utils/constants';
 import {
   SECTION_CONFIG, ALL_ROLES, DEFAULT_APP_VISIBILITY, DEFAULT_SECTION_VISIBILITY,
   buildDefaultPermissions, UserRole,
@@ -64,7 +64,7 @@ function defaultsMatrix(): Matrix {
 }
 
 async function loadMatrix(): Promise<{ matrix: Matrix; tableMissing: boolean; dbEmpty: boolean }> {
-  const res = await fetch(PERM_URL, { headers: { Authorization: `Bearer ${publicAnonKey}` } });
+  const res = await fetch(PERM_URL, { headers: { Authorization: `Bearer ${getApiAccessToken()}` } });
   const json = await res.json();
 
   if (res.status === 503 && json?.table_missing) {
@@ -96,7 +96,7 @@ async function loadMatrix(): Promise<{ matrix: Matrix; tableMissing: boolean; db
 async function setupTable(): Promise<{ ok: boolean; sql?: string }> {
   const res = await fetch(`${PERM_URL}/setup`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${publicAnonKey}` },
+    headers: { Authorization: `Bearer ${getApiAccessToken()}` },
   });
   const json = await res.json();
   if (res.ok && json?.success) return { ok: true };
@@ -106,7 +106,7 @@ async function setupTable(): Promise<{ ok: boolean; sql?: string }> {
 async function saveMatrix(matrix: Matrix, updatedBy: string): Promise<void> {
   const res = await fetch(PERM_URL, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ permissionMatrix: matrix, updatedBy }),
   });
   if (!res.ok) throw new Error('Failed to save');
@@ -591,7 +591,7 @@ function AuditPanel() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${PERM_URL}/audit-log`, { headers: { Authorization: `Bearer ${publicAnonKey}` } })
+    fetch(`${PERM_URL}/audit-log`, { headers: { Authorization: `Bearer ${getApiAccessToken()}` } })
       .then(r => {
         if (!r.ok) throw new Error(`Server returned ${r.status}`);
         return r.json();

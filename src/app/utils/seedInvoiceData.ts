@@ -3,7 +3,7 @@
  * Creates sample Bill To, Registration, and Remittance data for testing
  */
 
-import { projectId, publicAnonKey } from '../utils/constants';
+import { projectId, publicAnonKey, getApiAccessToken } from '../utils/constants';
 
 const API_BASE = `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468/invoices`;
 
@@ -98,7 +98,7 @@ Bank Address: Frankfurt, Germany`,
         await fetch(`${API_BASE}/billto`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
+            'Authorization': `Bearer ${getApiAccessToken()}`,
             'X-User-Id': 'admin',
             'Content-Type': 'application/json',
           },
@@ -116,7 +116,7 @@ Bank Address: Frankfurt, Germany`,
         await fetch(`${API_BASE}/registration`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
+            'Authorization': `Bearer ${getApiAccessToken()}`,
             'X-User-Id': 'admin',
             'Content-Type': 'application/json',
           },
@@ -134,7 +134,7 @@ Bank Address: Frankfurt, Germany`,
         await fetch(`${API_BASE}/remittance`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
+            'Authorization': `Bearer ${getApiAccessToken()}`,
             'X-User-Id': 'admin',
             'Content-Type': 'application/json',
           },

@@ -15,13 +15,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { UserRole, PermissionAction, ApplicationId } from '../../types/rbac';
 import { API_BASE, apiFetch, apiHeaders }from '../utils/constants';
-import { ALL_ROLES, buildDefaultPermissions } from '../../constants/permissionSections';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface RolePermissionBlob {
   app_visibility?: Record<string, boolean>;
   sections?: Record<string, Record<string, boolean>>;
+  actions?: string[];
 }
 
 const EMPTY_BLOB: RolePermissionBlob = { app_visibility: {}, sections: {} };
@@ -34,24 +34,6 @@ const CACHE_TTL = 5 * 60 * 1000;
 let _inflight: Promise<Record<string, RolePermissionBlob>> | null = null;
 
 export let permissionsTableMissing = false;
-
-function buildDefaultMatrix(): Record<string, RolePermissionBlob> {
-  const m: Record<string, RolePermissionBlob> = {};
-  for (const role of ALL_ROLES) {
-    const p = buildDefaultPermissions(role);
-    m[role] = { app_visibility: p.app_visibility ?? {}, sections: p.sections ?? {} };
-  }
-  return m;
-}
-
-async function seedDefaultsToDB(matrix: Record<string, RolePermissionBlob>): Promise<void> {
-  await apiFetch(`${API_BASE}/permissions`, {
-    method: 'POST',
-    cache: 'no-store',
-    headers: apiHeaders(),
-    body: JSON.stringify({ permissionMatrix: matrix, updatedBy: 'system:auto-seed' }),
-  });
-}
 
 async function fetchMatrix(): Promise<Record<string, RolePermissionBlob>> {
   const now = Date.now();
@@ -71,16 +53,16 @@ async function fetchMatrix(): Promise<Record<string, RolePermissionBlob>> {
         const body = await res.json().catch(() => ({}));
         if (body?.table_missing) {
           permissionsTableMissing = true;
-          // Table missing — seed defaults so next load works
-          const defaults = buildDefaultMatrix();
-          seedDefaultsToDB(defaults).catch(() => {});
-          _cachedMatrix = defaults;
+          _cachedMatrix = {};
           _cacheTs = Date.now();
-          return defaults;
+          return {};
         }
       }
 
-      if (!res.ok) throw new Error('permissions fetch failed');
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`permissions fetch failed (${res.status}): ${body}`);
+      }
       permissionsTableMissing = false;
 
       const json = await res.json();
@@ -92,17 +74,9 @@ async function fetchMatrix(): Promise<Record<string, RolePermissionBlob>> {
           matrix[role] = {
             app_visibility: data.app_visibility ?? {},
             sections: data.sections ?? {},
+            actions: Array.isArray(data.actions) ? data.actions : [],
           };
         }
-      }
-
-      // DB returned no rows — seed defaults so the Permissions Manager and Launchpad work from DB
-      if (Object.keys(matrix).length === 0) {
-        const defaults = buildDefaultMatrix();
-        seedDefaultsToDB(defaults).catch(() => {});
-        _cachedMatrix = defaults;
-        _cacheTs = Date.now();
-        return defaults;
       }
 
       _cachedMatrix = matrix;
@@ -141,7 +115,10 @@ export function usePermissions(roles: UserRole[], permissionOverrides: any[] = [
   // ── canSeeApp ──────────────────────────────────────────────────────────────
   const canSeeApp = useCallback(
     (appId: string): boolean => {
-      return effectiveBlobs.some(blob => blob.app_visibility?.[appId] === true);
+      return effectiveBlobs.some(blob =>
+        blob.app_visibility?.['*'] === true ||
+        blob.app_visibility?.[appId] === true
+      );
     },
     [effectiveBlobs],
   );
@@ -175,6 +152,17 @@ export function usePermissions(roles: UserRole[], permissionOverrides: any[] = [
         create: 'create', read: 'view', update: 'edit', delete: 'delete',
         approve: 'approve', export: 'export',
       };
+      if (
+        effectiveBlobs.some(blob =>
+          (
+            blob.app_visibility?.['*'] === true ||
+            blob.app_visibility?.[String(appId)] === true
+          ) &&
+          (blob.actions?.includes('*') || blob.actions?.includes(action))
+        )
+      ) {
+        return true;
+      }
       const sectionId = actionToSection[action] ?? action;
       if (effectiveBlobs.some(b => b.sections?.[appId]?.[sectionId] === true)) return true;
       if (action === 'read') return canSeeApp(appId);

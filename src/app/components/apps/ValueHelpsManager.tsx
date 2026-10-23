@@ -6,7 +6,7 @@ import { Label } from '../ui/label';
 import { Badge } from '../ui/badge';
 import { Plus, Edit, Trash2, X, Save, List, ChevronRight, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '../../utils/constants';
+import { projectId, publicAnonKey, getApiAccessToken } from '../../utils/constants';
 
 const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468`;
 
@@ -307,7 +307,7 @@ export function ValueHelpsManager({ onClose }: ValueHelpsManagerProps) {
     try {
       const response = await fetch(`${SERVER_URL}/value-helps/all`, {
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
         },
       });
 
@@ -339,7 +339,7 @@ export function ValueHelpsManager({ onClose }: ValueHelpsManagerProps) {
       const response = await fetch(`${SERVER_URL}/value-helps/save`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(data),

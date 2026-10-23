@@ -46,7 +46,7 @@ import {
   TaskComment,
 } from "../../hooks/useProjectData";
 import { t } from "../../../i18n/index";
-import { API_BASE, publicAnonKey, safeJson, apiHeaders, supabase } from "../../utils/constants";
+import { API_BASE, publicAnonKey, safeJson, apiHeaders, supabase, getApiAccessToken } from "../../utils/constants";
 import { useSectionPermission } from "../SectionGuard";
 import {
   PROJECT_STATUSES,
@@ -587,7 +587,7 @@ async function fetchMentionEmployees(): Promise<{ id: string; full_name: string 
   if (_mentionEmployeeCache) return _mentionEmployeeCache;
   try {
     const res = await fetch(`${API_BASE}/directory/employees`, {
-      headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+      headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
     });
     const json = await res.json().catch(() => ({}));
     const rows = (json.data ?? []) as any[];
@@ -1115,7 +1115,7 @@ function TaskDetailModal({
   useEffect(() => {
     setCommentsLoading(true);
     fetch(`${API_BASE}/projects/tasks/${task.id}/comments`, {
-      headers: { Authorization: `Bearer ${publicAnonKey}`, apikey: publicAnonKey },
+      headers: { Authorization: `Bearer ${getApiAccessToken()}`, apikey: publicAnonKey },
     })
       .then(r => r.json())
       .then(d => setComments(Array.isArray(d?.data) ? d.data.map((c: any) => ({
@@ -2306,7 +2306,7 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
   const [form, setForm] = useState<MilestoneFormState>(DEFAULT_MILESTONE_FORM);
   const [saving, setSaving] = useState(false);
 
-  const pmH = { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` };
+  const pmH = { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` };
   const pmUrl = (path: string) => `${API_BASE}/projects${path}`;
 
   async function load() {
@@ -3258,7 +3258,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
 
   const selectedSprint = sprints.find((s) => s.id === selectedSprintId) ?? null;
 
-  const spmH = { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` };
+  const spmH = { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` };
   const spmUrl = (path: string) => `${API_BASE}/projects${path}`;
 
   async function loadSprints() {
@@ -4266,7 +4266,7 @@ function AddBacklogSlideOver({ sprintNames, dbSprints = [], memberNames, epics, 
   useEffect(() => {
     if (!projectId) return;
     fetch(`${API_BASE}/projects/backlog?projectId=${projectId}`, {
-      headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+      headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
     }).then(r => r.json()).then(j => setAllProjectItems(j.data ?? [])).catch(() => {});
   }, [projectId]);
 
@@ -4521,7 +4521,7 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/projects/backlog?projectId=${projectId}`, {
-        headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+        headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
       });
       const json = await res.json();
       const data = json.data ?? [];
@@ -4559,7 +4559,7 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
   useEffect(() => {
     if (!projectId) return;
     fetch(`${API_BASE}/projects/sprints?projectId=${projectId}`, {
-      headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+      headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
     }).then(r => r.json()).then(json => {
       setDbSprints((json.data ?? []).map((s: any) => ({ id: s.id, name: s.name })));
     }).catch(() => {});
@@ -4569,7 +4569,7 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
     try {
       const res = await fetch(`${API_BASE}/projects/backlog/${item.id}`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+        headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
       });
       if (!res.ok) { toast.error("Failed to delete backlog item"); return; }
       setBacklogItems(prev => prev.filter(x => x.id !== item.id));
@@ -4585,7 +4585,7 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
     try {
       const res = await fetch(`${API_BASE}/projects/backlog/${item.id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+        headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
         body: JSON.stringify({
           type: item.type,
           title: item.title,
@@ -5613,7 +5613,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
   // Helper: fetch via edge function (bypasses RLS)
   const pmFetch = async (path: string) => {
     const res = await fetch(`${API_BASE}/projects${path}`, {
-      headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+      headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
     });
     const json = await res.json().catch(() => ({}));
     return json.data ?? [];
@@ -5637,7 +5637,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
     Promise.all([
       pmFetch(`/backlog?projectId=${projectId}`),
       fetch(`${API_BASE}/projects/sprints/${selectedSprintId}/backlog`, {
-        headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+        headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
       }).then(r => r.json()).then(j => j.data ?? []).catch(() => []),
     ]).then(([backlogItems, sprintBacklog]) => {
       // Merge: attach backlog item data onto sprint_backlog rows
@@ -6574,7 +6574,7 @@ function ProjectDetailPanel({
   useEffect(() => {
     if (!project.id) return;
     fetch(`${API_BASE}/projects/sprints?projectId=${project.id}`, {
-      headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+      headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
     }).then(r => r.json()).then(json => {
       const sprints = (json.data ?? []) as { id: string; name: string }[];
       setSprintOptions(sprints);

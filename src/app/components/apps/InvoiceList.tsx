@@ -15,7 +15,7 @@ import { Search, Download, Edit2, Trash2, Eye, Filter, RefreshCw } from 'lucide-
 import { toast } from 'sonner';
 import { useInvoiceData, Invoice } from '../../hooks/useInvoiceData';
 import { formatCurrency } from '../../utils/invoiceUtils';
-import { projectId, publicAnonKey, safeJson } from '../../utils/constants';
+import { projectId, publicAnonKey, safeJson, getApiAccessToken } from '../../utils/constants';
 import { SelectOptions } from '../../context/ValueHelpsContext';
 
 interface InvoiceListProps {
@@ -68,7 +68,7 @@ export function InvoiceList({ onEdit, onView }: InvoiceListProps) {
         `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468/invoices/analytics?${params.toString()}`,
         {
           headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
+            'Authorization': `Bearer ${getApiAccessToken()}`,
             'X-User-Id': 'admin'
           },
         }
@@ -118,7 +118,7 @@ export function InvoiceList({ onEdit, onView }: InvoiceListProps) {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
+            'Authorization': `Bearer ${getApiAccessToken()}`,
             'X-User-Id': 'admin'
           },
           body: JSON.stringify({
@@ -156,7 +156,7 @@ export function InvoiceList({ onEdit, onView }: InvoiceListProps) {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
+            'Authorization': `Bearer ${getApiAccessToken()}`,
             'X-User-Id': 'admin'
           },
           body: JSON.stringify({

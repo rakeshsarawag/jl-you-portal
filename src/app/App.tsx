@@ -15,7 +15,12 @@ import { DisplaySettingsProvider } from './context/DisplaySettingsContext';
 import { useLocale } from '../i18n/LocaleContext';
 import { PWAService } from './services/pwaService';
 import { PWAStatus } from './components/mobile/PWAStatus';
-import { supabase, MASTER_DATA_SEED_RECORDS, setApiSessionToken } from './utils/constants';
+import {
+  supabase,
+  MASTER_DATA_SEED_RECORDS,
+  setApiSessionToken,
+  verifyBackendSession,
+} from './utils/constants';
 import { createAppRouter } from './routes';
 import { useSessionTimeout } from './hooks/useSessionTimeout';
 import { SessionTimeoutWarning } from './components/SessionTimeoutWarning';
@@ -44,9 +49,17 @@ export default function App() {
           setUserId(null);
           setAccessToken(null);
         } else if (session?.access_token) {
-          setApiSessionToken(session.access_token);
-          setUserId(session.user?.id ?? null);
-          setAccessToken(session.access_token);
+          const backendReady = await verifyBackendSession(session.access_token);
+          if (backendReady) {
+            setApiSessionToken(session.access_token);
+            setUserId(session.user?.id ?? null);
+            setAccessToken(session.access_token);
+          } else {
+            setApiSessionToken(null);
+            setUserId(null);
+            setAccessToken(null);
+            await supabase.auth.signOut({ scope: 'local' });
+          }
         } else {
           setApiSessionToken(null);
           setUserId(null);
@@ -62,14 +75,17 @@ export default function App() {
     checkSession();
 
     // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       // INITIAL_SESSION is handled by checkSession() above — skip to avoid double render
       if (event === 'INITIAL_SESSION') return;
-      if (session?.access_token) {
+
+      // Fresh sign-ins are admitted only by handleLoginSuccess after its
+      // backend check. Token refreshes can update an already admitted session.
+      if (event === 'TOKEN_REFRESHED' && session?.access_token) {
         setApiSessionToken(session.access_token);
         setUserId(session.user?.id ?? null);
         setAccessToken(session.access_token);
-      } else {
+      } else if (!session) {
         setApiSessionToken(null);
         invalidatePermissionsCache();
         setUserId(null);
@@ -97,10 +113,21 @@ export default function App() {
     ).then(() => localStorage.setItem(FLAG, '1'));
   }, []);
 
-  const handleLoginSuccess = (token: string) => {
+  const handleLoginSuccess = async (token: string, authenticatedUserId: string): Promise<boolean> => {
     setLogoutReason(null);
+    const backendReady = await verifyBackendSession(token);
+    if (!backendReady) {
+      setApiSessionToken(null);
+      setUserId(null);
+      setAccessToken(null);
+      await supabase.auth.signOut({ scope: 'local' });
+      return false;
+    }
+
     setApiSessionToken(token);
+    setUserId(authenticatedUserId);
     setAccessToken(token);
+    return true;
   };
 
   const handleLogout = useCallback(async () => {

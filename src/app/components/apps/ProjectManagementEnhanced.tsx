@@ -12,7 +12,7 @@ import { Label } from '../ui/label';
 import { Textarea } from '../ui/textarea';
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { Progress } from '../ui/progress';
-import { projectId, publicAnonKey } from '../../utils/constants';
+import { projectId, publicAnonKey, getApiAccessToken } from '../../utils/constants';
 import { useUser } from '../../context/UserContext';
 import { useSectionPermission } from '../SectionGuard';
 import { AppLayout } from './AppLayout';
@@ -75,7 +75,7 @@ export function ProjectManagementEnhanced({ accessToken, onLogout }: ProjectMana
     try {
       const response = await fetch(`${API_BASE}/projects/projects`, {
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'X-User-Id': currentUser?.id || 'admin'
         }
       });
@@ -104,7 +104,7 @@ export function ProjectManagementEnhanced({ accessToken, onLogout }: ProjectMana
       const response = await fetch(`${API_BASE}/projects/projects/${id}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'X-User-Id': currentUser?.id || 'admin'
         }
       });
@@ -149,7 +149,7 @@ export function ProjectManagementEnhanced({ accessToken, onLogout }: ProjectMana
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'X-User-Id': currentUser?.id || 'admin'
         },
         body: JSON.stringify(projectData)

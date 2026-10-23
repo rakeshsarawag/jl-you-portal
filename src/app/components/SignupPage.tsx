@@ -4,7 +4,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
-import { API_BASE, publicAnonKey, safeJson } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../utils/constants';
 import { UserPlus, ArrowLeft, Info } from 'lucide-react';
 import { toast } from 'sonner';
 import companyIcon from '../assets/logo.svg';
@@ -48,7 +48,7 @@ export function SignupPage({ onBack }: SignupPageProps) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${publicAnonKey}`,
+          Authorization: `Bearer ${getApiAccessToken()}`,
         },
         body: JSON.stringify({
           email: formData.email,

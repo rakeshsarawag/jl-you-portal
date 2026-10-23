@@ -138,14 +138,17 @@ app.use(`${base}/*`, async (c, next) => {
   await next();
 });
 
+// Authenticated availability probe. It intentionally runs after JWT
+// verification but before application RBAC/database role resolution so every
+// valid user role can confirm that the backend is online.
+app.get(`${base}/health`, (c) =>
+  c.json({ status: "ok", version: "2026-10-02-AUTH-HEALTH" })
+);
+
 // ── Role-based access control middleware ─────────────────────────────────────
 // Runs after JWT verification. Looks up the user's primary_role from app_users
 // and blocks the request if the role is not permitted for this route + method.
 app.use(`${base}/*`, roleGuard(base));
-
-app.get(`${base}/health`, (c) =>
-  c.json({ status: "ok", version: "2026-10-01-SECURE" })
-);
 
 app.route(`${base}/directory`, directoryApi);
 app.route(`${base}/users`, usersApi);

@@ -1,5 +1,4 @@
 import { createClient } from "jsr:@supabase/supabase-js@2.49.8";
-import { decodeJwt } from "npm:jose@5";
 import type { Context, Next } from "npm:hono";
 
 // ── Role definitions ──────────────────────────────────────────────────────────
@@ -16,6 +15,32 @@ export type AppRole =
 const ALL_ROLES: AppRole[] = [
   "admin", "hr", "manager", "finance", "employee", "it", "marketing",
 ];
+
+const ROLE_PRIORITY: AppRole[] = [
+  "admin", "hr", "finance", "manager", "it", "marketing", "employee",
+];
+
+function resolvePrimaryRole(roles: unknown, primaryRole: unknown): AppRole {
+  const assigned = Array.isArray(roles)
+    ? roles.filter((role): role is AppRole =>
+        typeof role === "string" && ALL_ROLES.includes(role as AppRole)
+      )
+    : [];
+
+  // Match the frontend's getPrimaryRole() behavior so UI and API permissions
+  // cannot disagree when a user has multiple roles or a stale primary_role.
+  const highestAssigned = ROLE_PRIORITY.find((role) => assigned.includes(role));
+  if (highestAssigned) return highestAssigned;
+
+  if (
+    typeof primaryRole === "string" &&
+    ALL_ROLES.includes(primaryRole as AppRole)
+  ) {
+    return primaryRole as AppRole;
+  }
+
+  return "employee";
+}
 
 // ── Route permission map ──────────────────────────────────────────────────────
 // Each entry defines which roles can use GET (read) vs POST/PUT/PATCH/DELETE (write).
@@ -67,27 +92,16 @@ const ROUTE_RULES: Record<string, RouteRule> = {
 };
 
 // ── Role lookup ───────────────────────────────────────────────────────────────
-// Fast path: read role from JWT custom claims (requires Auth Hook migration 21).
-// Slow path: DB lookup on app_users (always accurate, 5-min in-memory cache).
+// Roles are resolved from app_users rather than trusted from JWT custom claims.
+// This makes role removals and legacy records with stale claims fail correctly.
 
 const _roleCache = new Map<string, { role: AppRole; employeeId: string | null; cachedAt: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 async function lookupUserRole(
   authUserId: string,
-  rawToken: string,
+  verifiedEmail: string,
 ): Promise<{ role: AppRole; employeeId: string | null }> {
-  // ── Fast path: JWT custom claims (set by the Auth Hook in migration 21) ──
-  try {
-    const claims = decodeJwt(rawToken) as Record<string, unknown>;
-    const jwtRole = claims["app_role"] as string | undefined;
-    const jwtEmpId = claims["app_emp_id"] as string | undefined;
-    if (jwtRole && jwtRole !== "anon") {
-      return { role: jwtRole as AppRole, employeeId: jwtEmpId ?? null };
-    }
-  } catch { /* fall through to DB lookup */ }
-
-  // ── Slow path: DB lookup with cache ──────────────────────────────────────
   const now = Date.now();
   const cached = _roleCache.get(authUserId);
   if (cached && now - cached.cachedAt < CACHE_TTL_MS) {
@@ -99,11 +113,36 @@ async function lookupUserRole(
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  const { data, error } = await supabase
+  const fields = "id, email, roles, primary_role, employee_id, status, auth_user_id";
+  let { data, error } = await supabase
     .from("app_users")
-    .select("primary_role, employee_id, status")
+    .select(fields)
     .eq("auth_user_id", authUserId)
-    .single();
+    .maybeSingle();
+
+  // Older users may have been created before auth_user_id was populated. The
+  // email comes from the already verified Supabase Auth user, never a request
+  // header, so it is safe to use for reconciliation.
+  if (!data && !error && verifiedEmail) {
+    const fallback = await supabase
+      .from("app_users")
+      .select(fields)
+      .is("auth_user_id", null)
+      .ilike("email", verifiedEmail)
+      .maybeSingle();
+
+    data = fallback.data;
+    error = fallback.error;
+
+    // Persist the missing link so subsequent JWTs and requests resolve by UUID.
+    if (data && !data.auth_user_id) {
+      await supabase
+        .from("app_users")
+        .update({ auth_user_id: authUserId })
+        .eq("id", data.id)
+        .is("auth_user_id", null);
+    }
+  }
 
   if (error || !data) {
     // No app_users record — default to least privilege
@@ -114,7 +153,7 @@ async function lookupUserRole(
     throw new Error("ACCOUNT_SUSPENDED");
   }
 
-  const role = (data.primary_role ?? "employee") as AppRole;
+  const role = resolvePrimaryRole(data.roles, data.primary_role);
   const employeeId = data.employee_id ?? null;
 
   _roleCache.set(authUserId, { role, employeeId, cachedAt: now });
@@ -145,14 +184,14 @@ export function roleGuard(base: string) {
       return c.json({ error: "Forbidden: no identity" }, 403);
     }
 
-    // Extract raw token to try fast-path JWT claim lookup
-    const rawToken = (c.req.header("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    // userEmail was obtained from supabase.auth.getUser() by the JWT middleware.
+    const verifiedEmail: string = (c as any).get("userEmail") ?? "";
 
-    // Look up role (JWT claims first, DB fallback)
+    // Resolve the current role from the authoritative app_users record.
     let role: AppRole;
     let employeeId: string | null;
     try {
-      ({ role, employeeId } = await lookupUserRole(authUserId, rawToken));
+      ({ role, employeeId } = await lookupUserRole(authUserId, verifiedEmail));
     } catch (e: any) {
       if (e.message === "ACCOUNT_SUSPENDED") {
         return c.json({ error: "Forbidden: account is suspended or inactive" }, 403);
@@ -166,6 +205,18 @@ export function roleGuard(base: string) {
 
     // Find matching route rule — longest prefix wins
     const path = c.req.path.replace(base, ""); // strip the /make-server-xxx prefix
+
+    // Every authenticated role must be able to load the matrix used to decide
+    // app visibility. Only this exact GET is shared; permission management,
+    // custom roles, audit logs, temporary grants, and all writes remain admin.
+    if (
+      c.req.method === "GET" &&
+      (path === "/permissions" || path === "/permissions/")
+    ) {
+      await next();
+      return;
+    }
+
     const matchedKey = Object.keys(ROUTE_RULES)
       .filter((k) => path.startsWith(k))
       .sort((a, b) => b.length - a.length)[0]; // longest match first

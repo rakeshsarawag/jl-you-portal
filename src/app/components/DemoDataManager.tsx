@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Badge } from './ui/badge';
 import { Database, X, Check, Loader2, Trash2, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import { API_BASE, publicAnonKey, safeJson } from '../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../utils/constants';
 
 export function DemoDataManager() {
   const [isOpen, setIsOpen] = useState(false);
@@ -34,7 +34,7 @@ export function DemoDataManager() {
         const response = await fetch(`${API_BASE}/demo-data/create-test-users`, {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${publicAnonKey}`,
+            'Authorization': `Bearer ${getApiAccessToken()}`,
             'Content-Type': 'application/json',
           },
           signal: controller.signal,
@@ -80,7 +80,7 @@ export function DemoDataManager() {
       const response = await fetch(`${API_BASE}/demo-data/populate`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'Content-Type': 'application/json',
           'X-User-Id': 'admin',
         },
@@ -122,7 +122,7 @@ export function DemoDataManager() {
       const response = await fetch(`${API_BASE}/demo-data/reset`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'Content-Type': 'application/json',
           'X-User-Id': 'admin',
         },
@@ -163,7 +163,7 @@ export function DemoDataManager() {
       const response = await fetch(`${API_BASE}/demo-data/create-test-users`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'Content-Type': 'application/json',
         },
       });

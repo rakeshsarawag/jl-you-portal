@@ -4,7 +4,7 @@
  * No hardcoded data - everything comes from Supabase
  */
 
-import { projectId, publicAnonKey } from '../utils/constants';
+import { projectId, publicAnonKey, getApiAccessToken } from '../utils/constants';
 
 const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468`;
 
@@ -24,7 +24,7 @@ async function fetchFromAPI(endpoint: string, options: RequestInit = {}) {
     const response = await fetch(url, {
       ...options,
       headers: {
-        'Authorization': `Bearer ${publicAnonKey}`,
+        'Authorization': `Bearer ${getApiAccessToken()}`,
         'Content-Type': 'application/json',
         ...options.headers,
       },

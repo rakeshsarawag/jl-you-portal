@@ -29,6 +29,42 @@ function isTableMissing(error: any): boolean {
   );
 }
 
+const LEGACY_APP_ALIASES: Record<string, string> = {
+  dashboard: "employee-dashboard",
+  knowledge: "knowledge-base",
+  workflow: "workflow-dashboard",
+};
+
+/**
+ * Older role_permissions rows stored `apps` and `actions` arrays. Preserve
+ * those database decisions while presenting the current app_visibility shape
+ * expected by the portal. Modern rows pass through unchanged.
+ */
+function normalizePermissionShape(permissions: unknown): Record<string, any> {
+  if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) {
+    return {};
+  }
+
+  const value = permissions as Record<string, any>;
+  if (value.app_visibility || value.sections) return value;
+
+  const apps = Array.isArray(value.apps)
+    ? value.apps.filter((app): app is string => typeof app === "string")
+    : [];
+  const appVisibility: Record<string, boolean> = {};
+
+  for (const app of apps) {
+    const appId = LEGACY_APP_ALIASES[app] ?? app;
+    appVisibility[appId] = true;
+  }
+
+  return {
+    ...value,
+    app_visibility: appVisibility,
+    sections: {},
+  };
+}
+
 // ── GET / — list all role permissions ────────────────────────────────────────
 app.get("/", async (c) => {
   try {
@@ -47,10 +83,14 @@ app.get("/", async (c) => {
     // Build permissionMatrix: { [role]: { ...permissions } }
     const permissionMatrix: Record<string, any> = {};
     (data ?? []).forEach((row) => {
-      permissionMatrix[row.role] = row.permissions;
+      permissionMatrix[row.role] = normalizePermissionShape(row.permissions);
     });
 
-    return c.json({ success: true, permissionMatrix });
+    return c.json({
+      success: true,
+      permissionMatrix,
+      rolesLoaded: Object.keys(permissionMatrix),
+    });
   } catch (error) {
     console.error("Error fetching permission matrix:", error);
     return c.json({ success: false, error: "Failed to fetch permissions" }, 500);

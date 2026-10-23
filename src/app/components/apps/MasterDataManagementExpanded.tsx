@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 import { useUser } from '../../context/UserContext';
 import { useMasterDataDirect } from '../../hooks/useSharedData';
 import { AppLayout } from './AppLayout';
-import { API_BASE, publicAnonKey, safeJson } from '../../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../../utils/constants';
 import { t } from '../../../i18n/index';
 
 const MASTER_URL = `${API_BASE}/master-data`;
@@ -202,7 +202,7 @@ const ENTITIES: EntityDef[] = [
 async function apiCall(method: string, path: string, body?: unknown) {
   const res = await fetch(`${MASTER_URL}${path}`, {
     method,
-    headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -398,7 +398,7 @@ function useValueHelpsData() {
     try {
       setLoading(true);
       const res = await fetch(`${MASTER_URL}/value-helps`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}` },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}` },
       });
       if (!res.ok) { setRows([]); return; }
       const json = await safeJson(res);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { projectId, publicAnonKey, safeJson, apiFetch }from '../utils/constants';
+import { projectId, publicAnonKey, safeJson, apiFetch, getApiAccessToken }from '../utils/constants';
 import { toast } from 'sonner';
 
 const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468`;
@@ -29,7 +29,7 @@ export function useDatabasePersistence<T = any>({
       setLoading(true);
       const response = await apiFetch(`${SERVER_URL}/master-data/get/${keyPrefix}`, {
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
         },
       });
 
@@ -63,7 +63,7 @@ export function useDatabasePersistence<T = any>({
       const response = await apiFetch(`${SERVER_URL}/master-data/save`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({

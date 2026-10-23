@@ -10,7 +10,7 @@ import { Alert, AlertDescription } from '../ui/alert';
 import { Upload, FileSpreadsheet, CheckCircle, XCircle, AlertCircle, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import ExcelJS from 'exceljs';
-import { projectId, publicAnonKey } from '../../utils/constants';
+import { projectId, publicAnonKey, getApiAccessToken } from '../../utils/constants';
 
 interface BulkUploadProps {
   onUploadComplete: () => void;
@@ -170,7 +170,7 @@ export function InvoiceBulkUpload({ onUploadComplete }: BulkUploadProps) {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${publicAnonKey}`,
+            'Authorization': `Bearer ${getApiAccessToken()}`,
           },
           body: JSON.stringify({ invoices: invoicesData }),
         }

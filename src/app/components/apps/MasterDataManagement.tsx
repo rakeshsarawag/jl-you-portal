@@ -37,7 +37,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { API_BASE, publicAnonKey, safeJson } from '../../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../../utils/constants';
 import { useUser } from '../../context/UserContext';
 import { MasterDataForm } from './MasterDataForm';
 import ConfirmDialog from '../ui/ConfirmDialog';
@@ -494,7 +494,7 @@ export function MasterDataManagement({ accessToken, onLogout }: MasterDataManage
     setDefectMasterLoading(true);
     try {
       const res = await fetch(`${API_BASE}/defect-tracker/master-data`, {
-        headers: { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+        headers: { apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
       });
       const json = await safeJson(res);
       if (json.data) setDefectMasterData(json.data);
@@ -504,7 +504,7 @@ export function MasterDataManagement({ accessToken, onLogout }: MasterDataManage
   const mdApi = (path: string, opts: RequestInit = {}) =>
     fetch(`${API_BASE}/master-data${path}`, {
       ...opts,
-      headers: { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
+      headers: { apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json', ...(opts.headers ?? {}) },
     });
 
   // ── Holiday helpers ────────────────────────────────────────────────────

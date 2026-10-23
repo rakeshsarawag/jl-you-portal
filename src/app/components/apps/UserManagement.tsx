@@ -15,7 +15,7 @@ import {
   Monitor, Smartphone, Tablet, MapPin, Clock, Activity, RotateCcw,
   ShieldCheck, ShieldOff, ShieldAlert, Calendar, BarChart2, Send, Upload,
 } from 'lucide-react';
-import { API_BASE, publicAnonKey, safeJson, supabase } from '../../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, supabase, getApiAccessToken } from '../../utils/constants';
 import { useNavigate } from 'react-router';
 import { useUser } from '../../context/UserContext';
 import { UserWithRole, UserRole } from '../../../types/rbac';
@@ -929,7 +929,7 @@ function ProvisionForm({ onClose, onDone, existingUserEmails }: {
 
           const res = await fetch(`${API_BASE}/users`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+            headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, name: empName, roles, provision: true }),
           });
           if (!res.ok) {
@@ -939,7 +939,7 @@ function ProvisionForm({ onClose, onDone, existingUserEmails }: {
         } else {
           const res = await fetch(`${API_BASE}/users`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+            headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, name: empName, roles, provision: true }),
           });
           if (!res.ok) {
@@ -1264,7 +1264,7 @@ function ResetPasswordModal({ user, onClose }: { user: UserWithRole; onClose: ()
     try {
       const res = await fetch(`${API_BASE}/users/${user.id}/reset-password`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+        headers: { 'Content-Type': 'application/json', apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
       });
       const json = await safeJson(res);
       if (!res.ok) throw new Error(json.error ?? 'Failed to send reset email');
@@ -1421,7 +1421,7 @@ function AuditLogTab() {
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/users/audit/logs`, {
-        headers: { apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+        headers: { apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
       });
       const json = await safeJson(res);
       setLogs(json?.logs ?? []);
@@ -2468,7 +2468,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
         selectedUsers.map(id =>
           fetch(`${API_BASE}/users/${id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', apikey: publicAnonKey, Authorization: `Bearer ${publicAnonKey}` },
+            headers: { 'Content-Type': 'application/json', apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
             body: JSON.stringify({ role: bulkRole }),
           })
         )

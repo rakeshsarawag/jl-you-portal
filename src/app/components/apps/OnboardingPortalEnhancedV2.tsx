@@ -28,7 +28,7 @@ import {
 } from '../../../constants/apps/onboarding';
 import { SelectOptions, useVH } from '../../context/ValueHelpsContext';
 import { useDepartmentOptions, useLocationOptions, useJobTitleOptions, useEmployeeOptions } from '../../hooks/useSharedData';
-import { API_BASE, publicAnonKey, safeJson } from '../../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../../utils/constants';
 import { NATIONALITIES } from '../../../constants/apps/recruitment';
 
 // ==================== SIGNATURE TYPES ====================
@@ -269,7 +269,7 @@ function SignatureModal({
     try {
       const res = await fetch(`${API_BASE}/onboarding/signature-requests/${request.id}`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           status: 'Signed',
           signed_at: new Date().toISOString(),
@@ -735,7 +735,7 @@ function DetailModal({ employee, canManage, currentUserName, currentUserId, allE
   const fetchSigRequests = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/onboarding/signature-requests?employee_id=${employee.id}`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}` },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}` },
       });
       const data = await safeJson(res);
       setSigRequests(Array.isArray(data.data) ? data.data : []);
@@ -751,7 +751,7 @@ function DetailModal({ employee, canManage, currentUserName, currentUserId, allE
     try {
       const res = await fetch(`${API_BASE}/onboarding/signature-requests`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           document_id: doc.id,
           employee_id: employee.id,
@@ -2569,7 +2569,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
   const handleConfirmProbation = async (employee: OnboardingCandidate) => {
     await fetch(`${API_BASE}/onboarding/${employee.id}`, {
       method: 'PUT',
-      headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ probation_confirmed: true, probation_confirmed_at: new Date().toISOString() }),
     });
     toast.success(`Probation confirmed for ${employee.name}`);
@@ -3050,7 +3050,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
           onAssignBuddy={async (buddyName, buddyEmail) => {
             await fetch(`${API_BASE}/onboarding/employees/${detailEmployee.id}`, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+              headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
               body: JSON.stringify({ buddy: buddyName, buddy_email: buddyEmail }),
             });
             toast.success(`Buddy assigned: ${buddyName}`);
@@ -3058,7 +3058,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
             try {
               await fetch(`${API_BASE}/notifications`, {
                 method: 'POST',
-                headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+                headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   title: 'Buddy Assignment',
                   message: `You've been assigned as onboarding buddy to ${detailEmployee.name}. Please reach out to welcome them!`,

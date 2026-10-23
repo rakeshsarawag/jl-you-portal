@@ -23,7 +23,7 @@ import {
   IMPACT_LEVELS, TICKET_SOURCES,
 } from '../../../constants/apps/it-services';
 import { SelectOptions } from '../../context/ValueHelpsContext';
-import { API_BASE, publicAnonKey, apiHeaders, supabase } from '../../utils/constants';
+import { API_BASE, publicAnonKey, apiHeaders, supabase, getApiAccessToken } from '../../utils/constants';
 import { t } from '../../../i18n/index';
 import { useEmployees } from '../../context/EmployeesContext';
 import EmployeeSearchDropdown from '../ui/EmployeeSearchDropdown';
@@ -1497,7 +1497,7 @@ function CSATPrompt({ ticket, onRated }: { ticket: Ticket; onRated: (id: string,
     try {
       await fetch(`${API_BASE}/it-services/tickets/${ticket.id}`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ csat_rating: rating, csat_submitted_at: new Date().toISOString() }),
       });
       setSubmitted(true);
@@ -1997,13 +1997,13 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
       // Also mark escalated via separate update (extra fields not in Ticket type)
       fetch(`${API_BASE}/it-services/tickets/${ticket.id}`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ escalated: true, escalated_at: new Date().toISOString() }),
       }).catch(() => {});
       // Send notification
       fetch(`${API_BASE}/notifications`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: 'admin',
           title: 'IT Ticket Escalated',

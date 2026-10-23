@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { projectId, publicAnonKey } from '../utils/constants';
+import { projectId, publicAnonKey, getApiAccessToken } from '../utils/constants';
 
 const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468`;
 
@@ -16,7 +16,7 @@ export function APIConnectionTest() {
       console.log('Testing ping endpoint...');
       const response = await fetch(`${SERVER_URL}/ping`, {
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
         },
       });
       const data = await response.json();
@@ -40,7 +40,7 @@ export function APIConnectionTest() {
       console.log('Testing employees endpoint...');
       const response = await fetch(`${SERVER_URL}/employees/all`, {
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'Content-Type': 'application/json',
         },
       });
@@ -65,7 +65,7 @@ export function APIConnectionTest() {
       console.log('Testing candidates endpoint...');
       const response = await fetch(`${SERVER_URL}/recruitment/candidates/ready-for-onboarding`, {
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'Content-Type': 'application/json',
         },
       });

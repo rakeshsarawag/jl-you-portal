@@ -53,10 +53,17 @@ export function setApiSessionToken(token: string | null) {
   _sessionToken = token;
 }
 
-// Initialise from the current session immediately (handles page refresh).
-supabase.auth.getSession().then(({ data: { session } }) => {
-  setApiSessionToken(session?.access_token ?? null);
-});
+/**
+ * Return the current user access token for legacy fetch call sites.
+ * The public anon key belongs in `apikey`; it must never be used as the
+ * Authorization bearer for protected Edge Function routes.
+ */
+export function getApiAccessToken(): string {
+  if (!_sessionToken) {
+    throw new Error('Authenticated session required for API request');
+  }
+  return _sessionToken;
+}
 
 // Keep the cache fresh across sign-in / sign-out / token-refresh events.
 supabase.auth.onAuthStateChange((_event, session) => {
@@ -64,16 +71,34 @@ supabase.auth.onAuthStateChange((_event, session) => {
 });
 
 /**
- * Global 401 handler — called by API helpers when any endpoint returns 401.
- * Signs the user out and reloads the page so the login screen appears.
- * Debounced so a burst of simultaneous 401s only triggers one sign-out.
+ * Confirm an authentication failure with Supabase Auth before signing out.
+ * An individual API can return 401 because of deployment/configuration issues;
+ * that must never destroy an otherwise valid user session.
  */
 let _signingOut = false;
-export async function handleUnauthorized() {
-  if (_signingOut) return;
+export async function handleUnauthorized(token = _sessionToken): Promise<boolean> {
+  if (_signingOut) return true;
+
+  if (token) {
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (!error && user) return false;
+
+    // Preserve the session on network/transient errors. Only an explicit Auth
+    // rejection proves that the user must be signed out.
+    const status = typeof (error as { status?: unknown } | null)?.status === 'number'
+      ? (error as { status: number }).status
+      : null;
+    if (status !== 401 && status !== 403) return false;
+  }
+
   _signingOut = true;
-  await supabase.auth.signOut();
-  window.location.reload();
+  try {
+    setApiSessionToken(null);
+    await supabase.auth.signOut({ scope: 'local' });
+  } finally {
+    _signingOut = false;
+  }
+  return true;
 }
 
 /**
@@ -94,6 +119,30 @@ export function apiHeaders(userEmail?: string): Record<string, string> {
 }
 
 /**
+ * Verify that the authenticated backend is available before mounting the
+ * portal. A successful Supabase login alone is not sufficient because every
+ * application depends on the protected Edge Function.
+ */
+export async function verifyBackendSession(token: string): Promise<boolean> {
+  if (!token) return false;
+
+  try {
+    const response = await fetch(`${API_BASE}/health`, {
+      method: 'GET',
+      cache: 'no-store',
+      headers: {
+        apikey: publicAnonKey,
+        Authorization: `Bearer ${token}`,
+      },
+      signal: AbortSignal.timeout(8000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Safe JSON parser — prevents "Unexpected non-whitespace character at position 4"
  * crashes when the server returns "404 Not Found" or other non-JSON text.
  * Returns null if the response body cannot be parsed as JSON.
@@ -111,15 +160,35 @@ export async function safeJson(res: Response): Promise<any> {
 
 /**
  * Authenticated fetch wrapper used by all data hooks.
- * Automatically signs the user out and reloads if the server returns 401.
+ * A 401 is retried once with one shared token refresh. The user is signed out
+ * only when Supabase Auth—not an application endpoint—rejects the session.
  */
+let _refreshPromise: Promise<string | null> | null = null;
+
+async function refreshApiSessionToken(): Promise<string | null> {
+  if (!_refreshPromise) {
+    _refreshPromise = supabase.auth.refreshSession()
+      .then(({ data: { session }, error }) => {
+        if (error || !session?.access_token) return null;
+        setApiSessionToken(session.access_token);
+        return session.access_token;
+      })
+      .finally(() => {
+        _refreshPromise = null;
+      });
+  }
+  return _refreshPromise;
+}
+
 export async function apiFetch(input: RequestInfo, init?: RequestInit): Promise<Response> {
   const { data: { session } } = await supabase.auth.getSession();
   const token = session?.access_token ?? _sessionToken;
 
   if (!token) {
-    await handleUnauthorized();
-    return new Promise(() => {});
+    return new Response(
+      JSON.stringify({ error: 'Unauthorized: login required' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } },
+    );
   }
 
   setApiSessionToken(token);
@@ -134,15 +203,17 @@ export async function apiFetch(input: RequestInfo, init?: RequestInit): Promise<
 
   const res = await fetch(input, { ...init, headers });
   if (res.status === 401) {
-    const { data: { session: refreshed }, error } = await supabase.auth.refreshSession();
-    if (!error && refreshed?.access_token) {
-      setApiSessionToken(refreshed.access_token);
-      headers.set('Authorization', `Bearer ${refreshed.access_token}`);
+    const refreshedToken = await refreshApiSessionToken();
+    if (refreshedToken) {
+      headers.set('Authorization', `Bearer ${refreshedToken}`);
       const retry = await fetch(input, { ...init, headers });
       if (retry.status !== 401) return retry;
+
+      await handleUnauthorized(refreshedToken);
+      return retry;
     }
 
-    await handleUnauthorized();
+    await handleUnauthorized(token);
   }
   return res;
 }

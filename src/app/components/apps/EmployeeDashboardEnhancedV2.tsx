@@ -21,7 +21,7 @@ import {
 import { useUser } from '../../context/UserContext';
 import { useEmployees } from '../../context/EmployeesContext';
 import { useEmployeeDashboard, Task, LeaveRequest } from '../../hooks/useEmployeeDashboard';
-import { API_BASE, publicAnonKey, safeJson, supabase } from '../../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, supabase, getApiAccessToken } from '../../utils/constants';
 import { LEAVE_TYPES } from '../../../constants/apps/leave';
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { useMasterDataDirect } from '../../hooks/useSharedData';
@@ -1367,7 +1367,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
   useEffect(() => {
     if (!userId) return;
     fetch(`${API_BASE}/employee-dashboard/manager/${userId}`, {
-      headers: { Authorization: `Bearer ${publicAnonKey}` },
+      headers: { Authorization: `Bearer ${getApiAccessToken()}` },
     })
       .then(r => r.ok ? r.json() : null)
       .then(j => { if (j?.manager_name) setManagerName(j.manager_name); })
@@ -1378,7 +1378,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
   const [elevatedStats, setElevatedStats] = useState({ headcount: 0, newJoiners: 0, openITTickets: 0, openRequisitions: 0 });
   useEffect(() => {
     if (!isHrAdmin && !isManager) return;
-    const hdrs = { Authorization: `Bearer ${publicAnonKey}` };
+    const hdrs = { Authorization: `Bearer ${getApiAccessToken()}` };
     const thisMonth = new Date().toISOString().slice(0, 7);
     Promise.allSettled([
       fetch(`${API_BASE}/directory`, { headers: hdrs }).then(r => safeJson(r)),
@@ -1476,7 +1476,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
     if (isEmployee && userId) {
       setEncashmentLoading(true);
       fetch(`${API_BASE}/employee-dashboard/leave-encashment?employee_id=${userId}`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}`, apikey: publicAnonKey },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}`, apikey: publicAnonKey },
       })
         .then(r => safeJson(r))
         .then(j => setEncashmentRequests(j?.data ?? []))
@@ -1486,7 +1486,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
     if (canSeePendingApprovals) {
       setAllEncashLoading(true);
       fetch(`${API_BASE}/employee-dashboard/leave-encashment`, {
-        headers: { Authorization: `Bearer ${publicAnonKey}`, apikey: publicAnonKey },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}`, apikey: publicAnonKey },
       })
         .then(r => safeJson(r))
         .then(j => setAllEncashmentRequests(j?.data ?? []))
@@ -1714,7 +1714,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
     if (tab !== 'holidays') return;
     setHolidaysLoading(true);
     fetch(`${API_BASE}/employee-dashboard/holidays`, {
-      headers: { 'Authorization': `Bearer ${publicAnonKey}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${getApiAccessToken()}`, 'Content-Type': 'application/json' },
     })
       .then(r => safeJson(r))
       .then(j => {
@@ -1732,7 +1732,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
     try {
       const res = await fetch(`${API_BASE}/employee-dashboard/leave-encashment`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${publicAnonKey}`, apikey: publicAnonKey, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}`, apikey: publicAnonKey, 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...encashForm, employee_id: userId, employee_name: userName, status: 'Pending' }),
       });
       const j = await safeJson(res);
@@ -1752,7 +1752,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
     try {
       await fetch(`${API_BASE}/employee-dashboard/leave-encashment/${id}`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${publicAnonKey}`, apikey: publicAnonKey, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}`, apikey: publicAnonKey, 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'Approved', approved_by: userName }),
       });
       toast.success('Encashment request approved');
@@ -1764,7 +1764,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
     try {
       await fetch(`${API_BASE}/employee-dashboard/leave-encashment/${id}`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${publicAnonKey}`, apikey: publicAnonKey, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${getApiAccessToken()}`, apikey: publicAnonKey, 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'Rejected', approved_by: userName }),
       });
       toast.success('Encashment request rejected');

@@ -32,7 +32,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { projectId, publicAnonKey } from '../utils/constants';
+import { projectId, publicAnonKey, getApiAccessToken } from '../utils/constants';
 
 const SERVER_URL = `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468`;
 
@@ -262,7 +262,7 @@ export function EmployeeLifecycleDemo({ onClose }: { onClose: () => void }) {
       await fetch(`${SERVER_URL}/lifecycle/employee`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(employee)
@@ -284,7 +284,7 @@ export function EmployeeLifecycleDemo({ onClose }: { onClose: () => void }) {
       await fetch(`${SERVER_URL}/lifecycle/step-complete`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${publicAnonKey}`,
+          'Authorization': `Bearer ${getApiAccessToken()}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({

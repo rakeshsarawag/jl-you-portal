@@ -5,7 +5,7 @@ import { useEmployees } from '../../context/EmployeesContext';
 import { useSectionPermission } from '../SectionGuard';
 import { toast } from 'sonner';
 import { t } from '../../../i18n/index';
-import { supabase, API_BASE, publicAnonKey, safeJson } from '../../utils/constants';
+import { supabase, API_BASE, apiHeaders, safeJson } from '../../utils/constants';
 import { ATTACHMENT_TYPES, AUDIENCE_OPTIONS } from '../../../constants/apps/communications';
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { useDepartmentOptions } from '../../hooks/useSharedData';
@@ -1408,7 +1408,7 @@ export function InternalCommunicationsHub(_props: Props) {
   const loadReactions = useCallback(async (announcementId: string) => {
     try {
       const res = await fetch(`${COMMS_API}/announcements/${announcementId}/reactions?userId=${userId ?? ''}`, {
-        headers: { apikey: publicAnonKey },
+        headers: apiHeaders(),
       });
       const json = await safeJson(res);
       if (json.success) {
@@ -1440,7 +1440,7 @@ export function InternalCommunicationsHub(_props: Props) {
     try {
       await fetch(`${COMMS_API}/announcements/${postId}/reactions`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: publicAnonKey },
+        headers: apiHeaders(),
         body: JSON.stringify({ userId, type }),
       });
     } catch { /* optimistic */ }
@@ -1458,7 +1458,7 @@ export function InternalCommunicationsHub(_props: Props) {
     loadedRef.current.add(announcementId);
     try {
       const res = await fetch(`${COMMS_API}/announcements/${announcementId}/comments`, {
-        headers: { apikey: publicAnonKey },
+        headers: apiHeaders(),
       });
       const json = await safeJson(res);
       setCommentsCache((prev) => ({ ...prev, [announcementId]: json.data ?? [] }));
@@ -1482,7 +1482,7 @@ export function InternalCommunicationsHub(_props: Props) {
     try {
       const res = await fetch(`${COMMS_API}/announcements/${announcementId}/comments`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', apikey: publicAnonKey },
+        headers: apiHeaders(),
         body: JSON.stringify({ authorId: currentUser?.id, authorName: currentUser?.name ?? 'You', content }),
       });
       const json = await safeJson(res);
