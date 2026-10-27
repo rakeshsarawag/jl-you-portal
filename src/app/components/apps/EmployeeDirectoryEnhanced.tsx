@@ -1634,11 +1634,12 @@ function OrgChartNode({ node, depth = 0, isMobile }: { node: OrgNode; depth?: nu
 
 // ── Employee Card ──────────────────────────────────────────────────────────
 function EmployeeCard({
-  emp, canEdit, onView, onEdit, onDelete, onHoverStart, onHoverEnd,
+  emp, canEdit, canDelete, onView, onEdit, onDelete, onHoverStart, onHoverEnd,
   isOnLeave, isWFH,
 }: {
   emp: DirectoryEmployee;
   canEdit: boolean;
+  canDelete: boolean;
   onView: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -1661,10 +1662,10 @@ function EmployeeCard({
       onMouseEnter={e => onHoverStart(e, emp)}
       onMouseLeave={onHoverEnd}
     >
-      {canEdit && (
+      {(canEdit || canDelete) && (
         <div className="absolute top-3 right-3 flex gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-          <button onClick={onEdit} className="w-7 h-7 flex items-center justify-center rounded-lg bg-card border border-border hover:bg-muted transition-colors shadow-sm"><Edit2 size={12} className="text-muted-foreground" /></button>
-          <button onClick={onDelete} className="w-7 h-7 flex items-center justify-center rounded-lg bg-card border border-border hover:bg-red-50 transition-colors shadow-sm"><Trash2 size={12} className="text-red-400" /></button>
+          {canEdit && <button onClick={onEdit} className="w-7 h-7 flex items-center justify-center rounded-lg bg-card border border-border hover:bg-muted transition-colors shadow-sm"><Edit2 size={12} className="text-muted-foreground" /></button>}
+          {canDelete && <button onClick={onDelete} className="w-7 h-7 flex items-center justify-center rounded-lg bg-card border border-border hover:bg-red-50 transition-colors shadow-sm"><Trash2 size={12} className="text-red-400" /></button>}
         </div>
       )}
       <div className="flex flex-col items-center text-center gap-2">
@@ -2107,8 +2108,7 @@ function EmpBulkUploadModal({ onClose, onUpload }: { onClose: () => void; onUplo
 // ── CSV Export helper ──────────────────────────────────────────────────────
 const SENSITIVE_CSV_FIELDS = ['pf_number', 'pan_number', 'bank_account_number', 'notice_period_days'] as const;
 
-function exportEmployeesCSV(employees: DirectoryEmployee[], visibleCols: Set<string>, role?: string) {
-  const canViewSensitive = role === 'hr_admin' || role === 'hr_manager' || role === 'super_admin';
+function exportEmployeesCSV(employees: DirectoryEmployee[], visibleCols: Set<string>, canViewSensitive: boolean) {
   const fmt = (d: string) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
   const colMap: Record<string, (e: DirectoryEmployee) => string> = {
     employee_code: e => (e as any).employee_code ?? '',
@@ -2152,15 +2152,16 @@ interface Props { accessToken: string; onLogout: () => void; }
 
 export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
   const { currentUser } = useUser();
-  const role = (currentUser as any)?.role as string | undefined;
-
+  const canViewProfiles  = useSectionPermission('directory', 'view_profiles');
   const canEdit          = useSectionPermission('directory', 'edit_profiles');
   const canCreate        = useSectionPermission('directory', 'create_employee');
   const canDelete        = useSectionPermission('directory', 'delete_employee');
   const canExport        = useSectionPermission('directory', 'export');
   const canBulkUpload    = useSectionPermission('directory', 'bulk_upload');
   const canViewEmergency = useSectionPermission('directory', 'emergency_contact');
-  const canViewAudit     = useSectionPermission('directory', 'view_audit_trail') || canEdit;
+  const canViewAudit     = useSectionPermission('directory', 'view_audit_trail');
+  const canViewOrgChart  = useSectionPermission('directory', 'org_chart');
+  const canViewSalary    = useSectionPermission('directory', 'salary_field');
 
   const dir = useDirectoryData();
   const { options: allDepartments } = useDepartmentOptions();
@@ -2283,6 +2284,10 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
     );
   }
 
+  if (!canViewProfiles) {
+    return <div className="p-8 text-center text-sm text-muted-foreground">You do not have permission to view employee profiles.</div>;
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -2301,7 +2306,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
               {([
                 { mode: 'list', icon: List, label: 'List view' },
                 { mode: 'card', icon: LayoutGrid, label: 'Card view' },
-                { mode: 'orgchart', icon: GitBranch, label: 'Org chart' },
+                ...(canViewOrgChart ? [{ mode: 'orgchart' as const, icon: GitBranch, label: 'Org chart' }] : []),
                 { mode: 'skillmatrix', icon: Grid3X3, label: 'Skill Matrix' },
               ] as const).map(({ mode, icon: Icon, label }) => (
                 <button key={mode} onClick={() => setViewMode(mode)}
@@ -2314,7 +2319,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
 
             {canExport && (
               <button
-                onClick={() => exportEmployeesCSV(dir.filtered, visibleCols, role)}
+                onClick={() => exportEmployeesCSV(dir.filtered, visibleCols, canViewSalary)}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border rounded-lg hover:bg-muted transition-colors"
               >
                 <Download size={13} /> Export CSV
@@ -2448,7 +2453,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
               <div className="text-center py-16 text-muted-foreground">
                 <Users size={40} className="mx-auto mb-3 opacity-30" />
                 <p className="text-sm">{dir.search || dir.filterDept || dir.filterStatus ? 'No employees match your filters.' : 'No employees in the directory yet.'}</p>
-                {canEdit && !dir.search && <button onClick={() => setShowForm(true)} className="mt-3 text-sm text-primary hover:underline">Add the first employee</button>}
+                {canCreate && !dir.search && <button onClick={() => setShowForm(true)} className="mt-3 text-sm text-primary hover:underline">Add the first employee</button>}
               </div>
             ) : (
               <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -2462,7 +2467,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                         {visibleCols.has('email') && <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">Contact</th>}
                         {visibleCols.has('location') && <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Location</th>}
                         <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
-                        {canEdit && <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Actions</th>}
+                        {(canEdit || canDelete) && <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Actions</th>}
                       </tr>
                     </thead>
                   </table>
@@ -2498,16 +2503,16 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                             {onLeaveIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">🌴</span>}
                             {wfhIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">🏠</span>}
                           </div>
-                          {canEdit && (
+                          {(canEdit || canDelete) && (
                             <div className="flex gap-1 ml-2 sm:opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-                              <button onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
+                              {canEdit && <button onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors">
                                 <Edit2 size={13} className="text-muted-foreground" />
-                              </button>
-                              <button onClick={() => setDeletingId(emp.id)}
+                              </button>}
+                              {canDelete && <button onClick={() => setDeletingId(emp.id)}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 transition-colors">
                                 <Trash2 size={13} className="text-red-400" />
-                              </button>
+                              </button>}
                             </div>
                           )}
                         </div>
@@ -2535,7 +2540,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {dir.filtered.map(emp => (
-                  <EmployeeCard key={emp.id} emp={emp} canEdit={canEdit}
+                  <EmployeeCard key={emp.id} emp={emp} canEdit={canEdit} canDelete={canDelete}
                     onView={() => openDetail(emp)}
                     onEdit={() => { setEditingEmployee(emp); setShowForm(true); }}
                     onDelete={() => setDeletingId(emp.id)}
@@ -2551,7 +2556,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
         )}
 
         {/* ── Org chart ─────────────────────────────────────────────────────── */}
-        {viewMode === 'orgchart' && (
+        {viewMode === 'orgchart' && canViewOrgChart && (
           <div className="bg-card border border-border rounded-xl p-6 relative">
             <p className="text-xs text-muted-foreground mb-6 text-center">Click the toggle on each node to expand or collapse reporting chains</p>
             {dir.loading ? (

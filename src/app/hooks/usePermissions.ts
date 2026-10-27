@@ -3,7 +3,8 @@
  *
  * Loads the role_permissions matrix exclusively from the DB (role_permissions table).
  * No hardcoded fallbacks — if the DB has no entry for a role, that role has no access.
- * Run `npm run seed:permissions` to populate the DB with initial defaults.
+ * Apply the Supabase migrations, then save the canonical defaults from the
+ * Permission Manager to populate the DB.
  *
  *   canSeeApp(appId)                 — app visible in launchpad?
  *   canSeeSection(appId, sectionId)  — section visible within an app?
@@ -15,6 +16,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { UserRole, PermissionAction, ApplicationId } from '../../types/rbac';
 import { API_BASE, apiFetch, apiHeaders }from '../utils/constants';
+import { DEFAULT_SECTION_VISIBILITY } from '../../constants/permissionSections';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -71,9 +73,18 @@ async function fetchMatrix(): Promise<Record<string, RolePermissionBlob>> {
       const matrix: Record<string, RolePermissionBlob> = {};
       for (const [role, data] of Object.entries(raw)) {
         if (data && typeof data === 'object' && ('app_visibility' in data || 'sections' in data)) {
+          const hasLegacyActions = Array.isArray(data.actions);
+          const hasStoredSections = data.sections &&
+            typeof data.sections === 'object' &&
+            Object.keys(data.sections).length > 0;
           matrix[role] = {
             app_visibility: data.app_visibility ?? {},
-            sections: data.sections ?? {},
+            // Legacy rows had apps/actions but no sections. Use the canonical
+            // role defaults only for those rows; modern all-off matrices remain
+            // intentionally all-off.
+            sections: hasLegacyActions && !hasStoredSections
+              ? DEFAULT_SECTION_VISIBILITY[role as keyof typeof DEFAULT_SECTION_VISIBILITY] ?? {}
+              : data.sections ?? {},
             actions: Array.isArray(data.actions) ? data.actions : [],
           };
         }

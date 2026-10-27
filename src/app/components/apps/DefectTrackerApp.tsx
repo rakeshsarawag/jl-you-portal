@@ -9,7 +9,7 @@ import {
   AreaChart, Area, RadialBarChart, RadialBar, ReferenceLine,
 } from "recharts";
 import {
-  Bug, AlertTriangle, CheckCircle2, Clock, TrendingUp, TrendingDown,
+  Bug, BugOff, AlertTriangle, CheckCircle2, Clock, TrendingUp, TrendingDown,
   LayoutDashboard, List, Folder, BarChart3, Settings, ChevronRight,
   ChevronDown, ChevronUp, Plus, X, Filter, Search, Eye, Edit2, Trash2,
   ExternalLink, RefreshCw, Download, AlertCircle, CheckSquare,
@@ -73,10 +73,25 @@ const ROOT_CAUSE_COLORS = [
   "#06b6d4", "#3b82f6", "#8b5cf6", "#ec4899",
 ];
 
+const PRIORITY_LABELS: Record<string, string> = {
+  P1: "Critical",
+  P2: "High",
+  P3: "Medium",
+  P4: "Low",
+};
+
+function priorityLabel(priority: string) {
+  return PRIORITY_LABELS[priority] ?? priority;
+}
+
+function defectFieldValue(field: string | undefined, value: string) {
+  return field?.toLowerCase() === "priority" ? priorityLabel(value) : value;
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface Props { accessToken: string; onLogout: () => void; }
-type Screen = "dashboard" | "all-defects" | "defect-detail" | "sla-tracker" | "by-project" | "analytics" | "settings";
+type Screen = "dashboard" | "all-defects" | "my-defects" | "defect-detail" | "sla-tracker" | "by-project" | "analytics" | "settings";
 type ViewMode = "table" | "kanban" | "timeline";
 
 // ── Small shared components ───────────────────────────────────────────────────
@@ -206,7 +221,7 @@ function SideNav({ screen, onNavigate, mobileOpen, onMobileClose, permissions }:
     <>
       <div className="flex items-center gap-2 px-4 py-4 border-b border-gray-100">
         <div className="w-8 h-8 bg-red-600 rounded-lg flex items-center justify-center flex-shrink-0">
-          <Bug className="h-4 w-4 text-white" />
+          <BugOff className="h-4 w-4 text-white" />
         </div>
         <span className="font-bold text-red-700 text-sm leading-tight">{t("defectTracker.appName")}</span>
         {/* Close button on mobile */}
@@ -235,8 +250,12 @@ function SideNav({ screen, onNavigate, mobileOpen, onMobileClose, permissions }:
         })}
 
         <button
-          onClick={() => { onNavigate("all-defects", { myDefects: true }); onMobileClose(); }}
-          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+          onClick={() => { onNavigate("my-defects", { myDefects: true }); onMobileClose(); }}
+          className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors ${
+            screen === "my-defects"
+              ? "bg-red-50 text-red-700 border-r-2 border-red-600"
+              : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
+          }`}
         >
           <User className="h-4 w-4" />
           {t("defectTracker.myDefects")}
@@ -532,12 +551,12 @@ function LogDefectModal({
   masterData,
 }: {
   onClose: () => void;
-  onCreate: (data: any) => void;
+  onCreate: (data: any) => Promise<boolean>;
   masterData?: any;
 }) {
   const { currentUser: user } = useUser();
   const [form, setForm] = useState<any>({
-    projectId: "", projectName: "", title: "", severity: "Medium", priority: "P3", status: "Open",
+    projectId: "", projectName: "General", title: "", severity: "Medium", priority: "P3", status: "Open",
     description: "", stepsToReproduce: [""], expectedResult: "", actualResult: "",
     environment: "Development", buildVersion: "", sprintId: "", sprintName: "", assigneeId: "", assigneeName: "",
     reporterId: "", reporterName: "", labels: [] as string[], isRegression: false,
@@ -553,6 +572,7 @@ function LogDefectModal({
   const [labelInput, setLabelInput] = useState("");
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [sprints, setSprints] = useState<{ id: string; name: string }[]>([]);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -574,7 +594,16 @@ function LogDefectModal({
       .catch(() => setSprints([]));
   }, [form.projectId]);
 
-  const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
+  const set = (k: string, v: any) => {
+    setForm((f: any) => ({ ...f, [k]: v }));
+    if (errors[k]) {
+      setErrors((current) => {
+        const next = { ...current };
+        delete next[k];
+        return next;
+      });
+    }
+  };
 
   const addStep = () => set("stepsToReproduce", [...form.stepsToReproduce, ""]);
   const updateStep = (i: number, v: string) => {
@@ -595,18 +624,29 @@ function LogDefectModal({
 
   const validate = () => {
     const errs: Record<string, string> = {};
-    if (!form.projectId) errs.projectId = "Project is required";
     if (!form.title.trim()) errs.title = "Title is required";
     if (!form.description.trim()) errs.description = "Description is required";
     if (!form.severity) errs.severity = "Severity is required";
     setErrors(errs);
+    if (Object.keys(errs).length > 0) {
+      toast.error(`Please complete the required fields: ${Object.values(errs).join(", ")}`);
+    }
     return Object.keys(errs).length === 0;
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (!validate()) return;
-    onCreate(form);
-    onClose();
+    setSubmitting(true);
+    try {
+      const created = await onCreate({
+        ...form,
+        projectId: form.projectId || null,
+        projectName: form.projectName || "General",
+      });
+      if (created) onClose();
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -628,22 +668,22 @@ function LogDefectModal({
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">{t("defectTracker.project")} *</label>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">{t("defectTracker.project")} (Optional)</label>
               <select
                 value={form.projectId}
                 onChange={(e) => {
                   const proj = projects.find(p => p.id === e.target.value);
                   set("projectId", e.target.value);
-                  set("projectName", proj?.name ?? "");
+                  set("projectName", proj?.name ?? "General");
                   set("sprintId", "");
                   set("sprintName", "");
                 }}
-                className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 ${errors.projectId ? "border-red-400" : "border-gray-200"}`}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200"
               >
-                <option value="">Select project...</option>
+                <option value="">General / Not project-specific</option>
                 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
-              {errors.projectId && <p className="text-red-500 text-xs mt-1">{errors.projectId}</p>}
+              <p className="text-xs text-gray-400 mt-1">Leave this as General for issues outside a project.</p>
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">{t("defectTracker.severity")} *</label>
@@ -668,24 +708,26 @@ function LogDefectModal({
 
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">{t("defectTracker.title2")} *</label>
-            <input
-              value={form.title}
-              onChange={(e) => set("title", e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200"
-              placeholder="Short, descriptive title"
-            />
+              <input
+                value={form.title}
+                onChange={(e) => set("title", e.target.value)}
+                aria-invalid={Boolean(errors.title)}
+                className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 ${errors.title ? "border-red-400" : "border-gray-200"}`}
+                placeholder="Short, descriptive title"
+              />
             {errors.title && <p className="text-red-500 text-xs mt-1">{errors.title}</p>}
           </div>
 
           <div>
             <label className="block text-xs font-semibold text-gray-600 mb-1">{t("defectTracker.description")} *</label>
-            <textarea
-              value={form.description}
-              onChange={(e) => set("description", e.target.value)}
-              rows={3}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 resize-none"
-              placeholder="Detailed description of the defect"
-            />
+              <textarea
+                value={form.description}
+                onChange={(e) => set("description", e.target.value)}
+                rows={3}
+                aria-invalid={Boolean(errors.description)}
+                className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 resize-none ${errors.description ? "border-red-400" : "border-gray-200"}`}
+                placeholder="Detailed description of the defect"
+              />
             {errors.description && <p className="text-red-500 text-xs mt-1">{errors.description}</p>}
           </div>
 
@@ -760,7 +802,7 @@ function LogDefectModal({
               >
                 {masterData?.priorities?.length
                   ? masterData.priorities.map((p: any) => (
-                      <option key={p.code} value={p.code}>{p.label ?? p.code}</option>
+                      <option key={p.code} value={p.code}>{priorityLabel(p.code ?? p.label)}</option>
                     ))
                   : <option disabled>No priorities available</option>
                 }
@@ -855,11 +897,12 @@ function LogDefectModal({
         </div>
 
         <div className="flex items-center justify-end gap-3 p-5 border-t border-gray-100">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50">
+          <button onClick={onClose} disabled={submitting} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50">
             Cancel
           </button>
-          <button onClick={submit} className="px-4 py-2 text-sm font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700">
-            Log Defect
+          <button onClick={submit} disabled={submitting} className="px-4 py-2 text-sm font-semibold text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-60 flex items-center gap-2">
+            {submitting && <RefreshCw className="h-4 w-4 animate-spin" />}
+            {submitting ? "Logging Defect..." : "Log Defect"}
           </button>
         </div>
       </div>
@@ -919,14 +962,33 @@ function AllDefectsScreen({
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
 
   const PAGE_SIZE = 50;
+  const isMyDefects = Boolean(initialFilters?.myDefects);
 
   useEffect(() => {
+    if (isMyDefects && !user) return;
     const filters: DefectFilters = {};
-    if (initialFilters?.myDefects && user?.id) filters.assigneeId = user.id;
+    if (isMyDefects && user) {
+      filters.assigneeIds = [
+        user.employeeId,
+        user.appUserId,
+        user.id,
+      ].filter((id): id is string => Boolean(id));
+      filters.assigneeNames = [user.name, user.email].filter(Boolean);
+    }
     if (initialFilters?.severity) filters.severity = initialFilters.severity;
     loadDefects(filters);
     loadMasterData();
-  }, []);
+  }, [
+    isMyDefects,
+    initialFilters?.severity,
+    user?.employeeId,
+    user?.appUserId,
+    user?.id,
+    user?.name,
+    user?.email,
+    loadDefects,
+    loadMasterData,
+  ]);
 
   const toggleSeverity = (s: string) => {
     setSeverityFilter((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
@@ -1006,7 +1068,7 @@ function AllDefectsScreen({
     ...(envFilter ? [{ label: `Env: ${envFilter}`, clear: () => setEnvFilter("") }] : []),
     ...(slaStatusFilter ? [{ label: `SLA: ${slaStatusFilter}`, clear: () => setSlaStatusFilter("") }] : []),
     ...(regressionFilter !== "all" ? [{ label: `Regression: ${regressionFilter}`, clear: () => setRegressionFilter("all") }] : []),
-    ...(priorityFilter ? [{ label: `Priority: ${priorityFilter}`, clear: () => setPriorityFilter("") }] : []),
+    ...(priorityFilter ? [{ label: `Priority: ${priorityLabel(priorityFilter)}`, clear: () => setPriorityFilter("") }] : []),
     ...(reporterFilter ? [{ label: `Reporter: ${reporterFilter}`, clear: () => setReporterFilter("") }] : []),
     ...(sprintFilter ? [{ label: `Sprint: ${sprintFilter}`, clear: () => setSprintFilter("") }] : []),
     ...(labelFilter ? [{ label: `Label: ${labelFilter}`, clear: () => setLabelFilter("") }] : []),
@@ -1135,7 +1197,9 @@ function AllDefectsScreen({
     <div className="p-6 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-gray-900">{t("defectTracker.allDefects")}</h1>
+        <h1 className="text-xl font-bold text-gray-900">
+          {isMyDefects ? t("defectTracker.myDefects") : t("defectTracker.allDefects")}
+        </h1>
         {canLog && (
           <button
             onClick={() => setShowLogModal(true)}
@@ -1225,7 +1289,7 @@ function AllDefectsScreen({
                 <option value="">All</option>
                 {masterData?.priorities?.length
                   ? masterData.priorities.map((p: any) => (
-                      <option key={p.code} value={p.code}>{p.label ?? p.code}</option>
+                      <option key={p.code} value={p.code}>{priorityLabel(p.code ?? p.label)}</option>
                     ))
                   : <option disabled>No priorities in DB</option>
                 }
@@ -1527,7 +1591,7 @@ function AllDefectsScreen({
       {showLogModal && (
         <LogDefectModal
           onClose={() => setShowLogModal(false)}
-          onCreate={(data) => { createDefect(data); setShowLogModal(false); }}
+          onCreate={async (data) => Boolean(await createDefect(data))}
           masterData={masterData}
         />
       )}
@@ -1722,10 +1786,19 @@ function DefectDetailScreen({
   };
 
   const confirmReassign = async () => {
-    if (!newAssignee.trim()) return;
-    await updateDefect(d.id, { assigneeName: newAssignee }, user?.id, user?.name);
+    if (!newAssignee.trim() || !newAssigneeModal.id) {
+      toast.error("Select an employee from the list before reassigning");
+      return;
+    }
+    await updateDefect(
+      d.id,
+      { assigneeId: newAssigneeModal.id, assigneeName: newAssignee },
+      user?.id,
+      user?.name,
+    );
     setIsReassigning(false);
     setNewAssignee("");
+    setNewAssigneeModal({ id: "", name: "" });
   };
 
   const saveTitle = async () => {
@@ -1805,7 +1878,7 @@ function DefectDetailScreen({
               </select>
             </div>
 
-            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded font-medium">{d.priority}</span>
+            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded font-medium">{priorityLabel(d.priority)}</span>
             <span className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded font-medium">{d.projectName}</span>
 
             {canMarkFixed && (
@@ -2213,7 +2286,7 @@ function DefectDetailScreen({
                         <span className="font-medium text-gray-800">{act.actorName}</span>{" "}
                         <span className="text-gray-500">{act.action}</span>
                         {act.fieldChanged && (
-                          <span className="text-gray-500"> · {act.fieldChanged}: <span className="line-through text-red-400">{act.oldValue}</span> → <span className="text-green-700">{act.newValue}</span></span>
+                          <span className="text-gray-500"> · {act.fieldChanged}: <span className="line-through text-red-400">{defectFieldValue(act.fieldChanged, act.oldValue)}</span> → <span className="text-green-700">{defectFieldValue(act.fieldChanged, act.newValue)}</span></span>
                         )}
                       </p>
                       <p className="text-xs text-gray-400">{act.comment && <span className="italic mr-2">"{act.comment}"</span>}{timeAgo(act.occurredAt)}</p>
@@ -2230,16 +2303,16 @@ function DefectDetailScreen({
                   const isMine = c.authorId === user?.id;
                   return (
                     <div key={c.id} className={`flex ${isMine ? "justify-end" : "justify-start"}`}>
-                      <div className={`max-w-[70%] rounded-xl px-4 py-2.5 ${isMine ? "bg-red-600 text-white" : "bg-gray-100 text-gray-800"}`}>
+                      <div className={`max-w-[70%] rounded-xl px-4 py-2.5 ${isMine ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-800"}`}>
                         {!isMine && <p className="text-xs font-semibold mb-0.5 text-gray-500">{c.authorName}</p>}
                         <p className="text-sm whitespace-pre-wrap">
                           {c.content.split(/(@\w+)/g).map((part, i) =>
                             part.startsWith('@')
-                              ? <span key={i} className="text-red-600 font-semibold">{part}</span>
+                              ? <span key={i} className={`${isMine ? "text-blue-100" : "text-blue-600"} font-semibold`}>{part}</span>
                               : part
                           )}
                         </p>
-                        <p className={`text-xs mt-0.5 ${isMine ? "text-red-200" : "text-gray-400"}`}>{timeAgo(c.createdAt)}</p>
+                        <p className={`text-xs mt-0.5 ${isMine ? "text-blue-200" : "text-gray-400"}`}>{timeAgo(c.createdAt)}</p>
                       </div>
                     </div>
                   );
@@ -2360,7 +2433,7 @@ function DefectDetailScreen({
               >
                 {masterData?.priorities?.length
                   ? masterData.priorities.map((p: any) => (
-                      <option key={p.code} value={p.code}>{p.label ?? p.code}</option>
+                      <option key={p.code} value={p.code}>{priorityLabel(p.code ?? p.label)}</option>
                     ))
                   : <option disabled>No priorities in DB</option>
                 }
@@ -2416,7 +2489,7 @@ function DefectDetailScreen({
               {(d.watchers ?? []).map((w) => (
                 <div key={w} title={w} className="relative group">
                   <Avatar name={w} size="sm" />
-                  {(user?.primaryRole === "hr" || user?.primaryRole === "admin") && (
+                  {canUpdate && (
                     <button
                       onClick={() => {
                         const newWatchers = (d.watchers ?? []).filter((x) => x !== w);
@@ -2450,7 +2523,7 @@ function DefectDetailScreen({
               >
                 {d.watchers?.includes(user?.name ?? "") ? t("defect.watchers.unfollow") : t("defect.watchers.follow")}
               </button>
-              {(user?.primaryRole === "hr" || user?.primaryRole === "admin") && (
+              {canUpdate && (
                 <WatcherAddDropdown
                   currentWatchers={d.watchers ?? []}
                   onAdd={(name) => {
@@ -2833,8 +2906,8 @@ function ByProjectScreen({ onNavigate }: { onNavigate: (s: Screen, extra?: any) 
 
               {isExp && (
                 <div className="border-t border-gray-100">
-                  {(proj.criticalDefects ?? []).length === 0 ? (
-                    <p className="px-4 py-3 text-sm text-gray-400">No critical open defects</p>
+                  {(proj.defects ?? []).length === 0 ? (
+                    <p className="px-4 py-3 text-sm text-gray-400">No defects found for this project</p>
                   ) : (
                     <table className="w-full text-sm">
                       <thead className="bg-gray-50">
@@ -2845,7 +2918,7 @@ function ByProjectScreen({ onNavigate }: { onNavigate: (s: Screen, extra?: any) 
                         </tr>
                       </thead>
                       <tbody>
-                        {(proj.criticalDefects ?? []).slice(0, 5).map((d) => (
+                        {(proj.defects ?? []).slice(0, 5).map((d) => (
                           <tr key={d.id} className="border-t border-gray-100 hover:bg-gray-50">
                             <td className="py-2.5 px-4 font-mono text-xs text-gray-600">{d.defectId}</td>
                             <td className="py-2.5 px-4"><SeverityBadge severity={d.severity} /></td>
@@ -3144,18 +3217,16 @@ function SettingsScreen() {
       supabase.from('defect_resolution_codes').select('*').order('sort_order'),
       supabase.from('defect_root_cause_categories').select('*').order('sort_order'),
       supabase.from('defect_rejection_reasons').select('*').order('name'),
-      supabase.from('defect_labels').select('*').order('name'),
       supabase.from('defect_environments').select('*').order('sort_order'),
       supabase.from('defect_priorities').select('*').order('sort_order'),
       supabase.from('defect_statuses').select('*').order('sort_order'),
       supabase.from('defect_escalation_rules').select('*').order('name'),
-    ]).then(([slaRes, rcRes, rootRes, rejRes, labRes, envRes, priRes, stRes, esRes]: any[]) => {
+    ]).then(([slaRes, rcRes, rootRes, rejRes, envRes, priRes, stRes, esRes]: any[]) => {
       setSlaPolicies(slaRes.data ?? []);
       setSettingsMasterData({
         resolutionCodes: rcRes.data ?? [],
         rootCauseCategories: rootRes.data ?? [],
         rejectionReasons: rejRes.data ?? [],
-        labels: labRes.data ?? [],
         environments: envRes.data ?? [],
         priorities: priRes.data ?? [],
         statuses: stRes.data ?? [],
@@ -3275,29 +3346,6 @@ function SettingsScreen() {
         </div>
       </div>
 
-      {/* Labels */}
-      <div className="bg-white rounded-xl border border-gray-200 p-5">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold text-gray-900">Defect Labels</h2>
-          
-        </div>
-        {settingsLoading ? (
-          <div className="text-sm text-gray-400">Loading...</div>
-        ) : (settingsMasterData.labels ?? []).length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {(settingsMasterData.labels as any[]).map((l: any) => (
-              <span key={l.id ?? l.name} className="flex items-center gap-1.5 text-xs bg-gray-100 text-gray-700 px-2.5 py-1 rounded-full font-medium">
-                {l.color && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: l.color }} />}
-                {l.name}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-400">No labels found. Run migration 06_defect_tracker.sql</p>
-        )}
-        <p className="text-xs text-gray-400 mt-3">Configure additional labels in Master Data → Defect Tracker</p>
-      </div>
-
       {/* Environments */}
       <div className="bg-white rounded-xl border border-gray-200 p-5">
         <div className="flex items-center justify-between mb-3">
@@ -3332,7 +3380,7 @@ function SettingsScreen() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                {["Code", "Label", "Description"].map(h => (
+                {["Priority", "Description"].map(h => (
                   <th key={h} className="text-left py-3 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -3340,8 +3388,7 @@ function SettingsScreen() {
             <tbody>
               {(settingsMasterData.priorities as any[]).map((p: any) => (
                 <tr key={p.id ?? p.code} className="border-t border-gray-100">
-                  <td className="py-3 px-5 font-mono text-xs font-bold text-gray-700">{p.code}</td>
-                  <td className="py-3 px-5 font-medium text-gray-800">{p.label}</td>
+                  <td className="py-3 px-5 font-medium text-gray-800">{priorityLabel(p.code ?? p.label)}</td>
                   <td className="py-3 px-5 text-gray-500">{p.description ?? "—"}</td>
                 </tr>
               ))}
@@ -3350,20 +3397,6 @@ function SettingsScreen() {
         ) : (
           <div className="p-6 text-center text-gray-400 text-sm">No priorities found. Run migration 08_defect_config_tables.sql</div>
         )}
-      </div>
-
-      {/* Migration notes */}
-      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-start gap-3">
-        <AlertCircle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
-        <div>
-          <p className="text-sm font-semibold text-amber-800">Database Setup</p>
-          <p className="text-xs text-amber-700 mt-1">
-            Run these migrations in order in your Supabase SQL Editor:
-            <code className="bg-amber-100 px-1 rounded mx-1">06_defect_tracker.sql</code>,
-            <code className="bg-amber-100 px-1 rounded mx-1">07_severity_rename.sql</code>,
-            <code className="bg-amber-100 px-1 rounded mx-1">08_defect_config_tables.sql</code>
-          </p>
-        </div>
       </div>
     </div>
   );
@@ -3417,7 +3450,7 @@ export function DefectTrackerApp({ accessToken, onLogout }: Props) {
           <List className="h-5 w-5" />
         </button>
         <div className="w-6 h-6 bg-red-600 rounded flex items-center justify-center">
-          <Bug className="h-3.5 w-3.5 text-white" />
+          <BugOff className="h-3.5 w-3.5 text-white" />
         </div>
         <span className="font-semibold text-red-700 text-sm">{t("defectTracker.appName")}</span>
       </div>
@@ -3426,9 +3459,9 @@ export function DefectTrackerApp({ accessToken, onLogout }: Props) {
         {screen === "dashboard" && (
           <DashboardScreen onNavigate={handleNavigate} />
         )}
-        {screen === "all-defects" && (
+        {(screen === "all-defects" || screen === "my-defects") && (
           <AllDefectsScreen
-            initialFilters={screenExtra}
+            initialFilters={screen === "my-defects" ? { ...screenExtra, myDefects: true } : screenExtra}
             onNavigateDetail={handleNavigateDetail}
             canLog={secLogDefect}
             canDelete={secDeleteDefects}
@@ -3438,7 +3471,7 @@ export function DefectTrackerApp({ accessToken, onLogout }: Props) {
         {screen === "defect-detail" && detailDefectId && (
           <DefectDetailScreen
             defectId={detailDefectId}
-            onBack={() => setScreen("all-defects")}
+            onBack={() => setScreen(screenExtra?.myDefects ? "my-defects" : "all-defects")}
             canUpdate={secUpdateDefects}
           />
         )}

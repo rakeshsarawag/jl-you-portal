@@ -26,7 +26,6 @@ import { useEmployees } from '../../context/EmployeesContext';
 
 // ==================== HELPERS ====================
 
-const canEdit = (roles: string[]) => roles.some((r) => r === "admin" || r === "hr");
 
 const STAGE_COLORS: Record<string, string> = {
   Applied: "bg-gray-100 text-gray-700",
@@ -1340,6 +1339,9 @@ function JobForm({ initial, onSave, onClose }: JobFormProps) {
 interface CandidateDrawerProps {
   candidate: Candidate;
   isEditor: boolean;
+  canScheduleInterviews: boolean;
+  canMakeOffers: boolean;
+  canViewSalary: boolean;
   onClose: () => void;
   onAddInterview: (candidateId: string, data: Omit<Interview, "id">) => Promise<void>;
   onAddFeedback: (candidateId: string, data: Omit<Feedback, "id">) => Promise<void>;
@@ -1370,7 +1372,18 @@ const BLANK_FEEDBACK = () => ({
   strengths: "", concerns: "",
 });
 
-function CandidateDrawer({ candidate, isEditor, onClose, onAddInterview, onAddFeedback, onOfferSaved, onBlacklist }: CandidateDrawerProps) {
+function CandidateDrawer({
+  candidate,
+  isEditor,
+  canScheduleInterviews,
+  canMakeOffers,
+  canViewSalary,
+  onClose,
+  onAddInterview,
+  onAddFeedback,
+  onOfferSaved,
+  onBlacklist,
+}: CandidateDrawerProps) {
   const employees = useEmployeeList();
   const { currentUser } = useUser();
   const [tab, setTab] = useState<"info" | "interviews" | "feedback" | "attachments" | "offers" | "communications">("info");
@@ -1797,14 +1810,14 @@ function CandidateDrawer({ candidate, isEditor, onClose, onAddInterview, onAddFe
               })}
 
               {/* Schedule Interview form */}
-              {isEditor && !showInterviewForm && (
+              {canScheduleInterviews && !showInterviewForm && (
                 <button type="button" onClick={() => setShowInterviewForm(true)}
                   className="w-full py-2.5 text-sm border border-dashed border-blue-300 text-blue-600 rounded-xl hover:bg-blue-50 flex items-center justify-center gap-1.5 font-medium transition-colors">
                   <Plus size={14} /> {t("scheduleInterview")}
                 </button>
               )}
 
-              {isEditor && showInterviewForm && (
+              {canScheduleInterviews && showInterviewForm && (
                 <form onSubmit={handleAddInterview} className="border border-border rounded-xl p-4 space-y-3 bg-card">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-semibold text-foreground">{t("scheduleInterview")}</p>
@@ -1968,7 +1981,7 @@ function CandidateDrawer({ candidate, isEditor, onClose, onAddInterview, onAddFe
           {/* ── OFFERS TAB ── */}
           {tab === "offers" && (
             <div className="space-y-3">
-              {isEditor && (
+              {canMakeOffers && (
                 <button onClick={() => { setEditingOffer(null); setShowOfferModal(true); }}
                   className="w-full py-2.5 text-sm border border-dashed border-blue-300 text-blue-600 rounded-xl hover:bg-blue-50 flex items-center justify-center gap-1.5 font-medium">
                   <Plus size={14} />{t("recruitment.offerGenerate")}
@@ -1994,12 +2007,12 @@ function CandidateDrawer({ candidate, isEditor, onClose, onAddInterview, onAddFe
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-1 text-xs text-muted-foreground">
-                    <span>CTC: <strong className="text-foreground">{offer.offered_ctc}</strong></span>
+                    {canViewSalary && <span>CTC: <strong className="text-foreground">{offer.offered_ctc}</strong></span>}
                     <span>Joining: <strong className="text-foreground">{offer.joining_date}</strong></span>
-                    {offer.negotiated_ctc && <span>Negotiated: <strong className="text-foreground">{offer.negotiated_ctc}</strong></span>}
+                    {canViewSalary && offer.negotiated_ctc && <span>Negotiated: <strong className="text-foreground">{offer.negotiated_ctc}</strong></span>}
                     {offer.offer_expiry_date && <span>Expires: {offer.offer_expiry_date}</span>}
                   </div>
-                  {isEditor && offer.status !== "accepted" && offer.status !== "declined" && (
+                  {canMakeOffers && offer.status !== "accepted" && offer.status !== "declined" && (
                     <button onClick={() => { setEditingOffer(offer); setShowOfferModal(true); }}
                       className="text-xs text-blue-600 hover:underline flex items-center gap-1">
                       <Edit2 size={10} />Edit offer
@@ -2758,12 +2771,13 @@ function JobDetailModal({ job, applicants, onClose, onViewCandidate }: JobDetail
 
 export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: string; onLogout: () => void }) {
   const { currentUser } = useUser();
-  const roles = currentUser?.roles ?? [];
-  const isEditor = canEdit(roles);
   const canViewCandidates = useSectionPermission("recruitment", "view_candidates");
   const canCreateCandidate = useSectionPermission("recruitment", "create_candidate");
   const canScheduleInterviews = useSectionPermission("recruitment", "schedule_interviews");
   const canMakeOffers = useSectionPermission("recruitment", "make_offers");
+  const canManagePipeline = useSectionPermission("recruitment", "pipeline");
+  const canViewSalary = useSectionPermission("recruitment", "view_salary");
+  const isEditor = canManagePipeline;
 
   const {
     candidates, jobPostings, stats, loading, error, refresh,
@@ -2926,7 +2940,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            {(isEditor || canCreateCandidate) && (
+            {canCreateCandidate && (
               <>
                 <button onClick={() => setShowBulkUpload(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-muted-foreground text-sm rounded-lg hover:bg-muted">
@@ -3120,7 +3134,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                           <div className="flex items-center gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity justify-end">
                             <button title={t("view")} onClick={(e) => { e.stopPropagation(); setSelectedCandidateId(c.id); }}
                               className="p-1.5 text-muted-foreground hover:text-blue-600 rounded"><Eye size={14} /></button>
-                            {(isEditor || canCreateCandidate) && (
+                            {canCreateCandidate && (
                               <>
                                 <button title={t("edit")} onClick={(e) => { e.stopPropagation(); setEditingCandidate(c); setShowCandidateForm(true); }}
                                   className="p-1.5 text-muted-foreground hover:text-blue-600 rounded"><Edit2 size={14} /></button>
@@ -3133,11 +3147,11 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                                   className={`p-1.5 rounded ${needsFb ? "text-amber-400 hover:text-amber-600" : "text-muted-foreground hover:text-orange-500"}`}>
                                   <ArrowRight size={14} />
                                 </button>
-                                {(isEditor || canMakeOffers) && (c.stage === "Offer Sent" || c.stage === "Offer Accepted") && (
+                                {canMakeOffers && (c.stage === "Offer Sent" || c.stage === "Offer Accepted") && (
                                   <button title={t("hire")} onClick={(e) => { e.stopPropagation(); setConfirmHire(c); }}
                                     className="p-1.5 text-muted-foreground hover:text-green-600 rounded"><CheckCircle size={14} /></button>
                                 )}
-                                {(isEditor || canMakeOffers) && (
+                                {canMakeOffers && (
                                   <button title={t("generateOffer")} onClick={(e) => { e.stopPropagation(); setSelectedCandidateId(c.id); }}
                                     className="p-1.5 text-muted-foreground hover:text-purple-600 rounded"><FileText size={14} /></button>
                                 )}
@@ -3286,7 +3300,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
           <div className="space-y-4">
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm text-muted-foreground">{jobPostings.length} posting{jobPostings.length !== 1 ? "s" : ""}</p>
-              {(isEditor || canCreateCandidate) && (
+              {canCreateCandidate && (
                 <button onClick={() => { setEditingJob(null); setShowJobForm(true); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
                   <Plus size={14} />{t("addJob")}
@@ -3324,7 +3338,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                       {j.type && <span className="text-xs bg-blue-50 text-blue-700 rounded px-2 py-0.5">{j.type}</span>}
                       {j.workMode && <span className="text-xs bg-purple-50 text-purple-700 rounded px-2 py-0.5">{j.workMode}</span>}
                       {j.experience && <span className="text-xs bg-muted text-muted-foreground rounded px-2 py-0.5">{j.experience}</span>}
-                      {salaryRange && <span className="text-xs bg-green-50 text-green-700 rounded px-2 py-0.5">{salaryRange}</span>}
+                      {canViewSalary && salaryRange && <span className="text-xs bg-green-50 text-green-700 rounded px-2 py-0.5">{salaryRange}</span>}
                       {j.headcount && j.headcount > 1 && <span className="text-xs bg-orange-50 text-orange-700 rounded px-2 py-0.5">{j.headcount} openings</span>}
                     </div>
 
@@ -3668,7 +3682,10 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
       {selectedCandidate && (
         <CandidateDrawer
           candidate={selectedCandidate}
-          isEditor={isEditor || canScheduleInterviews}
+          isEditor={isEditor}
+          canScheduleInterviews={canScheduleInterviews}
+          canMakeOffers={canMakeOffers}
+          canViewSalary={canViewSalary}
           onClose={() => setSelectedCandidateId(null)}
           onAddInterview={async (id, data) => { await addInterview(id, data); }}
           onAddFeedback={async (id, data) => { await addFeedback(id, data); }}

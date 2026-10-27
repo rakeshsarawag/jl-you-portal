@@ -1795,6 +1795,8 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
   const navigate = useNavigate();
   const isIT = currentUser?.roles.includes('it') ?? false;
   const isAdmin = currentUser?.roles.includes('admin') ?? false;
+  const secCreate = useSectionPermission('it-services', 'create_ticket');
+  const secViewOwn = useSectionPermission('it-services', 'view_own_tickets');
   const secViewAll = useSectionPermission('it-services', 'view_all_tickets');
   const secAssign = useSectionPermission('it-services', 'assign_tickets');
   const secResolve = useSectionPermission('it-services', 'resolve_tickets');
@@ -1803,11 +1805,11 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
   const secKBManage = useSectionPermission('it-services', 'kb_manage');
   const secLinkedItems = useSectionPermission('it-services', 'linked_items');
   const secSLA = useSectionPermission('it-services', 'manage_sla');
-  const canViewAll = isIT || isAdmin || secViewAll;
-  const canKBView = isIT || isAdmin || secKBView;
-  const canKBManage = isIT || isAdmin || secKBManage;
-  const canLinkedItems = isIT || isAdmin || secLinkedItems;
-  const canSLA = isIT || isAdmin || secSLA;
+  const canViewAll = secViewAll;
+  const canKBView = secKBView;
+  const canKBManage = secKBManage;
+  const canLinkedItems = secLinkedItems;
+  const canSLA = secSLA;
 
   const [activeTab, setActiveTab] = useState<'mine' | 'all' | 'analytics' | 'kb' | 'sla'>(canViewAll ? 'all' : 'mine');
   const [showForm, setShowForm] = useState(false);
@@ -2103,13 +2105,13 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <button
+            {secCreate && <button
               onClick={() => loadAll(canViewAll ? undefined : currentUser?.id)}
               className="p-2 rounded-lg hover:bg-muted text-muted-foreground"
               title="Refresh"
             >
               <RefreshCw className="h-4 w-4" />
-            </button>
+            </button>}
             <button
               onClick={() => setShowForm(true)}
               className="bg-blue-600 text-white rounded-lg px-4 py-2 text-sm font-medium hover:bg-blue-700 flex items-center gap-1.5"
@@ -2159,7 +2161,7 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
         <div className="bg-card rounded-xl border shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-4 border-b">
             <div className="flex">
-              <button
+              {secViewOwn && <button
                 onClick={() => setActiveTab('mine')}
                 className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
                   activeTab === 'mine'
@@ -2171,7 +2173,7 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
                 <span className="ml-1.5 text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded-full">
                   {myTickets.length}
                 </span>
-              </button>
+              </button>}
               {canViewAll && (
                 <button
                   onClick={() => setActiveTab('all')}
@@ -2209,7 +2211,7 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
               >
                 KB
               </button>
-              {(isIT || isAdmin) && (
+              {(secAssign || secResolve) && (
                 <button
                   onClick={() => setActiveTab('sla')}
                   className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
@@ -2708,7 +2710,7 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
               ) : (
                 <TicketTable
                   tickets={filtered}
-                  isIT={isIT || secAssign || secResolve}
+                  isIT={secAssign || secResolve}
                   isAdmin={isAdmin}
                   currentUserId={currentUser?.id ?? ''}
                   onView={setDetailTicket}
@@ -2731,7 +2733,7 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
       {/* Modals */}
       {showForm && currentUser && (
         <TicketForm
-          isIT={isIT || isAdmin}
+          isIT={secAssign || secResolve}
           createdBy={currentUser.id}
           createdByName={currentUser.name}
           onSubmit={handleCreate}
@@ -2743,7 +2745,7 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
       {detailTicket && currentUser && (
         <DetailModal
           ticket={detailTicket}
-          isIT={isIT || secAssign || secResolve}
+          isIT={secAssign || secResolve}
           isAdmin={isAdmin}
           currentUserId={currentUser.id}
           currentUserName={currentUser.name}

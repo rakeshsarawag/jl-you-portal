@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Label } from '../ui/label';
@@ -288,6 +288,16 @@ const TRIGGER_TYPE_KEYS: Record<TriggerType, string> = {
   form_submission: 'workflowBuilder.triggerFormSubmission',
   status_change:   'workflowBuilder.triggerStatusChange',
 };
+
+const EXECUTABLE_NODE_TYPES = new Set<NodeType>([
+  'trigger',
+  'condition',
+  'approval',
+  'notification',
+  'end',
+]);
+
+const EXECUTABLE_TRIGGER_TYPES: TriggerType[] = ['manual', 'event'];
 
 const selectCls = 'w-full border border-border rounded-lg px-3 py-2 text-sm bg-input-background focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary';
 
@@ -719,10 +729,11 @@ function ConditionGroupBuilder({
 interface WorkflowVersion {
   id: string;
   version_number: number;
-  change_summary: string;
-  changed_at: string;
-  changed_by: string;
-  nodes: any;
+  change_notes: string;
+  created_at: string;
+  definition_snapshot: {
+    nodes?: WorkflowNode[];
+  };
 }
 
 function VersionHistoryPanel({
@@ -753,7 +764,9 @@ function VersionHistoryPanel({
     setLoading(false);
   };
 
-  useState(() => { loadVersions(); });
+  useEffect(() => {
+    void loadVersions();
+  }, [workflowId]);
 
   const handleSaveVersion = async () => {
     if (!changeNotes.trim()) { toast.error(t('workflowBuilder.placeholderChangeNotes')); return; }
@@ -762,10 +775,8 @@ function VersionHistoryPanel({
     const { error } = await supabase.from('workflow_versions').insert([{
       workflow_id: workflowId,
       version_number: maxVersion + 1,
-      nodes: currentNodes,
-      edges: [],
-      change_summary: changeNotes,
-      is_current: true,
+      definition_snapshot: { nodes: currentNodes },
+      change_notes: changeNotes,
     }]);
     setSaving(false);
     if (error) { toast.error(t('workflowBuilder.toastVersionSaveFailed')); return; }
@@ -776,7 +787,7 @@ function VersionHistoryPanel({
   };
 
   const handleRestore = (v: WorkflowVersion) => {
-    onRestore(v.nodes || []);
+    onRestore(v.definition_snapshot?.nodes || []);
     toast.success(t('workflowBuilder.toastVersionRestored'));
     onClose();
   };
@@ -846,9 +857,9 @@ function VersionHistoryPanel({
                       {t('workflowBuilder.versionRestoreBtn')}
                     </button>
                   </div>
-                  <p className="text-xs text-muted-foreground">{v.change_summary}</p>
+                  <p className="text-xs text-muted-foreground">{v.change_notes}</p>
                   <p className="text-xs text-muted-foreground">
-                    {new Date(v.changed_at).toLocaleString()}
+                    {new Date(v.created_at).toLocaleString()}
                   </p>
                 </div>
               ))}
@@ -1527,20 +1538,24 @@ export function WorkflowBuilder({ existingWorkflow, onClose, onSave }: WorkflowB
           <div className="space-y-2">
             <Label className="text-xs font-medium">{t('workflowBuilder.triggerTypeLabel')}</Label>
             <div className="flex gap-2 flex-wrap">
-              {(['manual', 'scheduled', 'event', 'form_submission', 'status_change'] as TriggerType[]).map(type => (
-                <button
+              {EXECUTABLE_TRIGGER_TYPES.map(type => (
+                <Button
                   key={type}
+                  type="button"
+                  size="sm"
+                  variant={triggerType === type ? 'default' : 'outline'}
                   onClick={() => { setTriggerType(type); setTriggerConfig({}); }}
-                  className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                    triggerType === type
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'bg-card text-foreground border-border hover:bg-muted'
-                  }`}
                 >
                   {t(TRIGGER_TYPE_KEYS[type])}
-                </button>
+                </Button>
               ))}
             </div>
+
+            {!EXECUTABLE_TRIGGER_TYPES.includes(triggerType) && (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                This legacy trigger can be edited as a draft, but it cannot be activated until scheduler support is installed.
+              </div>
+            )}
 
             {/* Schedule Trigger Config */}
             {triggerType === 'scheduled' && (
@@ -1572,7 +1587,9 @@ export function WorkflowBuilder({ existingWorkflow, onClose, onSave }: WorkflowB
               </div>
               <div className="space-y-3">
                 {sections.map(section => {
-                  const sectionNodes = NODE_TYPES.filter(nt => nt.section === section);
+                  const sectionNodes = NODE_TYPES.filter(
+                    nt => nt.section === section && EXECUTABLE_NODE_TYPES.has(nt.type)
+                  );
                   return (
                     <div key={section}>
                       <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1 font-medium">{section}</p>

@@ -221,6 +221,54 @@ export function roleGuard(base: string) {
       return;
     }
 
+    // Every authenticated user may record only their own verified login event.
+    // User identity is resolved from the JWT inside the handler, not the body.
+    if (c.req.method === "POST" && path === "/users/session-event") {
+      await next();
+      return;
+    }
+
+    // Course catalogue administration is restricted to administrators. The
+    // UI additionally applies the Training → Manage Sessions permission.
+    if (
+      (c.req.method === "POST" && path === "/training/courses") ||
+      (["PUT", "DELETE"].includes(c.req.method) &&
+        /^\/training\/courses\/[^/]+$/.test(path))
+    ) {
+      if (role !== "admin") {
+        return c.json({ error: "Forbidden: only administrators can manage training courses" }, 403);
+      }
+      await next();
+      return;
+    }
+
+    // Employees may enrol themselves in optional training. The handler binds
+    // the requested employee ID to the verified identity.
+    if (
+      c.req.method === "POST" &&
+      /\/training\/enrollments\/?$/.test(path)
+    ) {
+      await next();
+      return;
+    }
+
+    // Employees may submit their own training assessment. Ownership is checked
+    // against the verified employee ID in the assessment handler.
+    if (
+      c.req.method === "POST" &&
+      /^\/training\/enrollments\/[^/]+\/assessment$/.test(path)
+    ) {
+      await next();
+      return;
+    }
+    if (
+      c.req.method === "PUT" &&
+      /^\/training\/enrollments\/[^/]+\/progress$/.test(path)
+    ) {
+      await next();
+      return;
+    }
+
     const matchedKey = Object.keys(ROUTE_RULES)
       .filter((k) => path.startsWith(k))
       .sort((a, b) => b.length - a.length)[0]; // longest match first

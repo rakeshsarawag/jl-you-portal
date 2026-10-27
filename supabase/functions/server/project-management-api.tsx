@@ -3,17 +3,13 @@ import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate, logAuditFromContext } from "./audit-helpers.ts";
 import { notifyByEmail, notifyByEmployeeId } from "./notify-helpers.tsx";
 import { requireFields, requireParam } from "./validate.ts";
+import { dispatchWorkflowEvent } from "./workflow-api.tsx";
 
 const app = new Hono();
 
 function triggerWorkflowEvent(event: string, entity_type: string, entity_id: string, context: Record<string, unknown>, triggered_by?: string) {
-  const base = Deno.env.get("SUPABASE_URL")!;
-  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  fetch(`${base}/functions/v1/make-server-1fe2c468/workflow/trigger`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
-    body: JSON.stringify({ event, entity_type, entity_id, context, triggered_by }),
-  }).catch(() => {});
+  dispatchWorkflowEvent({ event, entity_type, entity_id, context, triggered_by })
+    .catch((error) => console.error(`Workflow event "${event}" failed`, error));
 }
 
 function getSupabase() {

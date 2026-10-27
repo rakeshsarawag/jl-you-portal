@@ -141,6 +141,9 @@ app.get('/defects', async (c) => {
     if (q.severity) query = query.in('severity', q.severity.split(','));
     if (q.status) query = query.in('status', q.status.split(','));
     if (q.assigneeId) query = query.eq('assignee_id', q.assigneeId);
+    if (q.assigneeIds && !q.assigneeNames) {
+      query = query.in('assignee_id', q.assigneeIds.split(',').filter(Boolean));
+    }
     if (q.regression === 'true') query = query.eq('is_regression', true);
     if (q.regression === 'false') query = query.eq('is_regression', false);
     if (q.environment) query = query.eq('environment', q.environment);
@@ -159,6 +162,26 @@ app.get('/defects', async (c) => {
 
     // Post-filter SLA status
     let result = normalized;
+    if (q.assigneeIds || q.assigneeNames) {
+      const ids = new Set((q.assigneeIds ?? '').split(',').filter(Boolean));
+      let rawNames: string[] = [];
+      try {
+        const parsed = JSON.parse(q.assigneeNames ?? '[]');
+        rawNames = Array.isArray(parsed) ? parsed.filter(name => typeof name === 'string') : [];
+      } catch {
+        rawNames = [];
+      }
+      const names = new Set(
+        rawNames.map(name => name.trim().toLowerCase().replace(/\s*\([^)]*\)\s*$/, '')),
+      );
+      result = result.filter(defect => {
+        const assigneeName = defect.assigneeName
+          .trim()
+          .toLowerCase()
+          .replace(/\s*\([^)]*\)\s*$/, '');
+        return ids.has(defect.assigneeId) || names.has(assigneeName);
+      });
+    }
     if (q.slaStatus) {
       const filter = q.slaStatus;
       if (filter === 'breached') result = result.filter(d => d.slaFixBreached || d.slaVerifyBreached);
@@ -217,7 +240,7 @@ app.get('/defects/:id', async (c) => {
 app.post('/defects', async (c) => {
   try {
     const supabase = getSupabase();
-    const v = await requireFields(c, ['projectId', 'title']);
+    const v = await requireFields(c, ['title']);
     if (!v.ok) return v.response;
     const body = v.body;
 
@@ -227,8 +250,8 @@ app.post('/defects', async (c) => {
     const defectId = `DEF${String(defNext).padStart(4, '0')}`;
 
     const { data, error } = await supabase.from('project_defects').insert([{
-      project_id: body.projectId,
-      project_name: body.projectName ?? '',
+      project_id: body.projectId || null,
+      project_name: body.projectName || 'General',
       defect_id: defectId,
       title: body.title,
       severity: body.severity ?? 'Medium',
@@ -897,8 +920,8 @@ app.get('/by-project', async (c) => {
 
     const projMap: Record<string, any> = {};
     for (const d of withSLA) {
-      const pId = d.projectId;
-      const pName = d.projectName || pId || 'Unknown';
+      const pId = d.projectId || 'general';
+      const pName = d.projectName || 'General';
       if (!projMap[pId]) projMap[pId] = {
         projectId: pId, projectName: pName, defects: [],
         s1: 0, s2: 0, s3: 0, s4: 0, total: 0, resolved: 0, breached: 0,
@@ -926,6 +949,7 @@ app.get('/by-project', async (c) => {
         s1: p.s1, s2: p.s2, s3: p.s3, s4: p.s4, total: p.total, resolved: p.resolved,
         resolvedPct: p.total ? Math.round(p.resolved / p.total * 100) : 0,
         slaCompliance: p.total ? Math.round((p.total - p.breached) / p.total * 100) : 100,
+        defects: p.defects,
         criticalDefects: critical,
       };
     });

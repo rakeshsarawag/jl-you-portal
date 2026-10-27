@@ -13,8 +13,8 @@ import {
   Clock, Calendar, CheckSquare, Plus, LogIn, LogOut, Check,
   X, ChevronDown, AlertCircle, Loader2, Trash2, Edit2,
   Filter, ArrowLeft, User, TrendingUp, BookOpen, Users,
-  Briefcase, CreditCard, HelpCircle, UserPlus, BarChart2,
-  Settings, Bell, Building2, TicketCheck, FileText, Zap,
+  CreditCard, HelpCircle,
+  Building2, FileText,
   Download, ChevronLeft, ChevronRight, Home, RefreshCw,
   DollarSign, Repeat, ClipboardEdit, Coffee,
 } from 'lucide-react';
@@ -82,9 +82,6 @@ function fmtTime(iso: string | null | undefined) {
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
 }
-function fmtDateShort(iso: string) {
-  return new Date(iso).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
-}
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
 }
@@ -146,31 +143,6 @@ function StatCard({ label, value, sub, loading }: { label: string; value: string
         </>
       )}
     </div>
-  );
-}
-
-// ── Quick action card ─────────────────────────────────────────────────────
-function QuickActionCard({
-  icon: Icon,
-  label,
-  colorClass,
-  onClick,
-}: {
-  icon: React.ElementType;
-  label: string;
-  colorClass: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className="flex flex-col items-center gap-2 p-4 bg-card border border-border rounded-xl hover:border-primary/40 hover:bg-primary/5 transition-all group cursor-pointer"
-    >
-      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${colorClass}`}>
-        <Icon size={18} />
-      </div>
-      <span className="text-xs font-medium text-foreground text-center leading-tight">{label}</span>
-    </button>
   );
 }
 
@@ -1160,6 +1132,7 @@ interface Props { accessToken: string; onLogout: () => void; }
 
 export function EmployeeDashboard({ accessToken, onLogout }: Props) {
   const { currentUser } = useUser();
+  const { activeEmployees, loading: employeesLoading } = useEmployees();
   const navigate = useNavigate();
   const userId = currentUser?.id ?? '';
   const employeeId = currentUser?.employeeId ?? '';
@@ -1173,10 +1146,12 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
   // Section-level permission gates
   const canSeeTeamCalendar  = useSectionPermission('employee-dashboard', 'team_calendar');
   const canSeePendingApprovalsDB = useSectionPermission('employee-dashboard', 'pending_approvals');
-  const canSeePendingApprovals = canSeePendingApprovalsDB || isManager || isHrAdmin;
+  const canSeePendingApprovals = canSeePendingApprovalsDB;
   const canSeeAnalytics     = useSectionPermission('employee-dashboard', 'analytics');
   const canSeeLeaveSection  = useSectionPermission('employee-dashboard', 'leave_management');
   const canSeeAttendance    = useSectionPermission('employee-dashboard', 'attendance');
+  const canSeeTasks         = useSectionPermission('employee-dashboard', 'tasks');
+  const canSeePayslips      = useSectionPermission('payroll', 'view_payslips');
 
   const dash = useEmployeeDashboard(userId, userName);
   const leavePolicies = useMasterDataDirect('leave-policies');
@@ -1376,32 +1351,49 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
 
   // Elevated-role quick stats
   const [elevatedStats, setElevatedStats] = useState({ headcount: 0, newJoiners: 0, openITTickets: 0, openRequisitions: 0 });
+  const [elevatedStatsLoading, setElevatedStatsLoading] = useState(true);
+  const workforceStats = useMemo(() => {
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    const managerIds = new Set([currentUser?.employeeId, currentUser?.id].filter(Boolean));
+    const visibleEmployees = isManager
+      ? activeEmployees.filter((employee: any) =>
+          managerIds.has(employee.manager_id ?? employee.managerId ?? null)
+        )
+      : activeEmployees;
+    const newJoiners = visibleEmployees.filter((employee: any) => {
+      const joinedAt = employee.joinDate ?? employee.joining_date ?? employee.join_date ??
+        employee.createdAt ?? employee.created_at ?? '';
+      return String(joinedAt).startsWith(thisMonth);
+    }).length;
+    return { headcount: visibleEmployees.length, newJoiners };
+  }, [activeEmployees, currentUser?.employeeId, currentUser?.id, isManager]);
+
   useEffect(() => {
     if (!isHrAdmin && !isManager) return;
     const hdrs = { Authorization: `Bearer ${getApiAccessToken()}` };
-    const thisMonth = new Date().toISOString().slice(0, 7);
+    setElevatedStatsLoading(true);
     Promise.allSettled([
-      fetch(`${API_BASE}/directory`, { headers: hdrs }).then(r => safeJson(r)),
-      fetch(`${API_BASE}/onboarding`, { headers: hdrs }).then(r => safeJson(r)),
-      fetch(`${API_BASE}/it-services/tickets`, { headers: hdrs }).then(r => safeJson(r)),
-      fetch(`${API_BASE}/recruitment/candidates`, { headers: hdrs }).then(r => safeJson(r)),
-    ]).then(([dirRes, onbRes, itRes, recRes]) => {
-      const dir = dirRes.status === 'fulfilled' ? dirRes.value : null;
-      const onb = onbRes.status === 'fulfilled' ? onbRes.value : null;
-      const it = itRes.status === 'fulfilled' ? itRes.value : null;
-      const rec = recRes.status === 'fulfilled' ? recRes.value : null;
-      const employees = Array.isArray(dir) ? dir : (dir?.employees ?? []);
-      const joiners = Array.isArray(onb) ? onb : (onb?.records ?? []);
-      const tickets = Array.isArray(it) ? it : (it?.tickets ?? []);
-      const candidates = Array.isArray(rec) ? rec : (rec?.candidates ?? []);
+      fetch(`${API_BASE}/it-services/stats`, { headers: hdrs }).then(r => safeJson(r)),
+      fetch(`${API_BASE}/recruitment/jobs`, { headers: hdrs }).then(r => safeJson(r)),
+    ]).then(([itRes, jobsRes]) => {
+      const itPayload = itRes.status === 'fulfilled' ? itRes.value : null;
+      const jobsPayload = jobsRes.status === 'fulfilled' ? jobsRes.value : null;
+      const it = itPayload?.data ?? itPayload ?? {};
+      const jobsValue = jobsPayload?.data ?? jobsPayload ?? [];
+      const jobs = Array.isArray(jobsValue) ? jobsValue : [];
       setElevatedStats({
-        headcount: employees.length,
-        newJoiners: joiners.filter((j: any) => (j.created_at ?? j.start_date ?? '').startsWith(thisMonth)).length,
-        openITTickets: tickets.filter((t: any) => t.status === 'Open' || t.status === 'In Progress').length,
-        openRequisitions: candidates.filter((c: any) => c.stage !== 'Hired' && c.stage !== 'Rejected').length,
+        headcount: workforceStats.headcount,
+        newJoiners: workforceStats.newJoiners,
+        openITTickets: Number(it.openTickets ?? it.open ?? 0) +
+          Number(it.inProgressTickets ?? it.inProgress ?? 0),
+        openRequisitions: jobs.filter((job: any) =>
+          ['Active', 'Open', 'Published'].includes(job.status)
+        ).length,
       });
+    }).finally(() => {
+      setElevatedStatsLoading(false);
     });
-  }, [isHrAdmin, isManager]);
+  }, [isHrAdmin, isManager, workforceStats.headcount, workforceStats.newJoiners]);
 
   // Team Leave Calendar state
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -1875,30 +1867,6 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
     lateDays: currentMonthAttendance.filter(a => isLateArrival(a.check_in)).length,
   };
 
-  // Quick actions per role
-  const employeeActions = [
-    { icon: Calendar, label: 'Apply Leave', colorClass: 'bg-blue-100 text-blue-600', onClick: () => setShowLeaveForm(true) },
-    { icon: Home, label: 'Request WFH', colorClass: 'bg-teal-100 text-teal-600', onClick: () => setShowWfhModal(true) },
-    { icon: ClipboardEdit, label: 'Attendance Correction', colorClass: 'bg-orange-100 text-orange-600', onClick: () => { setTab('attendance'); setTimeout(() => setShowRegModal(true), 100); } },
-    { icon: Coffee, label: 'Comp-Off Request', colorClass: 'bg-purple-100 text-purple-600', onClick: () => setShowCompOffModal(true) },
-  ];
-
-  const managerActions = [
-    { icon: Check, label: 'Approve Leaves', colorClass: 'bg-green-100 text-green-600', onClick: () => setTab('approvals') },
-    { icon: Users, label: 'View Team', colorClass: 'bg-blue-100 text-blue-600', onClick: () => navigate('/directory') },
-    { icon: Briefcase, label: 'Post Job', colorClass: 'bg-purple-100 text-purple-600', onClick: () => navigate('/recruitment') },
-    { icon: CreditCard, label: 'Run Payroll', colorClass: 'bg-orange-100 text-orange-600', onClick: () => navigate('/payroll') },
-  ];
-
-  const hrAdminActions = [
-    { icon: UserPlus, label: 'Add Employee', colorClass: 'bg-blue-100 text-blue-600', onClick: () => navigate('/directory') },
-    { icon: CreditCard, label: 'Process Payroll', colorClass: 'bg-green-100 text-green-600', onClick: () => navigate('/payroll') },
-    { icon: BarChart2, label: 'View Reports', colorClass: 'bg-purple-100 text-purple-600', onClick: () => navigate('/executive-dashboard') },
-    { icon: Settings, label: 'Manage Users', colorClass: 'bg-orange-100 text-orange-600', onClick: () => navigate('/user-management') },
-  ];
-
-  const quickActions = isEmployee ? employeeActions : isManager ? managerActions : hrAdminActions;
-
   // Error state
   if (dash.error && !dash.loading) {
     return (
@@ -1920,12 +1888,12 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
   const TABS = [
     { id: 'overview' as Tab, label: 'Overview', icon: TrendingUp, show: true },
     { id: 'attendance' as Tab, label: 'Attendance', icon: Clock, show: canSeeAttendance },
-    { id: 'leaves' as Tab, label: 'My Leaves', icon: Calendar, show: true },
+    { id: 'leaves' as Tab, label: 'My Leaves', icon: Calendar, show: canSeeLeaveSection },
     { id: 'approvals' as Tab, label: `Approvals${approvalPendingCount > 0 ? ` (${approvalPendingCount})` : ''}`, icon: CheckSquare, show: canSeePendingApprovals },
-    { id: 'tasks' as Tab, label: 'Tasks', icon: CheckSquare, show: true },
+    { id: 'tasks' as Tab, label: 'Tasks', icon: CheckSquare, show: canSeeTasks },
     { id: 'holidays' as Tab, label: 'Holidays', icon: Building2, show: true },
-    { id: 'calendar' as Tab, label: 'Team Calendar', icon: Users, show: true },
-    { id: 'payslip' as Tab, label: 'Payslips', icon: FileText, show: true },
+    { id: 'calendar' as Tab, label: 'Team Calendar', icon: Users, show: canSeeTeamCalendar },
+    { id: 'payslip' as Tab, label: 'Payslips', icon: FileText, show: canSeePayslips },
     { id: 'shifts' as Tab, label: 'Shift Schedule', icon: Clock, show: true },
     { id: 'roster' as Tab, label: 'Shift Roster', icon: Users, show: true },
   ].filter(t => t.show);
@@ -2103,38 +2071,19 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
             {isManager && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <StatCard label="Pending Approvals" value={approvalPendingCount} sub="requests" loading={dash.loading} />
-                <StatCard label="Team Size" value={elevatedStats.headcount} sub="direct reports" loading={dash.loading} />
-                <StatCard label="Open Requisitions" value={elevatedStats.openRequisitions} sub="recruitment pipeline" loading={dash.loading} />
+                <StatCard label="Team Size" value={elevatedStats.headcount} sub="direct reports" loading={employeesLoading || elevatedStatsLoading} />
+                <StatCard label="Open Requisitions" value={elevatedStats.openRequisitions} sub="recruitment pipeline" loading={elevatedStatsLoading} />
                 <StatCard label="Tasks Assigned" value={dash.stats.tasksPending} sub="pending" loading={dash.loading} />
               </div>
             )}
             {isHrAdmin && (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatCard label="Headcount" value={elevatedStats.headcount} sub="total employees" loading={dash.loading} />
-                <StatCard label="New Joiners" value={elevatedStats.newJoiners} sub="this month" loading={dash.loading} />
-                <StatCard label="Open IT Tickets" value={elevatedStats.openITTickets} sub="unresolved" loading={dash.loading} />
+                <StatCard label="Headcount" value={elevatedStats.headcount} sub="total employees" loading={employeesLoading || elevatedStatsLoading} />
+                <StatCard label="New Joiners" value={elevatedStats.newJoiners} sub="this month" loading={employeesLoading || elevatedStatsLoading} />
+                <StatCard label="Open IT Tickets" value={elevatedStats.openITTickets} sub="unresolved" loading={elevatedStatsLoading} />
                 <StatCard label="Pending Leaves" value={dash.pendingLeaves.length} sub="awaiting approval" loading={dash.loading} />
               </div>
             )}
-
-            {/* Quick actions */}
-            <div className="bg-card border border-border rounded-xl p-5">
-              <h2 className="text-sm font-semibold text-foreground mb-4 flex items-center gap-2">
-                <Zap size={15} className="text-primary" />
-                Quick Actions
-              </h2>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {quickActions.map((action) => (
-                  <QuickActionCard
-                    key={action.label}
-                    icon={action.icon}
-                    label={action.label}
-                    colorClass={action.colorClass}
-                    onClick={action.onClick}
-                  />
-                ))}
-              </div>
-            </div>
 
             {/* Stats Strip — all roles */}
             <div className="flex gap-3 overflow-x-auto pb-1 scrollbar-none">
@@ -2239,7 +2188,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
 
             {/* Leave balance + upcoming tasks */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-card border border-border rounded-xl p-5">
+              {canSeeLeaveSection && <div className="bg-card border border-border rounded-xl p-5">
                 <div className="flex items-center justify-between mb-3">
                   <h2 className="text-sm font-semibold text-foreground">{t('dashboard.leaveBalance')}</h2>
                   <button onClick={() => setShowLeaveForm(true)} className="text-xs text-primary font-medium hover:underline">Apply Leave</button>
@@ -2334,9 +2283,9 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
                     </>
                   );
                 })()}
-              </div>
+              </div>}
 
-              <div className="bg-card border border-border rounded-xl p-5">
+              {canSeeTasks && <div className="bg-card border border-border rounded-xl p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-sm font-semibold text-foreground">Upcoming Tasks</h2>
                   <button onClick={() => { setEditingTask(undefined); setShowTaskForm(true); }} className="text-xs text-primary font-medium hover:underline flex items-center gap-1">
@@ -2367,7 +2316,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
                     ))}
                   </div>
                 )}
-              </div>
+              </div>}
             </div>
 
             {/* Training progress widget */}
@@ -2405,32 +2354,6 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
                 )}
               </div>
             )}
-
-            {/* Announcements feed */}
-            <div className="bg-card border border-border rounded-xl p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  <Bell size={15} className="text-primary" />
-                  Announcements
-                </h2>
-                <button onClick={() => navigate('/communications')} className="text-xs text-primary font-medium hover:underline">View All</button>
-              </div>
-              {dash.announcements.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-4">No announcements at this time.</p>
-              ) : (
-                <div className="space-y-3">
-                  {dash.announcements.map(ann => (
-                    <div key={ann.id} className="flex items-start gap-3 py-2 border-b border-border last:border-0">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-foreground truncate">{ann.title}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">{fmtDateShort(ann.created_at)}</p>
-                      </div>
-                      <Badge status={ann.priority} />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
 
             {/* Manager: pending approvals summary */}
             {canSeePendingApprovals && dash.pendingLeaves.length > 0 && (

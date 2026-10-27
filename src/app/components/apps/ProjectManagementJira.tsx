@@ -36,6 +36,8 @@ import {
   ExternalLink,
   MessageSquare,
   Send,
+  Settings,
+  BriefcaseBusiness,
 } from "lucide-react";
 import { useUser } from "../../context/UserContext";
 import {
@@ -67,6 +69,8 @@ import { useEmployeeOptions } from "../../hooks/useSharedData";
 import EmployeeSearchDropdown from "../ui/EmployeeSearchDropdown";
 import { useEmployees } from "../../context/EmployeesContext";
 import { daysRemaining as daysRemainingUtil, timeAgo as timeAgoUtil, budgetOverrunPct } from "../../utils/projectUtils";
+import { Button } from "../ui/button";
+import { Card, CardContent } from "../ui/card";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -5572,6 +5576,7 @@ interface ProjectDetailProps {
   secManageDefects?: boolean;
   secManageSprints?: boolean;
   secTimeLogs?: boolean;
+  secManageMilestones?: boolean;
   onUpdateTask: (taskId: string, updates: Partial<ProjectTask>) => Promise<void>;
   onCreateTask: (data: Partial<ProjectTask>) => Promise<void>;
   onDeleteTask: (taskId: string) => Promise<void>;
@@ -6521,6 +6526,7 @@ function ProjectDetailPanel({
   secManageDefects,
   secManageSprints,
   secTimeLogs,
+  secManageMilestones,
   onUpdateTask,
   onCreateTask,
   onDeleteTask,
@@ -6530,13 +6536,13 @@ function ProjectDetailPanel({
   onRemoveMember,
 }: ProjectDetailProps) {
   // Effective permission: canManage (role-based) OR explicit section permission
-  const canCreateTask = canManage || !!secCreateTasks;
-  const canDeleteTask = canManage || !!secDeleteTasks;
-  const canManageTeam = canManage || !!secManageTeam;
-  const canManageBacklog = canManage || !!secManageBacklog;
-  const canManageDefects = canManage || !!secManageDefects;
-  const canManageSprints = canManage || !!secManageSprints;
-  const canLogTime = canManage || !!secTimeLogs;
+  const canCreateTask = !!secCreateTasks;
+  const canDeleteTask = !!secDeleteTasks;
+  const canManageTeam = !!secManageTeam;
+  const canManageBacklog = !!secManageBacklog;
+  const canManageDefects = !!secManageDefects;
+  const canManageSprints = !!secManageSprints;
+  const canLogTime = !!secTimeLogs;
   const [activeTab, setActiveTab] = useState<"overview" | "backlog" | "defects" | "tasks" | "team" | "milestones" | "sprints" | "risks" | "reports">("overview");
   const secReports = useSectionPermission("projects", "reports");
   useEffect(() => {
@@ -6920,7 +6926,7 @@ function ProjectDetailPanel({
 
         {/* Milestones */}
         {activeTab === "milestones" && (
-          <MilestonesTab projectId={project.id} canManage={canManage} />
+          <MilestonesTab projectId={project.id} canManage={Boolean(secManageMilestones)} />
         )}
 
         {/* Sprints */}
@@ -7224,20 +7230,24 @@ function GanttTimelineView({ projects, onSelectProject }: { projects: Project[];
 
 // ─── Project Card (for Dashboard grid) ───────────────────────────────────────
 
-const CATEGORY_COLORS: Record<string, string> = {
-  product_dev: '#6366F1', it_infra: '#0EA5E9', biz_process: '#10B981',
-  research: '#8B5CF6', compliance: '#F59E0B', marketing: '#EC4899',
-  operations: '#14B8A6', client_delivery: '#F97316', internal_tools: '#6B7280',
+const CATEGORY_ACCENTS: Record<string, string> = {
+  product_dev: 'bg-indigo-500', it_infra: 'bg-sky-500', biz_process: 'bg-emerald-500',
+  research: 'bg-violet-500', compliance: 'bg-amber-500', marketing: 'bg-pink-500',
+  operations: 'bg-teal-500', client_delivery: 'bg-orange-500', internal_tools: 'bg-slate-500',
 };
 
 function ProjectCard({ project, onSelect }: { project: Project; onSelect: () => void }) {
   const health = computeHealthScore(project);
   const hl = healthLabel(health);
-  const catColor = CATEGORY_COLORS[project.category ?? ''] ?? '#6366F1';
+  const categoryAccent = CATEGORY_ACCENTS[project.category ?? ''] ?? 'bg-primary';
   const progress = project.progress ?? 0;
   return (
-    <button onClick={onSelect} className="text-left w-full bg-white border rounded-xl overflow-hidden hover:shadow-md transition-all cursor-pointer group">
-      <div className="h-1.5" style={{ backgroundColor: catColor }} />
+    <Button
+      variant="ghost"
+      onClick={onSelect}
+      className="h-auto w-full flex-col items-stretch gap-0 overflow-hidden rounded-xl border border-border bg-card p-0 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:bg-card hover:shadow-md"
+    >
+      <div className={`h-1.5 w-full ${categoryAccent}`} />
       <div className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
@@ -7265,7 +7275,7 @@ function ProjectCard({ project, onSelect }: { project: Project; onSelect: () => 
           <span className="flex items-center gap-1"><CheckSquare size={11} />{project.tasks?.length ?? 0} tasks</span>
         </div>
       </div>
-    </button>
+    </Button>
   );
 }
 
@@ -7400,33 +7410,41 @@ function DashboardView({
       {/* Row 1: KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
-          { label: "Active Projects", value: String(activeProjectsCount), icon: Folder, bg: "bg-blue-50", color: "text-blue-600", valColor: "text-foreground" },
-          { label: "Due Today", value: String(tasksDueToday), icon: Clock, bg: "bg-orange-50", color: "text-orange-600", valColor: tasksDueToday > 0 ? "text-orange-600" : "text-foreground" },
-          { label: "Overdue", value: String(overdueCount), icon: AlertTriangle, bg: "bg-red-50", color: "text-red-600", valColor: overdueCount > 0 ? "text-red-600" : "text-foreground" },
-          { label: "At Risk Projects", value: String(atRiskCount), icon: AlertTriangle, bg: "bg-amber-50", color: "text-amber-600", valColor: atRiskCount > 0 ? "text-amber-600" : "text-foreground" },
-        ].map(({ label, value, icon: Icon, bg, color, valColor }) => (
-          <div key={label} className="bg-card border border-border rounded-xl p-4">
-            <div className="flex items-center gap-3 mb-3">
-              <div className={`w-9 h-9 rounded-lg ${bg} ${color} flex items-center justify-center flex-shrink-0`}>
-                <Icon className="w-5 h-5" />
+          { label: "Active Projects", value: String(activeProjectsCount), icon: Folder, bg: "bg-blue-50", accent: "bg-blue-500", color: "text-blue-600", valColor: "text-foreground" },
+          { label: "Due Today", value: String(tasksDueToday), icon: Clock, bg: "bg-orange-50", accent: "bg-orange-500", color: "text-orange-600", valColor: tasksDueToday > 0 ? "text-orange-600" : "text-foreground" },
+          { label: "Overdue", value: String(overdueCount), icon: AlertTriangle, bg: "bg-red-50", accent: "bg-red-500", color: "text-red-600", valColor: overdueCount > 0 ? "text-red-600" : "text-foreground" },
+          { label: "At Risk Projects", value: String(atRiskCount), icon: Zap, bg: "bg-amber-50", accent: "bg-amber-500", color: "text-amber-600", valColor: atRiskCount > 0 ? "text-amber-600" : "text-foreground" },
+        ].map(({ label, value, icon: Icon, bg, accent, color, valColor }) => (
+          <Card key={label} className="group relative gap-0 overflow-hidden border-border/80 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md">
+            <div className={`absolute inset-x-0 top-0 h-1 ${accent}`} />
+            <CardContent className="p-3 pt-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className={`flex size-8 flex-shrink-0 items-center justify-center rounded-lg ${bg} ${color}`}>
+                  <Icon className="size-4" />
+                </div>
+                <span className={`text-xl font-semibold tracking-tight ${valColor}`}>{value}</span>
               </div>
-              <span className="text-sm text-muted-foreground font-medium leading-tight">{label}</span>
-            </div>
-            <p className={`text-3xl font-bold ${valColor}`}>{value}</p>
-          </div>
+              <div className="text-xs font-medium text-foreground">{label}</div>
+            </CardContent>
+          </Card>
         ))}
       </div>
 
       {/* Row 2: My Tasks + My Projects */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         {/* My Tasks widget */}
-        <div className="bg-card border border-border rounded-xl p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-foreground">My Tasks</h3>
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm lg:col-span-3">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="flex size-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                <CheckSquare className="size-4" />
+              </div>
+              <h3 className="font-semibold text-foreground">My Tasks</h3>
+            </div>
             <button onClick={onMyTasks} className="text-xs text-blue-600 hover:underline">View All →</button>
           </div>
           {/* Tab strip */}
-          <div className="flex gap-1 mb-3 border-b border-border">
+          <div className="mb-4 flex w-fit gap-1 rounded-lg bg-muted/70 p-1">
             {([
               { key: 'today', label: 'Today', count: myTasksToday.length },
               { key: 'week', label: 'This Week', count: myTasksWeek.length },
@@ -7435,7 +7453,7 @@ function DashboardView({
               <button
                 key={key}
                 onClick={() => setMyTasksTab(key)}
-                className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${myTasksTab === key ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-all ${myTasksTab === key ? 'bg-card text-indigo-600 shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
               >
                 {label} {count > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] bg-muted">{count}</span>}
               </button>
@@ -7477,8 +7495,11 @@ function DashboardView({
         </div>
 
         {/* My Projects widget */}
-        <div className="bg-card border border-border rounded-xl p-4">
-          <div className="flex items-center gap-2 mb-4">
+        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm lg:col-span-2">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="flex size-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+              <Folder className="size-4" />
+            </div>
             <h3 className="font-semibold text-foreground">My Projects</h3>
             <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">{myProjects.length}</span>
           </div>
@@ -7521,10 +7542,15 @@ function DashboardView({
       </div>
 
       {/* Row 3: Team Workload + Sprint Burndown */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.15fr_0.85fr]">
         {/* Team Workload */}
-        <div className="bg-card border border-border rounded-xl p-4" style={{ minHeight: 280 }}>
-          <h3 className="font-semibold text-foreground mb-4">{t("projectMgmt.teamWorkload")}</h3>
+        <div className="min-h-72 rounded-2xl border border-border bg-card p-5 shadow-sm">
+          <div className="mb-5 flex items-center gap-3">
+            <div className="flex size-9 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
+              <Users className="size-4" />
+            </div>
+            <h3 className="font-semibold text-foreground">{t("projectMgmt.teamWorkload")}</h3>
+          </div>
           {workload.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-6">No task data available</p>
           ) : (
@@ -7566,9 +7592,14 @@ function DashboardView({
         </div>
 
         {/* Sprint Burndown */}
-        <div className="bg-card border border-border rounded-xl p-4" style={{ minHeight: 280 }}>
+        <div className="min-h-72 rounded-2xl border border-border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-foreground">{t("projectMgmt.sprintBurndown")}</h3>
+            <div className="flex items-center gap-3">
+              <div className="flex size-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                <GanttChartSquare className="size-4" />
+              </div>
+              <h3 className="font-semibold text-foreground">{t("projectMgmt.sprintBurndown")}</h3>
+            </div>
             <span className="text-xs text-muted-foreground">Sprint 12</span>
           </div>
           <svg viewBox={`0 0 ${vbW} ${vbH}`} className="w-full" style={{ height: 180 }}>
@@ -7602,8 +7633,13 @@ function DashboardView({
       </div>
 
       {/* Row 4: Activity Feed */}
-      <div className="bg-card border border-border rounded-xl p-4">
-        <h3 className="font-semibold text-foreground mb-4">{t("projectMgmt.recentActivity")}</h3>
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-sm">
+        <div className="mb-5 flex items-center gap-3">
+          <div className="flex size-9 items-center justify-center rounded-xl bg-orange-50 text-orange-600">
+            <Clock className="size-4" />
+          </div>
+          <h3 className="font-semibold text-foreground">{t("projectMgmt.recentActivity")}</h3>
+        </div>
         <div className="space-y-3">
           {activityItems.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">No recent activity</p>
@@ -7626,7 +7662,12 @@ function DashboardView({
         return (
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-foreground">Active Projects</h3>
+              <div className="flex items-center gap-3">
+                <div className="flex size-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                  <Folder className="size-4" />
+                </div>
+                <h3 className="font-semibold text-foreground">Active Projects</h3>
+              </div>
               <span className="text-xs text-muted-foreground">{activeProjects.length} projects</span>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -8157,6 +8198,9 @@ export function ProjectManagementJira({
   const secManageDefects = useSectionPermission("projects", "manage_defects");
   const secManageSprints = useSectionPermission("projects", "manage_sprints");
   const secTimeLogs = useSectionPermission("projects", "time_logs");
+  const secDeleteProject = useSectionPermission("projects", "delete_project");
+  const secManageMilestones = useSectionPermission("projects", "manage_milestones");
+  const secViewAllProjects = useSectionPermission("projects", "view_all_projects");
 
   const [mainView, setMainView] = useState<"dashboard" | "projects" | "mytasks">("dashboard");
   const [projectOpenedFromDashboard, setProjectOpenedFromDashboard] = useState(false);
@@ -8172,8 +8216,8 @@ export function ProjectManagementJira({
   const [showNotifPrefs, setShowNotifPrefs] = useState(false);
 
   const role = currentUser?.primaryRole as string | undefined;
-  const canManage = isManagerOrAdmin(role);
-  const canAdminDelete = isAdmin(role);
+  const canManage = secManageTeam || secCreateTasks || secManageBacklog || secManageSprints;
+  const canAdminDelete = secDeleteProject;
   const userId = currentUser?.id ?? "";
   const userEmail = currentUser?.email ?? "";
 
@@ -8201,8 +8245,8 @@ export function ProjectManagementJira({
   useEffect(() => {
     const employeeId = currentUser?.employeeId ?? undefined;
     const userName = currentUser?.name ?? currentUser?.fullName ?? undefined;
-    loadAll(userId, role, employeeId, userName);
-  }, [userId, role, currentUser?.employeeId, currentUser?.name]);
+    loadAll(userId, secViewAllProjects ? role : "employee", employeeId, userName);
+  }, [userId, role, secViewAllProjects, currentUser?.employeeId, currentUser?.name]);
 
   useEffect(() => {
     fetch(`${API_BASE}/master-data/project-methodologies`, { headers: apiHeaders() })
@@ -8284,24 +8328,33 @@ export function ProjectManagementJira({
   return (
     <div className="min-h-screen bg-muted">
       {/* Header */}
-      <div className="bg-card border-b sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-4">
-          <div className="flex-1 min-w-0">
-            <h1 className="text-xl font-bold text-foreground">
-              {t("projects.title")}
-            </h1>
+      <div className="sticky top-0 z-30 border-b border-border/80 bg-background/90 backdrop-blur-xl">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-4">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
+              <BriefcaseBusiness className="size-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="truncate text-base font-semibold tracking-tight text-foreground">
+                {t("projects.title")}
+              </div>
+            </div>
           </div>
           {/* Main view toggle */}
-          <div className="flex bg-muted p-1 rounded-lg gap-1">
-            <button
+          <div className="flex rounded-lg border border-border/70 bg-muted/60 p-1 gap-1">
+            <Button
+              size="sm"
+              variant={mainView === "dashboard" ? "secondary" : "ghost"}
               onClick={() => setMainView("dashboard")}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mainView === "dashboard" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              className="h-7 text-xs"
             >
               {t("projectMgmt.dashboard")}
-            </button>
-            {secViewProjects && <button
+            </Button>
+            {secViewProjects && <Button
+              size="sm"
+              variant={mainView === "projects" ? "secondary" : "ghost"}
               onClick={() => setMainView("projects")}
-              className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mainView === "projects" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              className="h-7 text-xs"
             >
               {t("projectMgmt.projects")}
               {atRiskProjectCount > 0 && (
@@ -8309,10 +8362,12 @@ export function ProjectManagementJira({
                   {atRiskProjectCount}
                 </span>
               )}
-            </button>}
-            <button
+            </Button>}
+            <Button
+              size="sm"
+              variant={mainView === "mytasks" ? "secondary" : "ghost"}
               onClick={() => setMainView("mytasks")}
-              className={`flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mainView === "mytasks" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              className="h-7 text-xs"
             >
               {t("projectMgmt.myTasks")}
               {overdueTaskCount > 0 && (
@@ -8320,25 +8375,25 @@ export function ProjectManagementJira({
                   {overdueTaskCount > 99 ? "99+" : overdueTaskCount}
                 </span>
               )}
-            </button>
+            </Button>
           </div>
           {secCreateProject && mainView === "projects" && (
-            <button
+            <Button
+              size="sm"
               onClick={() => setShowProjectForm(true)}
-              className="flex items-center gap-2 px-3 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700"
             >
-              <Plus className="w-4 h-4" />
+              <Plus />
               <span className="hidden sm:inline">{t("project.newProject")}</span>
-            </button>
+            </Button>
           )}
-          <button
+          <Button
+            size="icon"
+            variant="outline"
             onClick={() => setShowNotifPrefs(true)}
             title={t("pm.notifPrefs.button")}
-            className="flex items-center gap-1.5 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted text-muted-foreground"
           >
-            <span>⚙</span>
-            <span className="hidden sm:inline text-xs">{t("pm.notifPrefs.button")}</span>
-          </button>
+            <Settings />
+          </Button>
         </div>
       </div>
 
@@ -8808,6 +8863,7 @@ export function ProjectManagementJira({
           secManageDefects={secManageDefects}
           secManageSprints={secManageSprints}
           secTimeLogs={secTimeLogs}
+          secManageMilestones={secManageMilestones}
           onBack={() => { setSelectedProject(null); setProjectOpenedFromDashboard(false); }}
           onGoToDashboard={projectOpenedFromDashboard ? () => { setSelectedProject(null); setMainView("dashboard"); setProjectOpenedFromDashboard(false); } : undefined}
           onUpdateRAG={(ragStatus) => updateRAG(selectedProject.id, ragStatus)}

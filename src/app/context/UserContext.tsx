@@ -20,30 +20,76 @@ function detectDeviceType(ua: string): string {
 async function recordLoginEvent(appUserId: string, email: string, accessToken: string) {
   const ua = navigator.userAgent;
   const deviceType = detectDeviceType(ua);
-  const now = new Date().toISOString();
   // Use a hash of the access token as a stable session identifier
   const tokenHash = btoa(accessToken.slice(-32)).replace(/[^a-zA-Z0-9]/g, '').slice(0, 40);
 
-  void supabase.from('login_history').insert([{
-    user_id: appUserId,
-    email,
-    user_agent: ua,
-    device_type: deviceType,
-    success: true,
-    mfa_used: false,
-    logged_in_at: now,
-  }]);
+  const response = await fetch(
+    `https://${projectId}.supabase.co/functions/v1/make-server-1fe2c468/users/session-event`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: publicAnonKey,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        appUserId,
+        email,
+        sessionToken: tokenHash,
+        userAgent: ua,
+        deviceType,
+      }),
+    },
+  );
+  if (!response.ok) {
+    // Backward compatibility while an older Edge Function deployment does not
+    // yet expose /users/session-event.
+    const now = new Date().toISOString();
+    const { data: existing, error: existingError } = await supabase
+      .from('app_user_sessions')
+      .select('id')
+      .eq('session_token', tokenHash)
+      .maybeSingle();
+    if (existingError) {
+      console.warn('[UserCtx] Could not inspect login session:', existingError.message);
+      return;
+    }
+    if (existing) {
+      const { error } = await supabase
+        .from('app_user_sessions')
+        .update({ last_seen_at: now })
+        .eq('id', existing.id);
+      if (error) console.warn('[UserCtx] Could not update login session:', error.message);
+      return;
+    }
 
-  // Upsert session record (idempotent on token hash)
-  void supabase.from('app_user_sessions').upsert([{
-    user_id: appUserId,
-    session_token: tokenHash,
-    user_agent: ua,
-    device_type: deviceType,
-    started_at: now,
-    last_seen_at: now,
-    revoked: false,
-  }], { onConflict: 'session_token', ignoreDuplicates: false });
+    const { error: sessionError } = await supabase.from('app_user_sessions').insert([{
+      user_id: appUserId,
+      session_token: tokenHash,
+      user_agent: ua,
+      device_type: deviceType,
+      started_at: now,
+      last_seen_at: now,
+      revoked: false,
+    }]);
+    if (sessionError) {
+      console.warn('[UserCtx] Could not record login session:', sessionError.message);
+      return;
+    }
+
+    const { error: historyError } = await supabase.from('login_history').insert([{
+      user_id: appUserId,
+      email,
+      user_agent: ua,
+      device_type: deviceType,
+      success: true,
+      mfa_used: false,
+      logged_in_at: now,
+    }]);
+    if (historyError) {
+      console.warn('[UserCtx] Could not record login history:', historyError.message);
+    }
+  }
 }
 
 export interface CurrentUser {

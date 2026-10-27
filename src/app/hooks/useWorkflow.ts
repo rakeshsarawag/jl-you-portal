@@ -1,10 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
-import { publicAnonKey, API_BASE as BASE_URL, safeJson, apiHeaders, apiFetch }from '../utils/constants';
+import { API_BASE as BASE_URL, safeJson, apiHeaders, apiFetch }from '../utils/constants';
 import { useUser } from '../context/UserContext';
 import { WorkflowDefinition, WorkflowInstance, ApprovalRequest } from '../services/workflowEngine';
+import {
+  mapApproval,
+  mapWorkflowDefinition,
+  mapWorkflowInstance,
+  mapWorkflowStats,
+  serializeWorkflowDefinition,
+} from '../services/workflowApiMappers';
 
 const BASE = `${BASE_URL}/workflow`;
 
+function apiErrorMessage(json: any, fallback: string): string {
+  const error = json?.error;
+  const message = typeof error === 'string' ? error : error?.message;
+  const details = Array.isArray(json?.details)
+    ? json.details.join(' ')
+    : Array.isArray(error?.details)
+      ? error.details.join(' ')
+      : '';
+  return [message || fallback, details].filter(Boolean).join(' — ');
+}
 
 
 // Extended approval shape returned by the API
@@ -36,14 +53,22 @@ export function useWorkflow() {
         fetch(`${BASE}/stats`, { headers: apiHeaders(userEmail) }).then(r => safeJson(r)),
       ]);
 
-      if (defsRes.status === 'fulfilled') setDefinitions(defsRes.value?.data ?? []);
-      if (instsRes.status === 'fulfilled') setInstances(instsRes.value?.data ?? []);
-      if (appRes.status === 'fulfilled') setPendingApprovals(appRes.value?.data ?? []);
-      if (statsRes.status === 'fulfilled') setStats(statsRes.value?.data ?? {});
+      if (defsRes.status === 'fulfilled') {
+        setDefinitions((defsRes.value?.data ?? []).map(mapWorkflowDefinition));
+      }
+      if (instsRes.status === 'fulfilled') {
+        setInstances((instsRes.value?.data ?? []).map(mapWorkflowInstance));
+      }
+      if (appRes.status === 'fulfilled') {
+        setPendingApprovals((appRes.value?.data ?? []).map(mapApproval));
+      }
+      if (statsRes.status === 'fulfilled') {
+        setStats(mapWorkflowStats(statsRes.value?.data ?? {}));
+      }
     } finally {
       setLoading(false);
     }
-  }, [currentUser?.id]);
+  }, [currentUser?.id, userEmail]);
 
   useEffect(() => {
     fetchAll();
@@ -55,23 +80,31 @@ export function useWorkflow() {
     const res = await apiFetch(`${BASE}/definitions`, {
       method: 'POST',
       headers: apiHeaders(userEmail),
-      body: JSON.stringify({ ...def, createdBy: currentUser?.id }),
+      body: JSON.stringify(serializeWorkflowDefinition({
+        ...def,
+        createdBy: currentUser?.id,
+      })),
     });
+    const json = await safeJson(res);
+    if (!res.ok || !json?.success) throw new Error(apiErrorMessage(json, 'Failed to create workflow'));
     await fetchAll();
-    return safeJson(res);
+    return json;
   };
 
   const updateDefinition = async (id: string, updates: Partial<WorkflowDefinition>) => {
-    await apiFetch(`${BASE}/definitions/${id}`, {
+    const res = await apiFetch(`${BASE}/definitions/${id}`, {
       method: 'PUT',
       headers: apiHeaders(userEmail),
-      body: JSON.stringify(updates),
+      body: JSON.stringify(serializeWorkflowDefinition(updates)),
     });
+    const json = await safeJson(res);
+    if (!res.ok || !json?.success) throw new Error(apiErrorMessage(json, 'Failed to update workflow'));
     await fetchAll();
   };
 
   const deleteDefinition = async (id: string) => {
-    await apiFetch(`${BASE}/definitions/${id}`, { method: 'DELETE', headers: apiHeaders(userEmail) });
+    const res = await apiFetch(`${BASE}/definitions/${id}`, { method: 'DELETE', headers: apiHeaders(userEmail) });
+    if (!res.ok) throw new Error('Failed to archive workflow');
     await fetchAll();
   };
 
@@ -92,8 +125,10 @@ export function useWorkflow() {
         triggered_by: currentUser?.id,
       }),
     });
+    const json = await safeJson(res);
+    if (!res.ok || !json?.success) throw new Error(apiErrorMessage(json, 'Failed to trigger workflow'));
     await fetchAll();
-    return safeJson(res);
+    return json;
   };
 
   const startWorkflow = async (definitionId: string, context: Record<string, unknown> = {}) => {
@@ -106,12 +141,15 @@ export function useWorkflow() {
         started_by: currentUser?.id,
       }),
     });
+    const json = await safeJson(res);
+    if (!res.ok || !json?.success) throw new Error(apiErrorMessage(json, 'Failed to start workflow'));
     await fetchAll();
-    return safeJson(res);
+    return json;
   };
 
   const cancelInstance = async (instanceId: string) => {
-    await apiFetch(`${BASE}/instances/${instanceId}/cancel`, { method: 'POST', headers: apiHeaders(userEmail) });
+    const res = await apiFetch(`${BASE}/instances/${instanceId}/cancel`, { method: 'POST', headers: apiHeaders(userEmail) });
+    if (!res.ok) throw new Error('Failed to cancel workflow');
     await fetchAll();
   };
 
@@ -120,11 +158,13 @@ export function useWorkflow() {
     status: 'approved' | 'rejected',
     comment = ''
   ) => {
-    await apiFetch(`${BASE}/approvals/${approvalId}/respond`, {
+    const res = await apiFetch(`${BASE}/approvals/${approvalId}/respond`, {
       method: 'POST',
       headers: apiHeaders(userEmail),
       body: JSON.stringify({ status, comment, responded_by: currentUser?.id }),
     });
+    const json = await safeJson(res);
+    if (!res.ok || !json?.success) throw new Error(apiErrorMessage(json, 'Failed to respond to approval'));
     await fetchAll();
   };
 

@@ -6,14 +6,14 @@ import { usePermissions } from '../hooks/usePermissions';
 import { UserMenu } from './AppHeader';
 import {
   LayoutDashboard, Users, UserPlus, ClipboardList, TrendingUp, BookOpen,
-  DollarSign, FileText, Database, Kanban, Bug, Target, Monitor, Wrench,
+  DollarSign, FileText, Database, Kanban, BugOff, Target, Monitor, Wrench,
   FolderOpen, MessageSquare, Linkedin, BarChart3, GitBranch, ShieldCheck,
   Cog, UserCog, Lock, ChevronLeft, ChevronRight, Home, CalendarCheck, Pin, PinOff,
 } from 'lucide-react';
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string; strokeWidth?: number }>> = {
   LayoutDashboard, Users, UserPlus, ClipboardList, TrendingUp, BookOpen,
-  DollarSign, FileText, Database, Kanban, Bug, Target, Monitor, Wrench,
+  DollarSign, FileText, Database, Kanban, BugOff, Target, Monitor, Wrench,
   FolderOpen, MessageSquare, Linkedin, BarChart3, GitBranch, ShieldCheck,
   Cog, UserCog, Lock, Home, CalendarCheck,
 };
@@ -161,7 +161,7 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
         </div>
 
         {/* App list */}
-        <nav className="flex-1 overflow-y-auto overflow-x-hidden py-2 scrollbar-none">
+        <nav className="app-sidebar-scrollbar flex-1 overflow-y-auto overflow-x-hidden py-2">
           {/* Home */}
           <div className="px-2 mb-1">
             <SidebarItem

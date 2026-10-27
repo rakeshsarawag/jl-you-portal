@@ -83,9 +83,14 @@ async function loadMatrix(): Promise<{ matrix: Matrix; tableMissing: boolean; db
   for (const [role, data] of Object.entries(raw)) {
     if (ALL_ROLES.includes(role as UserRole) && data && typeof data === 'object') {
       if ('app_visibility' in data || 'sections' in data) {
+        const hasStoredSections = data.sections &&
+          typeof data.sections === 'object' &&
+          Object.keys(data.sections).length > 0;
         matrix[role as UserRole] = {
           app_visibility: data.app_visibility ?? {},
-          sections: data.sections ?? {},
+          sections: Array.isArray(data.actions) && !hasStoredSections
+            ? DEFAULT_SECTION_VISIBILITY[role as UserRole] ?? {}
+            : data.sections ?? {},
         };
       }
     }
@@ -155,12 +160,15 @@ function AppVisibilityPanel({ matrix, onChange }: {
 
   const setAllForRole = (role: UserRole, val: boolean) => {
     const vis: Record<string, boolean> = {};
-    APP_REGISTRY.forEach(a => { vis[a.appId] = val; });
+    APP_REGISTRY.forEach(a => {
+      vis[a.appId] = val && (role === 'admin' || a.requiredRoles.includes(role));
+    });
     onChange({ ...matrix, [role]: { ...matrix[role], app_visibility: vis } });
   };
 
   const roleState = (role: UserRole): 'all' | 'none' | 'mixed' => {
-    const vals = APP_REGISTRY.map(a => matrix[role].app_visibility[a.appId] ?? false);
+    const eligibleApps = APP_REGISTRY.filter(a => role === 'admin' || a.requiredRoles.includes(role));
+    const vals = eligibleApps.map(a => matrix[role].app_visibility[a.appId] ?? false);
     if (vals.every(Boolean)) return 'all';
     if (vals.every(v => !v)) return 'none';
     return 'mixed';
@@ -201,11 +209,14 @@ function AppVisibilityPanel({ matrix, onChange }: {
                 </td>
                 {ALL_ROLES.map(role => {
                   const isAdmin = role === 'admin';
-                  const val = isAdmin ? true : (matrix[role].app_visibility[app.appId] ?? false);
+                  const eligible = isAdmin || app.requiredRoles.includes(role);
+                  const val = isAdmin ? true : eligible && (matrix[role].app_visibility[app.appId] ?? false);
                   return (
                     <td key={role} className="px-3 py-2.5 text-center">
                       {isAdmin
                         ? <span title="Admin always has access"><Lock size={12} className="mx-auto text-muted-foreground/50" /></span>
+                        : !eligible
+                          ? <span title="This role is outside the application's security boundary"><Lock size={12} className="mx-auto text-muted-foreground/30" /></span>
                         : <Toggle value={val} onChange={v => setAppVisible(role, app.appId, v)} size="xs" />
                       }
                     </td>
@@ -312,7 +323,11 @@ function SectionPermissionsPanel({ matrix, onChange }: {
         <div className="flex-1 overflow-y-auto divide-y divide-border">
           {filteredApps.map(app => {
             const expanded = expandedApps.has(app.appId) || !!search;
-            const appVisible = selectedRole === 'admin' ? true : (blob.app_visibility[app.appId] ?? false);
+            const registryApp = APP_REGISTRY.find(item => item.appId === app.appId);
+            const roleEligible = selectedRole === 'admin' || Boolean(registryApp?.requiredRoles.includes(selectedRole));
+            const appVisible = roleEligible && (
+              selectedRole === 'admin' ? true : (blob.app_visibility[app.appId] ?? false)
+            );
             const state = appSectionState(app.appId);
             return (
               <div key={app.appId}>
@@ -338,14 +353,16 @@ function SectionPermissionsPanel({ matrix, onChange }: {
                 {expanded && (
                   <div className="bg-muted/10 divide-y divide-border/50">
                     {app.sections.map(section => {
-                      const val = selectedRole === 'admin' ? true : (blob.sections[app.appId]?.[section.id] ?? false);
+                      const val = selectedRole === 'admin'
+                        ? true
+                        : roleEligible && (blob.sections[app.appId]?.[section.id] ?? false);
                       return (
                         <div key={section.id} className="flex items-center gap-3 px-8 py-2 hover:bg-muted/20 transition-colors">
                           <div className="flex-1 min-w-0">
                             <div className="text-xs text-foreground font-medium">{section.label}</div>
                             <div className="text-[10px] text-muted-foreground">{section.description}</div>
                           </div>
-                          {selectedRole === 'admin'
+                          {selectedRole === 'admin' || !roleEligible
                             ? <Lock size={11} className="text-muted-foreground/50 shrink-0" />
                             : <Toggle value={val} onChange={v => setSectionVal(app.appId, section.id, v)} size="xs" />
                           }

@@ -710,6 +710,8 @@ type DetailTab = 'checklist' | 'documents' | 'welcome-kit';
 interface DetailModalProps {
   employee: OnboardingCandidate;
   canManage: boolean;
+  canViewDocuments: boolean;
+  canGrantPortalAccess: boolean;
   allEmployees: OnboardingCandidate[];
   onUpdateTask: (taskId: string, completed: boolean) => Promise<void>;
   onSyncToDirectory: () => Promise<void>;
@@ -719,7 +721,7 @@ interface DetailModalProps {
   onClose: () => void;
 }
 
-function DetailModal({ employee, canManage, currentUserName, currentUserId, allEmployees, onUpdateTask, onSyncToDirectory, onEnableAccess, onConfirmProbation, onAssignBuddy, onClose }: DetailModalProps & { currentUserName?: string; currentUserId?: string }) {
+function DetailModal({ employee, canManage, canViewDocuments, canGrantPortalAccess, currentUserName, currentUserId, allEmployees, onUpdateTask, onSyncToDirectory, onEnableAccess, onConfirmProbation, onAssignBuddy, onClose }: DetailModalProps & { currentUserName?: string; currentUserId?: string }) {
   const [tab, setTab] = useState<DetailTab>('checklist');
   const [confirmSync, setConfirmSync] = useState(false);
   const [confirmAccess, setConfirmAccess] = useState(false);
@@ -825,7 +827,7 @@ function DetailModal({ employee, canManage, currentUserName, currentUserId, allE
 
   const tabs: { id: DetailTab; label: string; icon: React.ReactNode }[] = [
     { id: 'checklist', label: 'Checklist', icon: <CheckSquare size={14} /> },
-    { id: 'documents', label: 'Documents', icon: <FileText size={14} /> },
+    ...(canViewDocuments ? [{ id: 'documents' as const, label: 'Documents', icon: <FileText size={14} /> }] : []),
     { id: 'welcome-kit', label: 'Welcome Kit', icon: <Gift size={14} /> },
   ];
 
@@ -1063,20 +1065,20 @@ function DetailModal({ employee, canManage, currentUserName, currentUserId, allE
           </div>
 
           {/* Footer actions for HR/Admin */}
-          {canManage && (
+          {(canManage || canGrantPortalAccess) && (
             <div className="flex flex-wrap gap-2 px-6 pb-6">
-              <button
+              {canManage && <button
                 onClick={() => setConfirmSync(true)}
                 className="flex items-center gap-1.5 px-3 py-2 text-sm text-foreground border border-border rounded-lg hover:bg-muted"
               >
                 <RefreshCw size={14} /> Sync to Directory
-              </button>
-              <button
+              </button>}
+              {canGrantPortalAccess && <button
                 onClick={() => setConfirmAccess(true)}
                 className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
               >
                 <UserCheck size={14} /> Enable Access
-              </button>
+              </button>}
             </div>
           )}
 
@@ -1793,12 +1795,11 @@ function OffboardingBoard({
 // ==================== OFFBOARDING TAB ====================
 
 interface OffboardingTabProps {
-  isHRAdmin: boolean;
-  isManager: boolean;
+  canManage: boolean;
   employees: { id: string; name: string; department: string; position?: string }[];
 }
 
-function OffboardingTab({ isHRAdmin, isManager, employees }: OffboardingTabProps) {
+function OffboardingTab({ canManage, employees }: OffboardingTabProps) {
   const [records, setRecords] = useState<OffboardingRecord[]>([]);
   const [tasks, setTasks] = useState<Record<string, OffboardingTask[]>>({});
   const [loading, setLoading] = useState(true);
@@ -1859,7 +1860,7 @@ function OffboardingTab({ isHRAdmin, isManager, employees }: OffboardingTabProps
           <h2 className="text-base font-semibold text-foreground">Offboarding Management</h2>
           <p className="text-xs text-muted-foreground mt-0.5">{records.length} active offboarding{records.length !== 1 ? 's' : ''}</p>
         </div>
-        {(isHRAdmin || isManager) && (
+        {canManage && (
           <button
             onClick={() => setShowInitiate(true)}
             className="flex items-center gap-1.5 px-3 py-2 text-sm text-white bg-red-600 hover:bg-red-700 rounded-lg"
@@ -1905,7 +1906,7 @@ function OffboardingTab({ isHRAdmin, isManager, employees }: OffboardingTabProps
             <div className="bg-card border border-border rounded-xl p-12 text-center">
               <LogOut size={36} className="mx-auto mb-3 text-gray-300" />
               <p className="text-sm text-muted-foreground">No offboarding records yet</p>
-              {(isHRAdmin || isManager) && (
+              {canManage && (
                 <button onClick={() => setShowInitiate(true)}
                   className="mt-3 text-sm text-blue-600 hover:underline">
                   Initiate first offboarding
@@ -2462,6 +2463,8 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
   const isManager = currentUser?.primaryRole === 'manager';
   const permManageOnboarding = useSectionPermission('onboarding', 'manage_onboarding');
   const permViewOnboarding = useSectionPermission('onboarding', 'view_onboarding');
+  const permPortalAccess = useSectionPermission('onboarding', 'portal_access');
+  const permDocuments = useSectionPermission('onboarding', 'documents');
 
   // Filter by role
   const visibleEmployees = useMemo(() => {
@@ -2659,6 +2662,10 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
     { status: 'On Hold', label: 'On Hold', color: 'border-orange-400' },
   ];
 
+  if (!permViewOnboarding) {
+    return <div className="p-8 text-center text-sm text-muted-foreground">You do not have permission to view onboarding records.</div>;
+  }
+
   return (
     <div className="min-h-screen bg-muted">
       {/* Header */}
@@ -2693,7 +2700,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                 <LogOut size={14} /> <span className="hidden sm:inline">Offboarding</span>
               </button>
             </div>
-            {mainTab === 'onboarding' && (isHRAdmin || permManageOnboarding) && (
+            {mainTab === 'onboarding' && permManageOnboarding && (
               <>
                 <button
                   onClick={() => setShowBulkImport(true)}
@@ -2717,8 +2724,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
         {/* Offboarding tab */}
         {mainTab === 'offboarding' && (
           <OffboardingTab
-            isHRAdmin={isHRAdmin}
-            isManager={isManager}
+            canManage={permManageOnboarding}
             employees={employees.map(e => ({ id: e.id, name: e.name, department: e.department, position: e.position }))}
           />
         )}
@@ -2938,7 +2944,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                         >
                           <Eye size={14} />
                         </button>
-                        {(isHRAdmin || isManager || permManageOnboarding) && (
+                        {permManageOnboarding && (
                           <button
                             onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
                             title="Edit"
@@ -2947,22 +2953,22 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                             <Edit2 size={14} />
                           </button>
                         )}
-                        {(isHRAdmin || permManageOnboarding) && (
+                        {(permManageOnboarding || permPortalAccess) && (
                           <>
-                            <button
+                            {permPortalAccess && <button
                               onClick={() => { setEnableTarget(emp); setEnableTargetRoles(['employee']); }}
                               title="Enable Access"
                               className="p-1.5 text-muted-foreground hover:text-green-600 hover:bg-green-50 rounded"
                             >
                               <UserCheck size={14} />
-                            </button>
-                            <button
+                            </button>}
+                            {permManageOnboarding && <button
                               onClick={() => setDeleteTarget(emp)}
                               title="Delete"
                               className="p-1.5 text-muted-foreground hover:text-red-600 hover:bg-red-50 rounded"
                             >
                               <Trash2 size={14} />
-                            </button>
+                            </button>}
                           </>
                         )}
                       </div>
@@ -2999,7 +3005,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                       <KanbanCard
                         key={emp.id}
                         employee={emp}
-                        canManage={isHRAdmin}
+                        canManage={permPortalAccess}
                         onView={() => setDetailEmployee(emp)}
                         onEnableAccess={() => { setEnableTarget(emp); setEnableTargetRoles(['employee']); }}
                       />
@@ -3039,7 +3045,9 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
       {detailEmployee && (
         <DetailModal
           employee={detailEmployee}
-          canManage={isHRAdmin}
+          canManage={permManageOnboarding}
+          canViewDocuments={permDocuments}
+          canGrantPortalAccess={permPortalAccess}
           currentUserName={currentUser?.name}
           currentUserId={currentUser?.id}
           allEmployees={employees}

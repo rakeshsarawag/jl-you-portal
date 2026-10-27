@@ -15,7 +15,7 @@ import {
   Monitor, Smartphone, Tablet, MapPin, Clock, Activity, RotateCcw,
   ShieldCheck, ShieldOff, ShieldAlert, Calendar, BarChart2, Send, Upload,
 } from 'lucide-react';
-import { API_BASE, publicAnonKey, safeJson, supabase, getApiAccessToken } from '../../utils/constants';
+import { API_BASE, publicAnonKey, safeJson, supabase, getApiAccessToken, apiFetch } from '../../utils/constants';
 import { useNavigate } from 'react-router';
 import { useUser } from '../../context/UserContext';
 import { UserWithRole, UserRole } from '../../../types/rbac';
@@ -24,6 +24,7 @@ import { ALL_ROLES, ROLE_LABELS, ROLE_COLORS, USER_STATUS_LABELS } from '../../.
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { t } from '../../../i18n/index';
 import { useEmployees } from '../../context/EmployeesContext';
+import { useSectionPermission } from '../SectionGuard';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface AppUserSession {
@@ -1554,25 +1555,38 @@ function SessionsTab({ currentUserId }: { currentUserId?: string }) {
   const [userFilter, setUserFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [revoking, setRevoking] = useState<Set<string>>(new Set());
-  const { currentUser } = useUser();
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data, error } = await (supabase as any)
-        .from('app_user_sessions')
-        .select('*, app_users(name, email)')
-        .order('started_at', { ascending: false })
-        .limit(500);
-      if (error) throw error;
-      const mapped = (data ?? []).map((s: any) => ({
-        ...s,
-        user_name: s.app_users?.name ?? '',
-        user_email: s.app_users?.email ?? '',
-      }));
-      setSessions(mapped);
-    } catch {
+      const response = await apiFetch(`${API_BASE}/users/sessions`);
+      const result = await safeJson(response);
+      if (response.ok) {
+        setSessions(result?.sessions ?? []);
+      } else if (response.status === 404) {
+        const { data, error } = await supabase
+          .from('app_user_sessions')
+          .select('*')
+          .order('started_at', { ascending: false })
+          .limit(500);
+        if (error) throw error;
+        const userIds = [...new Set((data ?? []).map(session => session.user_id).filter(Boolean))];
+        const { data: users, error: usersError } = userIds.length
+          ? await supabase.from('app_users').select('id, name, email').in('id', userIds)
+          : { data: [], error: null };
+        if (usersError) throw usersError;
+        const usersById = new Map((users ?? []).map(user => [user.id, user]));
+        setSessions((data ?? []).map(session => ({
+          ...session,
+          user_name: usersById.get(session.user_id)?.name ?? '',
+          user_email: usersById.get(session.user_id)?.email ?? '',
+        })));
+      } else {
+        throw new Error(result?.error || 'Failed to load sessions');
+      }
+    } catch (error) {
       setSessions([]);
+      toast.error(error instanceof Error ? error.message : 'Failed to load sessions');
     } finally {
       setLoading(false);
     }
@@ -1596,15 +1610,24 @@ function SessionsTab({ currentUserId }: { currentUserId?: string }) {
   const handleRevoke = async (sessionId: string) => {
     setRevoking(prev => new Set([...prev, sessionId]));
     try {
-      void (supabase as any).from('app_user_sessions').update({
-        revoked: true,
-        revoked_by: currentUser?.id ?? null,
-        revoked_at: new Date().toISOString(),
-      }).eq('id', sessionId);
+      const response = await apiFetch(`${API_BASE}/users/sessions/${sessionId}/revoke`, {
+        method: 'PUT',
+      });
+      const result = await safeJson(response);
+      if (!response.ok && response.status === 404) {
+        const { error } = await supabase.from('app_user_sessions').update({
+          revoked: true,
+          revoked_by: currentUserId ?? null,
+          revoked_at: new Date().toISOString(),
+        }).eq('id', sessionId);
+        if (error) throw error;
+      } else if (!response.ok) {
+        throw new Error(result?.error || 'Failed to revoke session');
+      }
       setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, revoked: true } : s));
       toast.success('Session revoked');
-    } catch {
-      toast.error('Failed to revoke session');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to revoke session');
     } finally {
       setRevoking(prev => { const s = new Set(prev); s.delete(sessionId); return s; });
     }
@@ -1756,19 +1779,33 @@ function LoginHistoryTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data, error } = await (supabase as any)
-        .from('login_history')
-        .select('*, app_users(name)')
-        .order('logged_in_at', { ascending: false })
-        .limit(1000);
-      if (error) throw error;
-      const mapped = (data ?? []).map((e: any) => ({
-        ...e,
-        user_name: e.app_users?.name ?? '',
-      }));
-      setEntries(mapped);
-    } catch {
+      const response = await apiFetch(`${API_BASE}/users/login-history`);
+      const result = await safeJson(response);
+      if (response.ok) {
+        setEntries(result?.entries ?? []);
+      } else if (response.status === 404) {
+        const { data, error } = await supabase
+          .from('login_history')
+          .select('*')
+          .order('logged_in_at', { ascending: false })
+          .limit(1000);
+        if (error) throw error;
+        const userIds = [...new Set((data ?? []).map(entry => entry.user_id).filter(Boolean))];
+        const { data: users, error: usersError } = userIds.length
+          ? await supabase.from('app_users').select('id, name').in('id', userIds)
+          : { data: [], error: null };
+        if (usersError) throw usersError;
+        const usersById = new Map((users ?? []).map(user => [user.id, user.name]));
+        setEntries((data ?? []).map(entry => ({
+          ...entry,
+          user_name: usersById.get(entry.user_id) ?? '',
+        })));
+      } else {
+        throw new Error(result?.error || 'Failed to load login history');
+      }
+    } catch (error) {
       setEntries([]);
+      toast.error(error instanceof Error ? error.message : 'Failed to load login history');
     } finally {
       setLoading(false);
     }
@@ -2354,20 +2391,12 @@ export function UserManagement({ accessToken, onLogout }: Props) {
   const navigate = useNavigate();
   const { currentUser } = useUser();
   const primaryRole = currentUser?.primaryRole ?? 'employee';
+  const canViewUsers = useSectionPermission('user-management', 'view_users');
+  const canCreateUsers = useSectionPermission('user-management', 'create_user');
+  const canGrantAccess = useSectionPermission('user-management', 'grant_access');
+  const canEditRoles = useSectionPermission('user-management', 'edit_roles');
+  const canSuspendUsers = useSectionPermission('user-management', 'suspend_user');
   const [activeTab, setActiveTab] = useState<ActiveTab>('users');
-
-  if (primaryRole !== 'admin') {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-6">
-        <div className="text-center max-w-sm">
-          <Shield size={40} className="text-muted-foreground mx-auto mb-3 opacity-40" />
-          <h2 className="font-semibold text-foreground mb-1">Access Denied</h2>
-          <p className="text-sm text-muted-foreground mb-4">{t('userMgmt.accessDenied')}</p>
-          <button onClick={() => navigate('/')} className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors">Go to Home</button>
-        </div>
-      </div>
-    );
-  }
 
   const um = useUserManagement();
   const [search, setSearch] = useState('');
@@ -2574,6 +2603,19 @@ export function UserManagement({ accessToken, onLogout }: Props) {
     return Math.floor((Date.now() - new Date(invitedAt).getTime()) / 86400000);
   };
 
+  if (primaryRole !== 'admin' || !canViewUsers) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="text-center max-w-sm">
+          <Shield size={40} className="text-muted-foreground mx-auto mb-3 opacity-40" />
+          <h2 className="font-semibold text-foreground mb-1">Access Denied</h2>
+          <p className="text-sm text-muted-foreground mb-4">{t('userMgmt.accessDenied')}</p>
+          <button onClick={() => navigate('/')} className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm hover:bg-primary/90 transition-colors">Go to Home</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -2594,24 +2636,24 @@ export function UserManagement({ accessToken, onLogout }: Props) {
                 >
                   <Download size={13} /> Export CSV
                 </button>
-                <button
+                {canCreateUsers && <button
                   onClick={() => setShowInviteModal(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border rounded-lg hover:bg-muted transition-colors"
                 >
                   <Send size={13} /> Invite User
-                </button>
-                <button
+                </button>}
+                {canCreateUsers && <button
                   onClick={() => setShowBulkImport(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium border border-border rounded-lg hover:bg-muted transition-colors"
                 >
                   <Upload size={13} /> Bulk Import
-                </button>
-                <button
+                </button>}
+                {canGrantAccess && <button
                   onClick={() => { setEditingUser(undefined); setShowCreateForm(true); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors"
                 >
                   <UserCheck size={13} /> Grant Access
-                </button>
+                </button>}
               </>
             )}
           </div>
@@ -2646,7 +2688,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
         {activeTab === 'audit' && <AuditLogTab />}
 
         {/* Sessions Tab */}
-        {activeTab === 'sessions' && <SessionsTab currentUserId={currentUser?.id} />}
+        {activeTab === 'sessions' && <SessionsTab currentUserId={currentUser?.appUserId ?? currentUser?.id} />}
 
         {/* Login History Tab */}
         {activeTab === 'login-history' && <LoginHistoryTab />}
@@ -2723,13 +2765,13 @@ export function UserManagement({ accessToken, onLogout }: Props) {
                   <thead>
                     <tr role="row" className="border-b border-border bg-muted/40">
                       <th role="columnheader" scope="col" className="px-4 py-3 w-10">
-                        <input
+                        {canEditRoles && <input
                           type="checkbox"
                           checked={allFilteredSelected}
                           onChange={toggleSelectAll}
                           className="w-4 h-4 rounded border-border cursor-pointer"
                           title="Select all"
-                        />
+                        />}
                       </th>
                       <th role="columnheader" scope="col" className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">User</th>
                       <th role="columnheader" scope="col" className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Roles</th>
@@ -2753,12 +2795,12 @@ export function UserManagement({ accessToken, onLogout }: Props) {
                       return (
                         <tr key={u.id} role="row" className={`hover:bg-muted/30 transition-colors group ${selectedUsers.includes(u.id) ? 'bg-primary/5' : ''} ${isInactive ? 'opacity-60' : ''}`}>
                           <td className="px-4 py-3 w-10">
-                            <input
+                            {canEditRoles && <input
                               type="checkbox"
                               checked={selectedUsers.includes(u.id)}
                               onChange={() => toggleSelectUser(u.id)}
                               className="w-4 h-4 rounded border-border cursor-pointer"
-                            />
+                            />}
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-3">
@@ -2808,43 +2850,43 @@ export function UserManagement({ accessToken, onLogout }: Props) {
                           <td className="px-4 py-3">
                             <div className="flex justify-end gap-1">
                               {/* Edit */}
-                              <button
+                              {canGrantAccess && <button
                                 onClick={() => { setEditingUser(u); setShowCreateForm(true); }}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors sm:opacity-0 group-hover:opacity-100"
                                 aria-label={`Edit ${u.name}`}
                                 title="Edit user"
                               >
                                 <Edit2 size={13} className="text-muted-foreground" />
-                              </button>
+                              </button>}
                               {/* Roles */}
-                              <button
+                              {canEditRoles && <button
                                 onClick={() => setRoleChangeUser(u)}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-blue-50 transition-colors sm:opacity-0 group-hover:opacity-100"
                                 aria-label={`Manage roles for ${u.name}`}
                                 title="Change role"
                               >
                                 <Shield size={13} className="text-blue-500" />
-                              </button>
+                              </button>}
                               {/* MFA */}
-                              <button
+                              {canEditRoles && <button
                                 onClick={() => setMfaUser(u)}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-violet-50 transition-colors sm:opacity-0 group-hover:opacity-100"
                                 aria-label={`MFA settings for ${u.name}`}
                                 title="MFA settings"
                               >
                                 <ShieldAlert size={13} className="text-violet-500" />
-                              </button>
+                              </button>}
                               {/* Reset password */}
-                              <button
+                              {canEditRoles && <button
                                 onClick={() => setResetPwUser(u)}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-orange-50 transition-colors sm:opacity-0 group-hover:opacity-100"
                                 aria-label={`Reset password for ${u.name}`}
                                 title="Reset password"
                               >
                                 <Lock size={13} className="text-orange-500" />
-                              </button>
+                              </button>}
                               {/* Resend invite */}
-                              {canResend && (
+                              {canCreateUsers && canResend && (
                                 <button
                                   onClick={() => !resendExhausted && handleResendInvite(u)}
                                   disabled={resendExhausted}
@@ -2856,7 +2898,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
                                 </button>
                               )}
                               {/* Cancel invite */}
-                              {canResend && (
+                              {canCreateUsers && canResend && (
                                 <button
                                   onClick={() => handleCancelInvite(u)}
                                   className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 transition-colors sm:opacity-0 group-hover:opacity-100"
@@ -2867,7 +2909,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
                                 </button>
                               )}
                               {/* Deactivate/Activate */}
-                              {u.id !== currentUser?.id && (
+                              {canSuspendUsers && u.id !== currentUser?.id && (
                                 <button
                                   onClick={() => setConfirmAction({ type: 'deactivate', user: u })}
                                   className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-yellow-50 transition-colors sm:opacity-0 group-hover:opacity-100"
@@ -2878,7 +2920,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
                                 </button>
                               )}
                               {/* Soft delete */}
-                              {u.id !== currentUser?.id && (
+                              {canSuspendUsers && u.id !== currentUser?.id && (
                                 <button
                                   onClick={() => setConfirmAction({ type: 'delete', user: u })}
                                   className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 transition-colors sm:opacity-0 group-hover:opacity-100"
@@ -2975,7 +3017,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
       </div>
 
       {/* Bulk action bar */}
-      {someSelected && activeTab === 'users' && (
+      {canEditRoles && someSelected && activeTab === 'users' && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-card border border-border rounded-xl shadow-xl px-4 py-3">
           <span className="text-sm font-medium text-foreground">{selectedUsers.length} user{selectedUsers.length !== 1 ? 's' : ''} selected</span>
           <span className="text-muted-foreground">|</span>

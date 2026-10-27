@@ -54,7 +54,8 @@ import {
   Trash2,
   Edit3,
   ArrowUp,
-  ArrowDown
+  ArrowDown,
+  BugOff,
 } from 'lucide-react';
 import { useUser } from '../../context/UserContext';
 import { supabase } from '../../utils/constants';
@@ -78,6 +79,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
   BookMarked,
   Shield,
   Zap,
+  BugOff,
   BarChart3,
   Bot,
   GitBranch,

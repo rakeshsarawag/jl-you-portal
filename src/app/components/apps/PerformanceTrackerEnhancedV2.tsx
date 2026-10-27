@@ -2604,13 +2604,15 @@ export function PerformanceTrackerEnhancedV2({
   const isManager = role === 'manager';
   const isHR = role === 'hr';
   const isAdmin = role === 'admin';
-  const canCreate = isManager || isHR || isAdmin;
-  const canApprove = isHR || isAdmin;
+  const permOwnReview = useSectionPermission('performance', 'own_review');
+  const permFeedback = useSectionPermission('performance', 'feedback');
   const canDelete = isAdmin;
   const permConductReviews = useSectionPermission('performance', 'conduct_reviews');
   const permGoals = useSectionPermission('performance', 'goals');
   const permTeamPerformance = useSectionPermission('performance', 'team_performance');
   const permReports = useSectionPermission('performance', 'reports');
+  const canCreate = permConductReviews;
+  const canApprove = permConductReviews;
 
   const {
     reviews, goals, feedback, pips,
@@ -2849,15 +2851,15 @@ export function PerformanceTrackerEnhancedV2({
   }, [reviews, viewingReview]);
 
   const tabs: { key: TabKey; label: string; show: boolean }[] = [
-    { key: 'dashboard', label: t('performance.dashboardTab'), show: true },
-    { key: 'reviews', label: t('Reviews'), show: true },
-    { key: 'goals', label: t('Goals'), show: permGoals || isEmployee || isManager || isHR || isAdmin },
-    { key: 'feedback', label: t('360° Feedback'), show: true },
-    { key: 'pips', label: t('PIPs'), show: true },
-    { key: 'okrs', label: t('OKRs'), show: true },
-    { key: 'feedbackQueue', label: t('Feedback Queue'), show: true },
-    { key: 'analytics', label: t('Analytics'), show: permReports || isHR || isAdmin || isManager },
-    { key: 'cycles', label: t('Cycles'), show: isHR || isAdmin },
+    { key: 'dashboard', label: t('performance.dashboardTab'), show: permOwnReview || permTeamPerformance },
+    { key: 'reviews', label: t('Reviews'), show: permOwnReview || permConductReviews },
+    { key: 'goals', label: t('Goals'), show: permGoals },
+    { key: 'feedback', label: t('360° Feedback'), show: permFeedback },
+    { key: 'pips', label: t('PIPs'), show: permConductReviews },
+    { key: 'okrs', label: t('OKRs'), show: permGoals },
+    { key: 'feedbackQueue', label: t('Feedback Queue'), show: permFeedback },
+    { key: 'analytics', label: t('Analytics'), show: permReports },
+    { key: 'cycles', label: t('Cycles'), show: permConductReviews },
   ].filter(t => t.show);
 
   return (
@@ -2874,7 +2876,7 @@ export function PerformanceTrackerEnhancedV2({
             <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-700 capitalize">{role}</span>
           </div>
           <div className="flex items-center gap-3">
-            {(canCreate || permConductReviews) && (
+            {permConductReviews && (
               <button
                 onClick={() => { setEditingReview(undefined); setReviewFormOpen(true); }}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm hover:bg-indigo-700"
@@ -3230,7 +3232,7 @@ export function PerformanceTrackerEnhancedV2({
             {!loading && tab === 'analytics' && (
               <div className="space-y-10">
                 <AnalyticsPanel reviews={visibleReviews} />
-                {(isHR || isAdmin || permTeamPerformance) && (
+                {permTeamPerformance && (
                   <div className="border-t pt-8">
                     <CalibrationSection reviews={visibleReviews} userId={currentUser?.id} />
                   </div>
@@ -3255,7 +3257,7 @@ export function PerformanceTrackerEnhancedV2({
       </main>
 
       {/* ── Continuous Feedback Widget (floating) ─────────────── */}
-      <ContinuousFeedbackWidget currentUserId={currentUser?.id} />
+      {permFeedback && <ContinuousFeedbackWidget currentUserId={currentUser?.id} />}
 
       {/* ── Modals ──────────────────────────────────────────────── */}
 

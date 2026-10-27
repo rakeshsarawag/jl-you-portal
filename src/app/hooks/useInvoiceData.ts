@@ -16,6 +16,7 @@ export interface InvoiceLineItem {
 
 export interface Invoice {
   id: string;
+  clientName?: string;
   invoiceNumber: string;
   invoiceDate: string;
   invoicePeriodFrom?: string;

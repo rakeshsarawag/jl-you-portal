@@ -1027,12 +1027,7 @@ export function InternalCommunicationsHub(_props: Props) {
 
   // ── Auto Birthday & Anniversary Announcements ────────────────────────────
   useEffect(() => {
-    const isHrOrAdmin =
-      currentUser?.roles?.includes('hr') ||
-      currentUser?.roles?.includes('admin') ||
-      currentUser?.primaryRole === 'hr' ||
-      currentUser?.primaryRole === 'admin';
-    if (!isHrOrAdmin || !userId) return;
+    if (!canSendAnnouncements || !userId) return;
 
     const autoAnnounce = async () => {
       const today = new Date();
@@ -1108,7 +1103,7 @@ export function InternalCommunicationsHub(_props: Props) {
 
     autoAnnounce().catch(console.error);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [canSendAnnouncements, userId]);
 
   const filteredRecognitions = useMemo(() => {
     if (!userId) return recognitions;

@@ -201,6 +201,29 @@ app.post("/", async (c) => {
   }
 });
 
+// ── POST /setup — verify storage and return actionable SQL when absent ────────
+app.post("/setup", async (c) => {
+  const supabase = getSupabase();
+  const { error } = await supabase.from("role_permissions").select("role").limit(1);
+  if (!error) return c.json({ success: true });
+  if (!isTableMissing(error)) {
+    return c.json({ success: false, error: error.message }, 500);
+  }
+  return c.json({
+    success: false,
+    table_missing: true,
+    sql: `CREATE TABLE IF NOT EXISTS public.role_permissions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  role TEXT NOT NULL UNIQUE,
+  permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_by TEXT
+);
+ALTER TABLE public.role_permissions ENABLE ROW LEVEL SECURITY;
+GRANT SELECT ON TABLE public.role_permissions TO authenticated;`,
+  }, 503);
+});
+
 // ── PUT /:role — update single role ──────────────────────────────────────────
 app.put("/:role", async (c) => {
   const role = c.req.param("role");

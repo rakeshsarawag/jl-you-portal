@@ -13,6 +13,7 @@ import { useInvoiceData, Invoice, InvoiceLineItem, BillToItem } from "../../hook
 import { useUser } from "../../context/UserContext";
 import { supabase } from "../../utils/constants";
 import EmployeeSearchDropdown from "../ui/EmployeeSearchDropdown";
+import { useSectionPermission } from "../SectionGuard";
 import { toast } from "sonner";
 import {
   LineChart,
@@ -56,7 +57,7 @@ import {
 } from "lucide-react";
 import { INVOICE_STATUSES } from "../../../constants/apps/invoice";
 import { SelectOptions } from "../../context/ValueHelpsContext";
-import ReportDefectButton from "../ReportDefectButton";
+import { getCompanySettings, getRemittanceSettings } from "../../lib/invoice-helpers";
 
 // ---- Types ---------------------------------------------------------------
 
@@ -147,14 +148,85 @@ function fmt(amount: number, symbol = "$") {
   return `${symbol}${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function currencySymbolFor(currency?: string) {
+  const symbols: Record<string, string> = {
+    INR: "₹",
+    USD: "$",
+    EUR: "€",
+    GBP: "£",
+    AUD: "A$",
+    CAD: "C$",
+    SGD: "S$",
+    AED: "د.إ",
+  };
+  return symbols[currency || "INR"] ?? `${currency || "INR"} `;
+}
+
+function normalizeInvoiceRecord(row: Record<string, any>): Invoice {
+  const currency = row.currency || "INR";
+  const rawLineItems = row.invoice_line_items ?? row.lineItems ?? [];
+  const lineItems: InvoiceLineItem[] = rawLineItems
+    .sort((a: Record<string, any>, b: Record<string, any>) => (a.item_order ?? 0) - (b.item_order ?? 0))
+    .map((item: Record<string, any>) => ({
+      ...item,
+      id: item.id,
+      description: item.description ?? item.particulars ?? "",
+      quantity: Number(item.quantity ?? 0),
+      rate: Number(item.rate ?? item.unit_price ?? 0),
+      amount: Number(item.amount ?? ((item.quantity ?? 0) * (item.rate ?? item.unit_price ?? 0))),
+      hsnSac: item.hsn_sac ?? item.hsn_code ?? item.hsnSac,
+    }));
+
+  return {
+    ...row,
+    id: row.id,
+    invoiceNumber: row.invoice_number ?? row.invoiceNumber ?? "",
+    invoiceDate: row.invoice_date ?? row.invoiceDate ?? "",
+    invoicePeriodFrom: row.invoice_period_from ?? row.invoicePeriodFrom,
+    invoicePeriodTo: row.invoice_period_to ?? row.invoicePeriodTo,
+    poNumber: row.po_number ?? row.poNumber,
+    dueDate: row.due_date ?? row.dueDate ?? "",
+    currency,
+    currencySymbol: row.currencySymbol || currencySymbolFor(currency),
+    billToId: row.client_id ?? row.billToId ?? "",
+    billToName: row.client_name ?? row.bill_to_name ?? row.billToName ?? "",
+    billToAddress: row.client_address ?? row.bill_to_address ?? row.billToAddress ?? "",
+    billToGstin: row.client_gstin ?? row.bill_to_gstin ?? row.billToGstin,
+    lineItems,
+    subtotal: Number(row.subtotal ?? 0),
+    gstRate: Number(row.tax_rate ?? row.gst_rate ?? row.gstRate ?? 0),
+    gstAmount: Number(row.tax_amount ?? row.gst_amount ?? row.gstAmount ?? 0),
+    taxRate: Number(row.tax_rate ?? row.taxRate ?? 0),
+    taxAmount: Number(row.tax_amount ?? row.taxAmount ?? 0),
+    total: Number(row.total ?? 0),
+    status: row.status ?? "Draft",
+    amountPaid: Number(row.amount_paid ?? row.amountPaid ?? 0),
+    notes: row.notes,
+    createdBy: row.created_by ?? row.createdBy,
+    createdAt: row.created_at ?? row.createdAt ?? "",
+    updatedAt: row.updated_at ?? row.updatedAt,
+  };
+}
+
 function fmtDate(iso?: string) {
   if (!iso) return "-";
   return new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
 
 // Number-to-words converter (Indian context, up to crores)
-function numberToWords(n: number): string {
-  if (n === 0) return "Zero";
+function numberToWords(n: number, currency = "INR"): string {
+  const currencyNames: Record<string, string> = {
+    INR: "Rupees",
+    USD: "Dollars",
+    EUR: "Euros",
+    GBP: "Pounds",
+    AUD: "Australian Dollars",
+    CAD: "Canadian Dollars",
+    SGD: "Singapore Dollars",
+    AED: "Dirhams",
+  };
+  const currencyName = currencyNames[currency] ?? currency;
+  if (n === 0) return `Zero ${currencyName} Only`;
   const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
     "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
   const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
@@ -171,7 +243,7 @@ function numberToWords(n: number): string {
   if (n >= 100000) { result += belowThousand(Math.floor(n / 100000)) + " Lakh "; n %= 100000; }
   if (n >= 1000) { result += belowThousand(Math.floor(n / 1000)) + " Thousand "; n %= 1000; }
   if (n > 0) result += belowThousand(n);
-  return "Rupees " + result.trim() + " Only";
+  return `${currencyName} ${result.trim()} Only`;
 }
 
 function validateEmail(email: string) {
@@ -278,10 +350,10 @@ function ClientFormModal({ client, onClose, onSaved, currentUserId }: ClientForm
   const [phone, setPhone] = useState(client?.phone ?? "");
   const [address, setAddress] = useState(client?.address ?? "");
   const [city, setCity] = useState(client?.city ?? "");
-  const [country, setCountry] = useState(client?.country ?? "");
+  const [country, setCountry] = useState(client?.country ?? "India");
   const [gstNumber, setGstNumber] = useState(client?.gst_number ?? "");
   const [panNumber, setPanNumber] = useState(client?.pan_number ?? "");
-  const [currency, setCurrency] = useState(client?.currency ?? "USD");
+  const [currency, setCurrency] = useState(client?.currency ?? "INR");
   const [paymentTerms, setPaymentTerms] = useState(client?.payment_terms ?? "NET30");
   const [notes, setNotes] = useState(client?.notes ?? "");
   const [saving, setSaving] = useState(false);
@@ -303,7 +375,7 @@ function ClientFormModal({ client, onClose, onSaved, currentUserId }: ClientForm
         country: country.trim() || undefined,
         gst_number: gstNumber.trim() || undefined,
         pan_number: panNumber.trim() || undefined,
-        currency: currency || "USD",
+        currency: currency || "INR",
         payment_terms: paymentTerms || "NET30",
         notes: notes.trim() || undefined,
         is_active: true,
@@ -370,7 +442,17 @@ function ClientFormModal({ client, onClose, onSaved, currentUserId }: ClientForm
             </div>
             <div>
               <label className={label}>{t("invoice.clientCountry")}</label>
-              <input className={field} value={country} onChange={(e) => setCountry(e.target.value)} placeholder="Country" />
+              <div className="relative">
+                <select className={`${field} appearance-none pr-8`} value={country} onChange={(e) => setCountry(e.target.value)}>
+                  <SelectOptions
+                    entity="invoice"
+                    field="country"
+                    placeholder={t("invoice.selectCountry")}
+                    fallback={["India", "United States", "United Kingdom", "United Arab Emirates", "Australia", "Canada", "Singapore", "Germany", "France", "Spain", "Netherlands", "Japan"]}
+                  />
+                </select>
+                <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              </div>
             </div>
             <div>
               <label className={label}>{t("invoice.currency")}</label>
@@ -2298,6 +2380,8 @@ function NewClientMiniForm({ onSaved, onCancel, currentUserId }: NewClientMiniFo
   const [phone, setPhone] = useState("");
   const [gstNumber, setGstNumber] = useState("");
   const [address, setAddress] = useState("");
+  const [country, setCountry] = useState("India");
+  const [currency, setCurrency] = useState("INR");
   const [saving, setSaving] = useState(false);
 
   async function handleSave() {
@@ -2314,6 +2398,8 @@ function NewClientMiniForm({ onSaved, onCancel, currentUserId }: NewClientMiniFo
         phone: phone.trim() || null,
         gst_number: gstNumber.trim() || null,
         address: address.trim() || null,
+        country,
+        currency,
         is_active: true,
         created_by: currentUserId ?? null,
       };
@@ -2354,6 +2440,24 @@ function NewClientMiniForm({ onSaved, onCancel, currentUserId }: NewClientMiniFo
         <div className="sm:col-span-2">
           <label className="block text-xs font-medium text-foreground mb-1">{t("invoice.clientAddress")}</label>
           <input className={field} value={address} onChange={(e) => setAddress(e.target.value)} />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-foreground mb-1">{t("invoice.clientCountry")}</label>
+          <select className={field} value={country} onChange={(e) => setCountry(e.target.value)}>
+            <SelectOptions
+              entity="invoice"
+              field="country"
+              fallback={["India", "United States", "United Kingdom", "United Arab Emirates", "Australia", "Canada", "Singapore", "Germany", "France", "Spain", "Netherlands", "Japan"]}
+            />
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-foreground mb-1">{t("invoice.currency")}</label>
+          <select className={field} value={currency} onChange={(e) => setCurrency(e.target.value)}>
+            {["INR", "USD", "EUR", "GBP", "AUD", "CAD", "SGD", "AED"].map((code) => (
+              <option key={code} value={code}>{code}</option>
+            ))}
+          </select>
         </div>
       </div>
       <div className="flex gap-2 justify-end">
@@ -2670,13 +2774,14 @@ interface CreateInvoiceTabProps {
   sendInvoice: (id: string) => Promise<boolean>;
   templates: InvoiceTemplate[];
   onRefreshClients: () => void;
+  onRefreshTemplates: () => void;
   currentUserId?: string;
   supaClients?: Client[];
   defaultTaxRate?: number;
   defaultPaymentTerms?: number;
 }
 
-function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice, templates, onRefreshClients, currentUserId, supaClients, defaultTaxRate = 0, defaultPaymentTerms = 30 }: CreateInvoiceTabProps) {
+function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice, templates, onRefreshClients, onRefreshTemplates, currentUserId, supaClients, defaultTaxRate = 0, defaultPaymentTerms = 30 }: CreateInvoiceTabProps) {
   const { log: logCreate } = useAuditLogger();
   const today = new Date().toISOString().slice(0, 10);
   const due = new Date(Date.now() + defaultPaymentTerms * 86400000).toISOString().slice(0, 10);
@@ -2688,11 +2793,15 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [invoiceDate, setInvoiceDate] = useState(today);
   const [dueDate, setDueDate] = useState(due);
+  const [invoicePeriodFrom, setInvoicePeriodFrom] = useState("");
+  const [invoicePeriodTo, setInvoicePeriodTo] = useState("");
+  const [poNumber, setPoNumber] = useState("");
   const [taxRate, setTaxRate] = useState(defaultTaxRate);
   const [notes, setNotes] = useState("");
   const [rows, setRows] = useState<LineItemRow[]>([newRow()]);
   const [saving, setSaving] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const defaultTemplateApplied = useRef(false);
 
   // GST fields
   const [supplyType, setSupplyType] = useState<SupplyType>("intrastate");
@@ -2710,6 +2819,8 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
   const [contractorName, setContractorName] = useState<string>("");
 
   const selectedClient = billToClients.find((c) => c.id === clientId);
+  const invoiceCurrency = selectedClient?.currency || "INR";
+  const invoiceCurrencySymbol = currencySymbolFor(invoiceCurrency);
 
   const subtotal = rows.reduce((s, r) => s + r.quantity * r.rate, 0);
   const taxAmount = subtotal * (taxRate / 100);
@@ -2738,8 +2849,19 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
     if (tmpl.notes_template) setNotes(tmpl.notes_template);
     if (tmpl.tax_rate !== undefined) setTaxRate(tmpl.tax_rate);
     toast.success(t("invoice.templateApplied"));
-    setSelectedTemplateId("");
   }
+
+  useEffect(() => {
+    if (defaultTemplateApplied.current || templates.length === 0) return;
+    defaultTemplateApplied.current = true;
+    const defaultTemplate = templates.find((template) => template.is_default);
+    if (defaultTemplate) {
+      setSelectedTemplateId(defaultTemplate.id);
+      applyTemplate(defaultTemplate.id);
+    }
+  // Apply the default once when a fresh invoice form receives its templates.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templates]);
 
   function handleClientSelect(value: string) {
     if (value === "__new__") {
@@ -2772,6 +2894,8 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
 
   async function handleSave(andSend = false) {
     if (!clientId) { toast.error(t("invoice.pleaseSelectClient")); return; }
+    if (!invoicePeriodFrom || !invoicePeriodTo) { toast.error(t("invoice.periodRequired")); return; }
+    if (invoicePeriodTo < invoicePeriodFrom) { toast.error(t("invoice.periodInvalid")); return; }
     if (rows.every((r) => !r.description)) { toast.error(t("invoice.addAtLeastOneItem")); return; }
 
     // Fix 2: due_date >= invoice_date validation
@@ -2798,18 +2922,22 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
 
     const payload: Partial<Invoice> & { supply_type?: string; place_of_supply?: string; is_recurring?: boolean } = {
       billToId: clientId,
+      clientName: selectedClient?.name ?? "",
       billToName: selectedClient?.name ?? "",
       billToAddress: selectedClient?.address ?? "",
       billToGstin: selectedClient?.gstin,
       invoiceDate,
       dueDate,
+      invoicePeriodFrom,
+      invoicePeriodTo,
+      poNumber: poNumber.trim() || undefined,
       lineItems,
       subtotal,
       taxRate,
       taxAmount: effectiveTax,
       total: effectiveTotal,
-      currency: selectedClient?.currency ?? "INR",
-      currencySymbol: "₹",
+      currency: invoiceCurrency,
+      currencySymbol: invoiceCurrencySymbol,
       status: "Draft",
       notes,
       // Fix 1: Save GST fields
@@ -2939,12 +3067,43 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
         </div>
       </div>
 
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-1">{t("invoice.periodFrom")} *</label>
+          <input
+            type="date"
+            value={invoicePeriodFrom}
+            onChange={(e) => setInvoicePeriodFrom(e.target.value)}
+            className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-1">{t("invoice.periodTo")} *</label>
+          <input
+            type="date"
+            value={invoicePeriodTo}
+            onChange={(e) => setInvoicePeriodTo(e.target.value)}
+            className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-1">{t("invoice.poNumber")} ({t("common.optional")})</label>
+          <input
+            value={poNumber}
+            onChange={(e) => setPoNumber(e.target.value)}
+            placeholder={t("invoice.poNumberPlaceholder")}
+            className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+      </div>
+
       {/* Client preview */}
       {selectedClient && (
         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-foreground">
           <p className="font-semibold text-foreground">{selectedClient.name}</p>
           <p className="mt-0.5 whitespace-pre-wrap text-muted-foreground">{selectedClient.address}</p>
           {selectedClient.gstin && <p className="text-muted-foreground mt-1">GSTIN: {selectedClient.gstin}</p>}
+          <p className="text-muted-foreground mt-1">{t("invoice.currency")}: {invoiceCurrency}</p>
         </div>
       )}
 
@@ -3065,7 +3224,7 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
                       </select>
                     </td>
                     <td className="px-3 py-2 text-right font-medium text-foreground whitespace-nowrap">
-                      {fmt(row.quantity * row.rate)}
+                      {fmt(row.quantity * row.rate, invoiceCurrencySymbol)}
                     </td>
                     <td className="px-2 py-2">
                       <button
@@ -3112,19 +3271,19 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
                 {gstTaxSummary.map((r, i) => (
                   <tr key={i}>
                     <td className="px-3 py-1.5 text-foreground">{r.hsn || "-"}</td>
-                    <td className="px-3 py-1.5 text-right text-foreground">₹{r.taxable.toFixed(2)}</td>
+                    <td className="px-3 py-1.5 text-right text-foreground">{fmt(r.taxable, invoiceCurrencySymbol)}</td>
                     <td className="px-3 py-1.5 text-right text-muted-foreground">{supplyType === "intrastate" ? r.gstRate / 2 : 0}%</td>
-                    <td className="px-3 py-1.5 text-right text-foreground">₹{r.cgst.toFixed(2)}</td>
+                    <td className="px-3 py-1.5 text-right text-foreground">{fmt(r.cgst, invoiceCurrencySymbol)}</td>
                     <td className="px-3 py-1.5 text-right text-muted-foreground">{supplyType === "intrastate" ? r.gstRate / 2 : 0}%</td>
-                    <td className="px-3 py-1.5 text-right text-foreground">₹{r.sgst.toFixed(2)}</td>
+                    <td className="px-3 py-1.5 text-right text-foreground">{fmt(r.sgst, invoiceCurrencySymbol)}</td>
                     <td className="px-3 py-1.5 text-right text-muted-foreground">{supplyType === "interstate" ? r.gstRate : 0}%</td>
-                    <td className="px-3 py-1.5 text-right text-foreground">₹{r.igst.toFixed(2)}</td>
+                    <td className="px-3 py-1.5 text-right text-foreground">{fmt(r.igst, invoiceCurrencySymbol)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <p className="text-xs text-muted-foreground mt-2 italic">{numberToWords(subtotal + totalGst)}</p>
+          <p className="text-xs text-muted-foreground mt-2 italic">{numberToWords(subtotal + totalGst, invoiceCurrency)}</p>
         </div>
       )}
 
@@ -3144,23 +3303,23 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
           <div className="bg-muted border border-border rounded-xl p-4 space-y-2 text-sm">
             <div className="flex justify-between text-muted-foreground">
               <span>{t("invoice.subtotal")}</span>
-              <span>₹{subtotal.toFixed(2)}</span>
+              <span>{fmt(subtotal, invoiceCurrencySymbol)}</span>
             </div>
             {totalGst > 0 ? (
               <>
                 {gstTaxSummary.some((r) => r.cgst > 0) && (
                   <div className="flex justify-between text-muted-foreground">
-                    <span>CGST</span><span>₹{gstTaxSummary.reduce((s, r) => s + r.cgst, 0).toFixed(2)}</span>
+                    <span>CGST</span><span>{fmt(gstTaxSummary.reduce((s, r) => s + r.cgst, 0), invoiceCurrencySymbol)}</span>
                   </div>
                 )}
                 {gstTaxSummary.some((r) => r.sgst > 0) && (
                   <div className="flex justify-between text-muted-foreground">
-                    <span>SGST</span><span>₹{gstTaxSummary.reduce((s, r) => s + r.sgst, 0).toFixed(2)}</span>
+                    <span>SGST</span><span>{fmt(gstTaxSummary.reduce((s, r) => s + r.sgst, 0), invoiceCurrencySymbol)}</span>
                   </div>
                 )}
                 {gstTaxSummary.some((r) => r.igst > 0) && (
                   <div className="flex justify-between text-muted-foreground">
-                    <span>IGST</span><span>₹{gstTaxSummary.reduce((s, r) => s + r.igst, 0).toFixed(2)}</span>
+                    <span>IGST</span><span>{fmt(gstTaxSummary.reduce((s, r) => s + r.igst, 0), invoiceCurrencySymbol)}</span>
                   </div>
                 )}
               </>
@@ -3178,12 +3337,12 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
                     className="w-16 border border-border rounded px-2 py-0.5 text-right focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
-                <span>₹{taxAmount.toFixed(2)}</span>
+                <span>{fmt(taxAmount, invoiceCurrencySymbol)}</span>
               </div>
             )}
             <div className="flex justify-between font-bold text-foreground pt-2 border-t border-border">
               <span>{t("invoice.total")}</span>
-              <span>₹{(subtotal + (totalGst > 0 ? totalGst : taxAmount)).toFixed(2)}</span>
+              <span>{fmt(subtotal + (totalGst > 0 ? totalGst : taxAmount), invoiceCurrencySymbol)}</span>
             </div>
           </div>
         </div>
@@ -3262,7 +3421,7 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
           disabled={saving}
           className="px-5 py-2.5 rounded-xl border border-border text-sm font-medium text-foreground hover:bg-muted disabled:opacity-50 transition-colors"
         >
-          Save as Template
+          {t("invoiceApp.saveTemplate")}
         </button>
         <button
           onClick={() => handleSave(false)}
@@ -3286,13 +3445,13 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
           <div className="bg-card rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-foreground">Save as Template</h2>
+              <h2 className="text-lg font-bold text-foreground">{t("invoiceApp.saveTemplate")}</h2>
               <button onClick={() => setShowSaveTemplateModal(false)} className="p-1 rounded-lg hover:bg-muted text-muted-foreground">
                 <X className="h-5 w-5" />
               </button>
             </div>
             <div>
-              <label className="block text-sm font-medium text-foreground mb-1">Template Name *</label>
+              <label className="block text-sm font-medium text-foreground mb-1">{t("invoice.templateName")} *</label>
               <input
                 className="w-full border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 value={templateNameInput}
@@ -3327,12 +3486,13 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
                     const { error: saveTplErr } = await supabase.from("invoice_templates").insert([{
                       name: templateNameInput.trim(),
                       line_items: lineItems,
-                      notes: notes,
+                      notes_template: notes,
                       payment_terms: "NET30",
                       created_by: currentUserId ?? null,
                     }]);
                     if (saveTplErr) throw new Error(saveTplErr.message);
-                    toast.success("Template saved successfully");
+                    toast.success(t("invoice.templateSaved"));
+                    onRefreshTemplates();
                     setShowSaveTemplateModal(false);
                   } catch (err: unknown) {
                     toast.error(err instanceof Error ? err.message : t("common.error"));
@@ -3342,7 +3502,7 @@ function CreateInvoiceTab({ billToClients, onCreated, createInvoice, sendInvoice
                 }}
                 className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
               >
-                {savingTemplate ? t("common.saving") : "Save Template"}
+                {savingTemplate ? t("common.saving") : t("invoice.saveTemplate")}
               </button>
             </div>
           </div>
@@ -3365,11 +3525,27 @@ interface AnalyticsTabProps {
 interface RevenueTrendPoint { month: string; revenue: number; }
 interface TopClientPoint { name: string; revenue: number; }
 
-function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabProps) {
+function AnalyticsTab({ invoices, onAgeFilterClick }: AnalyticsTabProps) {
   const today = new Date();
   const [dateRange, setDateRange] = useState<DateRange>("last30");
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
+  const availableCurrencies = useMemo(
+    () => [...new Set(invoices.map((invoice) => invoice.currency || "INR"))].sort(),
+    [invoices],
+  );
+  const [analyticsCurrency, setAnalyticsCurrency] = useState("INR");
+  const analyticsCurrencySymbol = currencySymbolFor(analyticsCurrency);
+  const currencyInvoices = useMemo(
+    () => invoices.filter((invoice) => (invoice.currency || "INR") === analyticsCurrency),
+    [invoices, analyticsCurrency],
+  );
+
+  useEffect(() => {
+    if (availableCurrencies.length > 0 && !availableCurrencies.includes(analyticsCurrency)) {
+      setAnalyticsCurrency(availableCurrencies[0]);
+    }
+  }, [availableCurrencies, analyticsCurrency]);
 
   // Chart data states
   const [revenueTrend, setRevenueTrend] = useState<RevenueTrendPoint[]>([]);
@@ -3383,7 +3559,8 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
       twelveMonthsAgo.setDate(1);
       const { data } = await supabase
         .from("invoices")
-        .select("total, created_at, status")
+        .select("total, created_at, status, currency")
+        .eq("currency", analyticsCurrency)
         .gte("created_at", twelveMonthsAgo.toISOString());
 
       if (data) {
@@ -3407,14 +3584,15 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
       // Top 5 clients by paid revenue
       const { data: paidData } = await supabase
         .from("invoices")
-        .select("client_id, bill_to_name, total")
+        .select("client_id, client_name, total, currency")
+        .eq("currency", analyticsCurrency)
         .eq("status", "Paid");
 
       if (paidData) {
         const clientMap: Record<string, { name: string; revenue: number }> = {};
-        for (const row of paidData as Array<{ client_id: string; bill_to_name: string; total: number }>) {
-          const id = row.client_id ?? row.bill_to_name;
-          if (!clientMap[id]) clientMap[id] = { name: row.bill_to_name, revenue: 0 };
+        for (const row of paidData as Array<{ client_id: string; client_name: string; total: number }>) {
+          const id = row.client_id ?? row.client_name;
+          if (!clientMap[id]) clientMap[id] = { name: row.client_name, revenue: 0 };
           clientMap[id].revenue += row.total;
         }
         const sorted = Object.values(clientMap)
@@ -3425,7 +3603,7 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
       }
     }
     void loadCharts();
-  }, []);
+  }, [analyticsCurrency]);
 
   // Status distribution from invoices prop
   const statusDistData = useMemo(() => {
@@ -3439,7 +3617,7 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
       Unpaid: "#eab308",
     };
     const counts: Record<string, number> = {};
-    for (const inv of invoices) {
+    for (const inv of currencyInvoices) {
       counts[inv.status] = (counts[inv.status] ?? 0) + 1;
     }
     return Object.entries(counts).map(([status, value]) => ({
@@ -3447,7 +3625,7 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
       value,
       color: colorMap[status] ?? "#9ca3af",
     }));
-  }, [invoices]);
+  }, [currencyInvoices]);
 
   const [filteredAnalytics, setFilteredAnalytics] = useState<{
     totalRevenue: number;
@@ -3485,7 +3663,8 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
       const { from, to } = getDateBounds(dateRange);
       const { data } = await supabase
         .from("invoices")
-        .select("status, total, invoice_date")
+        .select("status, total, invoice_date, currency")
+        .eq("currency", analyticsCurrency)
         .gte("invoice_date", from)
         .lte("invoice_date", to);
 
@@ -3517,42 +3696,42 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
 
     void loadAnalytics();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRange, customFrom, customTo]);
+  }, [dateRange, customFrom, customTo, analyticsCurrency]);
 
-  const activeAnalytics = filteredAnalytics ?? analytics;
+  const activeAnalytics = filteredAnalytics;
 
   const cards = [
     {
       label: t("invoice.totalRevenue"),
-      value: activeAnalytics ? fmt(activeAnalytics.totalRevenue) : "-",
+      value: activeAnalytics ? fmt(activeAnalytics.totalRevenue, analyticsCurrencySymbol) : "-",
       color: "bg-green-50 border-green-200 text-green-700",
       accent: "text-green-600",
     },
     {
       label: t("invoice.outstanding"),
-      value: activeAnalytics ? fmt(activeAnalytics.outstanding) : "-",
+      value: activeAnalytics ? fmt(activeAnalytics.outstanding, analyticsCurrencySymbol) : "-",
       color: "bg-blue-50 border-blue-200 text-blue-700",
       accent: "text-blue-600",
     },
     {
       label: t("invoice.overdue"),
-      value: activeAnalytics ? fmt(activeAnalytics.overdue) : "-",
+      value: activeAnalytics ? fmt(activeAnalytics.overdue, analyticsCurrencySymbol) : "-",
       color: "bg-red-50 border-red-200 text-red-700",
       accent: "text-red-600",
     },
     {
       label: t("invoice.paidThisMonth"),
-      value: activeAnalytics ? fmt(activeAnalytics.paidThisMonth) : "-",
+      value: activeAnalytics ? fmt(activeAnalytics.paidThisMonth, analyticsCurrencySymbol) : "-",
       color: "bg-purple-50 border-purple-200 text-purple-700",
       accent: "text-purple-600",
     },
   ];
 
   const statusCounts: Record<string, number> = {};
-  for (const inv of invoices) {
+  for (const inv of currencyInvoices) {
     statusCounts[inv.status] = (statusCounts[inv.status] ?? 0) + 1;
   }
-  const total = invoices.length || 1;
+  const total = currencyInvoices.length || 1;
 
   const barColors: Record<string, string> = {
     Draft: "bg-gray-400",
@@ -3609,7 +3788,21 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
             </svg>
           )}
+          <div className="ml-auto flex items-center gap-2">
+            <label className="text-sm font-medium text-foreground" htmlFor="analytics-currency">{t("invoice.currency")}:</label>
+            <select
+              id="analytics-currency"
+              value={analyticsCurrency}
+              onChange={(event) => setAnalyticsCurrency(event.target.value)}
+              className="border border-border rounded-lg px-3 py-1.5 text-sm bg-card focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {(availableCurrencies.length > 0 ? availableCurrencies : ["INR"]).map((currency) => (
+                <option key={currency} value={currency}>{currency}</option>
+              ))}
+            </select>
+          </div>
         </div>
+        <p className="text-xs text-muted-foreground mt-2">{t("invoice.analyticsCurrencyHelp")}</p>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -3636,8 +3829,8 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `₹${v}k`} />
-              <Tooltip formatter={(v: number) => [`₹${v}k`, "Revenue"]} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${analyticsCurrencySymbol}${v}k`} />
+              <Tooltip formatter={(v: number) => [`${analyticsCurrencySymbol}${v}k`, "Revenue"]} />
               <Area type="monotone" dataKey="revenue" stroke="#6366f1" strokeWidth={2} fill="url(#indigoGrad)" />
             </AreaChart>
           </ResponsiveContainer>
@@ -3678,9 +3871,9 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
             <ResponsiveContainer width="100%" height={160}>
               <BarChart data={topClients} layout="vertical" margin={{ top: 0, right: 16, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e5e7eb" />
-                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v: number) => `₹${(v / 1000).toFixed(0)}k`} />
+                <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${analyticsCurrencySymbol}${(v / 1000).toFixed(0)}k`} />
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 10 }} width={80} />
-                <Tooltip formatter={(v: number) => [`₹${v.toLocaleString("en-IN")}`, "Revenue"]} />
+                <Tooltip formatter={(v: number) => [fmt(v, analyticsCurrencySymbol), "Revenue"]} />
                 <Bar dataKey="revenue" fill="#6366f1" radius={[0, 4, 4, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -3690,7 +3883,7 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
 
       {/* Revenue Trend (local invoices) + Top 5 Clients (local invoices) */}
       {(() => {
-        const revenueByMonth = invoices.reduce((acc, inv) => {
+        const revenueByMonth = currencyInvoices.reduce((acc, inv) => {
           const month = inv.invoiceDate?.slice(0, 7);
           if (!month) return acc;
           acc[month] = (acc[month] || 0) + (inv.total || 0);
@@ -3698,7 +3891,7 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
         }, {} as Record<string, number>);
         const trendData = Object.entries(revenueByMonth).sort().slice(-6).map(([month, total]) => ({ month: month.slice(5), total }));
 
-        const clientTotals = invoices.reduce((acc, inv) => {
+        const clientTotals = currencyInvoices.reduce((acc, inv) => {
           const name = inv.billToName || inv.client_name || "Unknown";
           acc[name] = (acc[name] || 0) + (inv.total || 0);
           return acc;
@@ -3716,8 +3909,8 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
                   <LineChart data={trendData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `₹${(v / 1000).toFixed(0)}k`} />
-                    <Tooltip formatter={(v: number) => [`₹${v.toLocaleString("en-IN")}`, "Revenue"]} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${analyticsCurrencySymbol}${(v / 1000).toFixed(0)}k`} />
+                    <Tooltip formatter={(v: number) => [fmt(v, analyticsCurrencySymbol), "Revenue"]} />
                     <Line type="monotone" dataKey="total" stroke="#4F46E5" strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -3732,8 +3925,8 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
                   <BarChart data={top5} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                     <XAxis dataKey="name" tick={{ fontSize: 9 }} />
-                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `₹${(v / 1000).toFixed(0)}k`} />
-                    <Tooltip formatter={(v: number) => [`₹${v.toLocaleString("en-IN")}`, "Total"]} />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `${analyticsCurrencySymbol}${(v / 1000).toFixed(0)}k`} />
+                    <Tooltip formatter={(v: number) => [fmt(v, analyticsCurrencySymbol), "Total"]} />
                     <Bar dataKey="total" fill="#4F46E5" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -3758,7 +3951,7 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
               <span className="w-8 text-right text-sm font-medium text-foreground">{count}</span>
             </div>
           ))}
-          {invoices.length === 0 && (
+          {currencyInvoices.length === 0 && (
             <p className="text-sm text-muted-foreground text-center py-4">{t("invoice.noInvoiceData")}</p>
           )}
         </div>
@@ -3766,7 +3959,7 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
 
       {/* Overdue Aging Chart */}
       {(() => {
-        const overdueInvoices = invoices.filter(
+        const overdueInvoices = currencyInvoices.filter(
           (inv) => (inv.status === "Sent" || inv.status === ("Partially Paid" as string)) && inv.dueDate && new Date(inv.dueDate) < today
         );
         const buckets = [
@@ -3797,7 +3990,7 @@ function AnalyticsTab({ analytics, invoices, onAgeFilterClick }: AnalyticsTabPro
                   className={`flex-1 flex flex-col items-center gap-1 ${onAgeFilterClick && b.count > 0 ? "cursor-pointer group" : ""}`}
                   onClick={() => { if (onAgeFilterClick && b.count > 0) onAgeFilterClick(b.label); }}
                 >
-                  <p className="text-xs font-medium text-red-600">{b.count > 0 ? fmt(b.amount) : ""}</p>
+                  <p className="text-xs font-medium text-red-600">{b.count > 0 ? fmt(b.amount, analyticsCurrencySymbol) : ""}</p>
                   <div className="w-full flex items-end justify-center" style={{ height: "80px" }}>
                     <div
                       className="w-full bg-red-400 rounded-t transition-all group-hover:bg-red-600"
@@ -3948,6 +4141,11 @@ interface Props { accessToken?: string; onLogout?: () => void; }
 export function InvoiceGenerationSystem(_props: Props) {
   const { currentUser } = useUser();
   const { log } = useAuditLogger();
+  const secView = useSectionPermission("invoices", "view");
+  const secCreate = useSectionPermission("invoices", "create");
+  const secApprove = useSectionPermission("invoices", "approve");
+  const secSend = useSectionPermission("invoices", "send");
+  const secReports = useSectionPermission("invoices", "reports");
   const [activeTab, setActiveTab] = useState<"invoices" | "clients" | "templates" | "recurring" | "create" | "analytics">("invoices");
   const [emailPreviewInvoice, setEmailPreviewInvoice] = useState<Invoice | null>(null);
   const [search, setSearch] = useState("");
@@ -3965,19 +4163,27 @@ export function InvoiceGenerationSystem(_props: Props) {
   const [pageLoading, setPageLoading] = useState(false);
 
   // Master data config: invoice policies (loaded from DB, seeded with defaults)
-  const [invoicePolicies, setInvoicePolicies] = useState({
-    company_name: "Your Company",
-    company_gstin: "",
-    company_pan: "",
-    company_address: "",
-    company_email: "",
-    bank_name: "",
-    bank_account: "",
-    bank_ifsc: "",
-    default_payment_terms: 30,
-    default_tax_rate: 18,
-    late_fee_percent: 1.5,
-    invoice_number_format: "INV-{YYYY}-{####}",
+  const [invoicePolicies, setInvoicePolicies] = useState(() => {
+    const company = getCompanySettings();
+    const remittance = getRemittanceSettings();
+    const companyName =
+      !company.name || company.name === "Your Company" || company.name === "Acme Technologies Pvt Ltd"
+        ? "Jeshan Labs Private Limited"
+        : company.name;
+    return {
+      company_name: companyName,
+      company_gstin: company.gstin,
+      company_pan: company.pan,
+      company_address: company.address,
+      company_email: company.email,
+      bank_name: remittance.bankName,
+      bank_account: remittance.accountNo,
+      bank_ifsc: remittance.ifsc,
+      default_payment_terms: 30,
+      default_tax_rate: 18,
+      late_fee_percent: 1.5,
+      invoice_number_format: "INV-{YYYY}-{####}",
+    };
   });
 
   useEffect(() => {
@@ -3989,10 +4195,13 @@ export function InvoiceGenerationSystem(_props: Props) {
       if (data && data.length > 0) {
         const overrides: Record<string, unknown> = {};
         data.forEach((row: { config_key: string; config_value: unknown }) => { overrides[row.config_key] = row.config_value; });
+        if (overrides.company_name === "Your Company" || overrides.company_name === "Acme Technologies Pvt Ltd") {
+          delete overrides.company_name;
+        }
         setInvoicePolicies(prev => ({ ...prev, ...overrides }));
       } else {
         void supabase.from("master_data_config").upsert([
-          { config_group: "invoice_policies", config_key: "company_name", config_value: "Your Company", display_name: "Company Name", data_type: "string" },
+          { config_group: "invoice_policies", config_key: "company_name", config_value: "Jeshan Labs Private Limited", display_name: "Company Name", data_type: "string" },
           { config_group: "invoice_policies", config_key: "company_gstin", config_value: "", display_name: "Company GSTIN", data_type: "string" },
           { config_group: "invoice_policies", config_key: "company_pan", config_value: "", display_name: "Company PAN", data_type: "string" },
           { config_group: "invoice_policies", config_key: "default_payment_terms", config_value: 30, display_name: "Default Payment Terms (days)", data_type: "number" },
@@ -4030,18 +4239,18 @@ export function InvoiceGenerationSystem(_props: Props) {
   const fetchPage = useCallback(async (page: number, q: string, status: string) => {
     setPageLoading(true);
     const todayStr = new Date().toISOString().slice(0, 10);
-    let query = supabase.from("invoices").select("*", { count: "exact" });
+    let query = supabase.from("invoices").select("*, invoice_line_items(*)", { count: "exact" });
     if (status === "Overdue") {
       query = query.in("status", ["Sent", "Partially Paid"]).lt("due_date", todayStr);
     } else if (status !== "All") {
       query = query.eq("status", status);
     }
-    if (q) query = query.or(`invoice_number.ilike.%${q}%,bill_to_name.ilike.%${q}%`);
+    if (q) query = query.or(`invoice_number.ilike.%${q}%,client_name.ilike.%${q}%`);
     query = query.order("created_at", { ascending: false })
       .range((page - 1) * PAGE_SIZE, page * PAGE_SIZE - 1);
 
     const { data, count } = await query;
-    const fetchedInvoices = (data as Invoice[]) ?? [];
+    const fetchedInvoices = ((data ?? []) as Record<string, any>[]).map(normalizeInvoiceRecord);
     setPagedInvoices(fetchedInvoices);
     setTotalCount(count ?? 0);
     if (fetchedInvoices.length > 0) {
@@ -4131,12 +4340,20 @@ export function InvoiceGenerationSystem(_props: Props) {
 
   const tabs = [
     { id: "invoices" as const, label: t("invoice.invoices"), icon: FileText },
-    { id: "clients" as const, label: t("invoice.clients"), icon: Users },
-    { id: "templates" as const, label: t("invoice.templates"), icon: LayoutTemplate },
-    { id: "recurring" as const, label: t("invoice.recurring"), icon: RefreshCw },
-    { id: "create" as const, label: t("invoice.newInvoice"), icon: Plus },
-    { id: "analytics" as const, label: t("invoice.analytics"), icon: CreditCard },
+    ...(secCreate ? [
+      { id: "clients" as const, label: t("invoice.clients"), icon: Users },
+      { id: "templates" as const, label: t("invoice.templates"), icon: LayoutTemplate },
+      { id: "recurring" as const, label: t("invoice.recurring"), icon: RefreshCw },
+      { id: "create" as const, label: t("invoice.newInvoice"), icon: Plus },
+    ] : []),
+    ...(secReports ? [{ id: "analytics" as const, label: t("invoice.analytics"), icon: CreditCard }] : []),
   ];
+
+  useEffect(() => {
+    if (!tabs.some(tab => tab.id === activeTab)) {
+      setActiveTab(tabs[0]?.id ?? "invoices");
+    }
+  }, [activeTab, secCreate, secReports]);
 
   // Build merged billToClients from both hook data and supabase clients
   const mergedBillToClients: BillToItem[] = useMemo(() => {
@@ -4153,6 +4370,10 @@ export function InvoiceGenerationSystem(_props: Props) {
     return [...fromSupabase, ...existing];
   }, [supaClients, billToClients]);
 
+  if (!secView) {
+    return <div className="p-8 text-center text-sm text-muted-foreground">You do not have permission to view invoices.</div>;
+  }
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
       {/* Header */}
@@ -4162,9 +4383,6 @@ export function InvoiceGenerationSystem(_props: Props) {
             <FileText className="h-5 w-5 text-blue-600" />
           </div>
           <h1 className="text-2xl font-bold text-foreground">{t("invoice.title")}</h1>
-          <div className="ml-auto">
-            <ReportDefectButton appName="Invoice Generation" />
-          </div>
         </div>
         <p className="text-sm text-muted-foreground ml-12">
           {isAdminOrFinance
@@ -4230,13 +4448,13 @@ export function InvoiceGenerationSystem(_props: Props) {
               </select>
               <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
             </div>
-            <button
+            {secCreate && <button
               onClick={() => setActiveTab("create")}
               className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 transition-colors whitespace-nowrap"
             >
               <Plus className="h-4 w-4" />
               {t("invoice.newInvoice")}
-            </button>
+            </button>}
           </div>
 
           <div className="bg-card border border-border rounded-2xl overflow-hidden">
@@ -4290,7 +4508,16 @@ export function InvoiceGenerationSystem(_props: Props) {
                         ? Math.floor((Date.now() - new Date(inv.dueDate!).getTime()) / 86400000)
                         : 0;
                       return (
-                      <tr key={inv.id} className={`hover:bg-muted transition-colors ${isOverdue ? "bg-red-50" : ""}`}>
+                      <tr
+                        key={inv.id}
+                        className={`transition-colors ${
+                          inv.status === "Paid"
+                            ? "bg-green-50 hover:bg-green-100"
+                            : isOverdue
+                              ? "bg-red-50 hover:bg-red-100"
+                              : "hover:bg-muted"
+                        }`}
+                      >
                         <td className="px-4 py-3 font-medium text-foreground">
                           {inv.invoiceNumber}
                           {(inv as Invoice & { is_recurring?: boolean }).is_recurring && (
@@ -4328,7 +4555,7 @@ export function InvoiceGenerationSystem(_props: Props) {
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center justify-center gap-1">
-                            {(inv.status === "Sent" || inv.status === "Overdue" || inv.status === ("Partially Paid" as string)) && (
+                            {secApprove && (inv.status === "Sent" || inv.status === "Overdue" || inv.status === ("Partially Paid" as string)) && (
                               <button
                                 title={t("invoice.recordPayment")}
                                 onClick={() => setQuickPaymentInvoice(inv)}
@@ -4344,7 +4571,7 @@ export function InvoiceGenerationSystem(_props: Props) {
                             >
                               <Eye className="h-4 w-4" />
                             </button>
-                            {inv.status !== "Paid" && inv.status !== "Cancelled" && (
+                            {secCreate && inv.status !== "Paid" && inv.status !== "Cancelled" && (
                               <button
                                 title={t("common.edit")}
                                 onClick={() => setEditingInvoice(inv)}
@@ -4353,7 +4580,7 @@ export function InvoiceGenerationSystem(_props: Props) {
                                 <Pencil className="h-4 w-4" />
                               </button>
                             )}
-                            {inv.status === "Draft" && (
+                            {secSend && inv.status === "Draft" && (
                               <button
                                 title={t("invoice.send")}
                                 onClick={() => setEmailPreviewInvoice(inv)}
@@ -4362,7 +4589,7 @@ export function InvoiceGenerationSystem(_props: Props) {
                                 <Send className="h-4 w-4" />
                               </button>
                             )}
-                            {(inv.status === "Sent" || inv.status === "Overdue" || inv.status === ("Partially Paid" as string)) && (
+                            {secApprove && (inv.status === "Sent" || inv.status === "Overdue" || inv.status === ("Partially Paid" as string)) && (
                               <button
                                 title={t("invoice.markPaid")}
                                 onClick={async () => {
@@ -4374,7 +4601,7 @@ export function InvoiceGenerationSystem(_props: Props) {
                                 <CheckCircle className="h-4 w-4" />
                               </button>
                             )}
-                            {canCancelInvoice && ["Draft", "Sent"].includes(inv.status) && (
+                            {secApprove && canCancelInvoice && ["Draft", "Sent"].includes(inv.status) && (
                               <button
                                 title="Cancel Invoice"
                                 onClick={() => setCancellingInvoice(inv)}
@@ -4383,7 +4610,7 @@ export function InvoiceGenerationSystem(_props: Props) {
                                 <Ban className="h-4 w-4" />
                               </button>
                             )}
-                            {isAdminOrFinance && (
+                            {secApprove && isAdminOrFinance && (
                               <button
                                 title={t("common.delete")}
                                 onClick={() => {
@@ -4443,17 +4670,17 @@ export function InvoiceGenerationSystem(_props: Props) {
       )}
 
       {/* ---- Clients tab ---- */}
-      {activeTab === "clients" && (
+      {activeTab === "clients" && secCreate && (
         <ClientsTab currentUserId={currentUser?.id} invoices={invoices} />
       )}
 
       {/* ---- Templates tab ---- */}
-      {activeTab === "templates" && (
+      {activeTab === "templates" && secCreate && (
         <TemplatesTab />
       )}
 
       {/* ---- Recurring tab ---- */}
-      {activeTab === "recurring" && (
+      {activeTab === "recurring" && secCreate && (
         <RecurringTab
           clients={supaClients}
           templates={templates}
@@ -4462,7 +4689,7 @@ export function InvoiceGenerationSystem(_props: Props) {
       )}
 
       {/* ---- Create Invoice tab ---- */}
-      {activeTab === "create" && (
+      {activeTab === "create" && secCreate && (
         <div className="bg-card border border-border rounded-2xl p-6">
           <h2 className="text-lg font-semibold text-foreground mb-6">{t("invoice.newInvoice")}</h2>
           <CreateInvoiceTab
@@ -4471,6 +4698,7 @@ export function InvoiceGenerationSystem(_props: Props) {
             sendInvoice={sendInvoice}
             templates={templates}
             onRefreshClients={refreshClients}
+            onRefreshTemplates={refreshTemplates}
             currentUserId={currentUser?.id}
             supaClients={supaClients}
             defaultTaxRate={typeof invoicePolicies.default_tax_rate === 'number' ? invoicePolicies.default_tax_rate : 0}
@@ -4485,7 +4713,7 @@ export function InvoiceGenerationSystem(_props: Props) {
       )}
 
       {/* ---- Analytics tab ---- */}
-      {activeTab === "analytics" && (
+      {activeTab === "analytics" && secReports && (
         <AnalyticsTab
           analytics={analytics}
           invoices={invoices}

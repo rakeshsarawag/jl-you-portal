@@ -14,11 +14,11 @@ import {
   ChevronDown, ChevronRight, Settings2, Mail,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useUser } from '../../context/UserContext';
 import { useMasterDataDirect } from '../../hooks/useSharedData';
 import { AppLayout } from './AppLayout';
 import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../../utils/constants';
 import { t } from '../../../i18n/index';
+import { useSectionPermission } from '../SectionGuard';
 
 const MASTER_URL = `${API_BASE}/master-data`;
 
@@ -899,7 +899,7 @@ function DeleteDialog({ entityName, recordName, onConfirm, onCancel, deleting }:
 
 // ── Entity panel ──────────────────────────────────────────────────────────────
 
-function EntityPanel({ entity, canMutate, isAdmin }: { entity: EntityDef; canMutate: boolean; isAdmin: boolean; }) {
+function EntityPanel({ entity, canMutate, canExport }: { entity: EntityDef; canMutate: boolean; canExport: boolean; }) {
   const { data, loading, refresh } = useMasterDataDirect(entity.endpoint);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -960,12 +960,10 @@ function EntityPanel({ entity, canMutate, isAdmin }: { entity: EntityDef; canMut
           </span>
         </h2>
         <div className="flex items-center gap-2 flex-wrap">
-          {isAdmin && (
-            <button onClick={() => { downloadCSV(`${entity.endpoint}-${new Date().toISOString().slice(0, 10)}.csv`, filtered as Record<string, unknown>[]); toast.success('CSV downloaded'); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground border border-border rounded-lg hover:bg-muted transition-colors">
-              <Download size={14} /> Export CSV
-            </button>
-          )}
+          {canExport && <button onClick={() => { downloadCSV(`${entity.endpoint}-${new Date().toISOString().slice(0, 10)}.csv`, filtered as Record<string, unknown>[]); toast.success('CSV downloaded'); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground border border-border rounded-lg hover:bg-muted transition-colors">
+            <Download size={14} /> Export CSV
+          </button>}
           <button onClick={refresh} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground border border-border rounded-lg hover:bg-muted transition-colors">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </button>
@@ -1587,15 +1585,26 @@ export interface MasterDataManagementExpandedProps {
 }
 
 export function MasterDataManagementExpanded({ onLogout }: MasterDataManagementExpandedProps) {
-  const { currentUser } = useUser();
   const [activeId, setActiveId] = useState(ENTITIES[0].id);
   const [mobileCat, setMobileCat] = useState('hr');
 
-  const role = (currentUser?.primaryRole ?? '').toLowerCase();
-  const canMutate = ['admin', 'hr', 'finance'].includes(role);
-  const isAdmin = role === 'admin';
+  const canManageDepartments = useSectionPermission('master-data', 'departments');
+  const canManageLocations = useSectionPermission('master-data', 'locations');
+  const canManageClients = useSectionPermission('master-data', 'clients');
+  const canManageDesignations = useSectionPermission('master-data', 'designations');
+  const canManageOther = useSectionPermission('master-data', 'manage_other');
+  const canExport = useSectionPermission('master-data', 'export');
 
   const activeEntity = ENTITIES.find(e => e.id === activeId);
+  const canMutate = activeId === 'departments'
+    ? canManageDepartments
+    : activeId === 'locations'
+      ? canManageLocations
+      : activeId === 'clients'
+        ? canManageClients
+        : activeId === 'job-titles'
+          ? canManageDesignations
+          : canManageOther;
   const mobileCatEntities = ENTITIES.filter(e => e.category === mobileCat);
 
   return (
@@ -1639,7 +1648,7 @@ export function MasterDataManagementExpanded({ onLogout }: MasterDataManagementE
           ) : activeEntity?.localSeed ? (
             <LocalEntityPanel key={activeEntity.id} entity={activeEntity as EntityDef & { localSeed: Record<string, unknown>[] }} canMutate={canMutate} />
           ) : activeEntity ? (
-            <EntityPanel key={activeEntity.id} entity={activeEntity} canMutate={canMutate} isAdmin={isAdmin} />
+            <EntityPanel key={activeEntity.id} entity={activeEntity} canMutate={canMutate} canExport={canExport} />
           ) : null}
         </div>
       </div>

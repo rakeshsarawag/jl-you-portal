@@ -42,12 +42,27 @@ import {
   Wand2,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { API_BASE, apiHeaders } from '../../utils/constants';
+import { API_BASE, apiFetch, apiHeaders, safeJson } from '../../utils/constants';
 import { t } from '../../../i18n';
 
 interface WorkflowDashboardProps {
   accessToken: string;
   onLogout: () => void;
+}
+
+const EXECUTABLE_NODE_TYPES = new Set([
+  'trigger',
+  'condition',
+  'approval',
+  'notification',
+  'end',
+]);
+
+function isExecutableTemplate(template: (typeof WORKFLOW_TEMPLATES)[number]): boolean {
+  return (
+    ['manual', 'event'].includes(template.template.trigger.type) &&
+    template.template.nodes.every(node => EXECUTABLE_NODE_TYPES.has(node.type))
+  );
 }
 
 // ── Execution trace types ─────────────────────────────────────────────────────
@@ -134,38 +149,64 @@ function ExecutionTraceView({
   const { currentUser } = useUser();
   const [steps, setSteps] = useState<InstanceStep[]>([]);
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(false);
   const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set());
 
-  const handleRerunFromStep = async (instanceId: string, stepId: string) => {
-    void supabase.from('workflow_instance_steps')
-      .update({ status: 'pending', error_message: null, started_at: null, completed_at: null })
-      .eq('instance_id', instanceId).eq('id', stepId);
-    void supabase.from('workflow_instance_steps')
-      .update({ status: 'pending' })
-      .eq('instance_id', instanceId).eq('status', 'failed');
-    toast.success(t('workflow.rerunFromStep'));
-    // Refresh steps
-    const { data } = await supabase
-      .from('workflow_instance_steps')
-      .select('*')
-      .eq('instance_id', instanceId)
-      .order('started_at', { ascending: true });
-    setSteps(data || []);
+  const mapSteps = (rows: any[]): InstanceStep[] => rows.map(row => ({
+    ...row,
+    node_id: row.node_id ?? row.step_id,
+    node_type: row.node_type ?? row.step_type,
+    node_label: row.node_label ?? row.step_name,
+    input_payload: row.input_payload ?? row.input_data,
+    output_payload: row.output_payload ?? row.output_data,
+  }));
+
+  const loadSteps = async () => {
+    const response = await apiFetch(`${API_BASE}/workflow/instances/${instance.id}/steps`, {
+      headers: apiHeaders(currentUser?.email),
+    });
+    const json = await safeJson(response);
+    if (!response.ok || !json?.success) {
+      throw new Error(json?.error ?? 'Failed to load execution trace');
+    }
+    setSteps(mapSteps(json.data ?? []));
+  };
+
+  const handleRerunFromStep = async (instanceId: string, nodeId: string) => {
+    setRetrying(true);
+    try {
+      const response = await apiFetch(`${API_BASE}/workflow/instances/${instanceId}/retry`, {
+        method: 'POST',
+        headers: apiHeaders(currentUser?.email),
+        body: JSON.stringify({ step_id: nodeId }),
+      });
+      const json = await safeJson(response);
+      if (!response.ok || !json?.success) {
+        throw new Error(json?.error ?? 'Failed to retry workflow');
+      }
+      await loadSteps();
+      toast.success(t('workflow.rerunFromStep'));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to retry workflow');
+    } finally {
+      setRetrying(false);
+    }
   };
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
-      const { data } = await supabase
-        .from('workflow_instance_steps')
-        .select('*')
-        .eq('instance_id', instance.id)
-        .order('started_at', { ascending: true });
-      setSteps(data || []);
-      setLoading(false);
+      try {
+        await loadSteps();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Failed to load execution trace');
+        setSteps([]);
+      } finally {
+        setLoading(false);
+      }
     };
     load();
-  }, [instance.id]);
+  }, [instance.id, currentUser?.email]);
 
   const toggleExpand = (id: string) => {
     setExpandedSteps(prev => {
@@ -198,9 +239,10 @@ function ExecutionTraceView({
                 size="sm"
                 variant="outline"
                 className="text-primary border-primary"
-                onClick={() => handleRerunFromStep(instance.id, failedStep.id)}
+                onClick={() => handleRerunFromStep(instance.id, failedStep.node_id)}
+                disabled={retrying}
               >
-                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${retrying ? 'animate-spin' : ''}`} />
                 {t('workflow.rerunFromStep')}
               </Button>
             ) : null;
@@ -855,13 +897,25 @@ export function WorkflowDashboard({ accessToken, onLogout }: WorkflowDashboardPr
   const handleCreateFromTemplate = async (templateId: string) => {
     const tmpl = WORKFLOW_TEMPLATES.find(t => t.id === templateId);
     if (!tmpl) return;
-    await createDefinition({ ...tmpl.template, createdBy: currentUser?.id || '' });
-    toast.success(`${t('workflowDashboard.toastCreatedFromTemplate')}: ${tmpl.name}`);
+    if (!isExecutableTemplate(tmpl)) {
+      toast.warning('This template requires advanced actions that are not available yet.');
+      return;
+    }
+    try {
+      await createDefinition({ ...tmpl.template, createdBy: currentUser?.id || '' });
+      toast.success(`${t('workflowDashboard.toastCreatedFromTemplate')}: ${tmpl.name}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to create workflow');
+    }
   };
 
   const handleActivateWorkflow = async (id: string) => {
-    await updateDefinition(id, { status: 'active' });
-    toast.success(t('workflowDashboard.toastWorkflowActivated'));
+    try {
+      await updateDefinition(id, { status: 'active' });
+      toast.success(t('workflowDashboard.toastWorkflowActivated'));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Workflow cannot be activated');
+    }
   };
 
   const handlePauseWorkflow = async (id: string) => {
@@ -1247,6 +1301,7 @@ export function WorkflowDashboard({ accessToken, onLogout }: WorkflowDashboardPr
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {WORKFLOW_TEMPLATES.map(template => {
                 const catColor = CATEGORY_COLORS[template.category] ?? { bg: 'bg-purple-50', text: 'text-purple-600' };
+                const executable = isExecutableTemplate(template);
                 return (
                   <div
                     key={template.id}
@@ -1261,6 +1316,11 @@ export function WorkflowDashboard({ accessToken, onLogout }: WorkflowDashboardPr
                         <span className={`inline-block text-xs px-2 py-0.5 rounded-full mt-1 font-medium ${catColor.bg} ${catColor.text}`}>
                           {template.category}
                         </span>
+                        {!executable && (
+                          <Badge variant="outline" className="ml-2 text-xs text-amber-700 border-amber-200 bg-amber-50">
+                            Advanced
+                          </Badge>
+                        )}
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground leading-relaxed">{template.description}</p>
@@ -1274,9 +1334,15 @@ export function WorkflowDashboard({ accessToken, onLogout }: WorkflowDashboardPr
                         <span>{template.stepCount} steps</span>
                       </div>
                     </div>
-                    <Button size="sm" className="w-full mt-auto" onClick={() => handleCreateFromTemplate(template.id)}>
+                    <Button
+                      size="sm"
+                      className="w-full mt-auto"
+                      onClick={() => handleCreateFromTemplate(template.id)}
+                      disabled={!executable}
+                      title={executable ? undefined : 'Requires advanced actions that are not available yet'}
+                    >
                       <Plus className="h-3 w-3 mr-1" />
-                      {t('workflowDashboard.useTemplate')}
+                      {executable ? t('workflowDashboard.useTemplate') : 'Advanced actions required'}
                     </Button>
                   </div>
                 );

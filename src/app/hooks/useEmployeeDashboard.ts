@@ -3,7 +3,7 @@
  * Fully wired to relational DB via /employee-dashboard API.
  * Data isolation: employees see only their own data.
  * Managers see pending leaves via loadPendingLeaves().
- * Phase 7: training enrollments + org announcements (silent failures).
+ * Optional training enrollment widgets fail silently.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -108,14 +108,6 @@ export interface TrainingEnrollment {
   enrolled_at?: string;
 }
 
-export interface Announcement {
-  id: string;
-  title: string;
-  priority: 'High' | 'Medium' | 'Low' | 'Critical' | 'Normal';
-  created_at: string;
-  content?: string;
-}
-
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useEmployeeDashboard(userId: string, userName: string, userEmail?: string) {
@@ -127,7 +119,6 @@ export function useEmployeeDashboard(userId: string, userName: string, userEmail
   const [leaveBalance, setLeaveBalance] = useState<Record<string, number>>(DEFAULT_LEAVE_BALANCES);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [trainingEnrollments, setTrainingEnrollments] = useState<TrainingEnrollment[]>([]);
-  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -136,14 +127,13 @@ export function useEmployeeDashboard(userId: string, userName: string, userEmail
     setLoading(true);
     setError(null);
     try {
-      const [todayRes, attendanceRes, leavesRes, balanceRes, tasksRes, trainingRes, announcementsRes] = await Promise.allSettled([
+      const [todayRes, attendanceRes, leavesRes, balanceRes, tasksRes, trainingRes] = await Promise.allSettled([
         api(`/attendance/today/${userId}`, {}, userEmail),
         api(`/attendance/${userId}`, {}, userEmail),
         api(`/leaves/${userId}`, {}, userEmail),
         api(`/leave-balance/${userId}`, {}, userEmail),
         api(`/tasks/${userId}`, {}, userEmail),
         apiDirect(`${API_BASE}/training?userId=${userId}&limit=3`, userEmail),
-        apiDirect(`${API_BASE}/communications/announcements?limit=3`, userEmail),
       ]);
 
       if (todayRes.status === 'fulfilled') {
@@ -195,9 +185,6 @@ export function useEmployeeDashboard(userId: string, userName: string, userEmail
       // Silent failures for optional widgets
       if (trainingRes.status === 'fulfilled') {
         setTrainingEnrollments(trainingRes.value?.data ?? []);
-      }
-      if (announcementsRes.status === 'fulfilled') {
-        setAnnouncements(announcementsRes.value?.data ?? []);
       }
     } catch (err: any) {
       setError(err.message);
@@ -527,7 +514,7 @@ export function useEmployeeDashboard(userId: string, userName: string, userEmail
     attendance, todayAttendance, isCheckedIn,
     leaves, pendingLeaves, leaveBalance,
     tasks, todaysTasks, upcomingTasks,
-    trainingEnrollments, announcements,
+    trainingEnrollments,
     stats, loading, error,
     checkIn, checkOut,
     applyLeave, cancelLeave, approveLeave, rejectLeave, approveLeaveWithComment, rejectLeaveWithComment, loadPendingLeaves,

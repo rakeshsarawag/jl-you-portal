@@ -210,7 +210,7 @@ export const createAppRouter = ({ accessToken, onLogout }: RouteParams) => {
         {
           path: "/advanced-analytics",
           element: (
-            <ProtectedRoute requiredRoles={roles("/executive-dashboard")} appName="Analytics Dashboard">
+            <ProtectedRoute requiredRoles={roles("/advanced-analytics")} appName="Advanced Analytics">
               <Suspense><UnifiedAnalyticsDashboard accessToken={accessToken} onLogout={onLogout} /></Suspense>
             </ProtectedRoute>
           ),

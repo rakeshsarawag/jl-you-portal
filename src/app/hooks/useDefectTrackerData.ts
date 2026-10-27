@@ -145,6 +145,7 @@ export interface ByProjectRow {
   total: number; resolved: number;
   resolvedPct: number;
   slaCompliance: number;
+  defects: Defect[];
   criticalDefects: Defect[];
 }
 
@@ -153,6 +154,8 @@ export interface DefectFilters {
   severity?: string;
   status?: string;
   assigneeId?: string;
+  assigneeIds?: string[];
+  assigneeNames?: string[];
   regression?: string;
   slaStatus?: string;
   environment?: string;
@@ -305,6 +308,7 @@ function toDbBody(body: Partial<Defect> & Record<string, any>) {
           'slaFixBreached','slaVerifyBreached','slaPolicyName','comments','activityLog','linkedItems'].includes(k)) {
       if (dbKey === 'environment' && typeof v === 'string') result[dbKey] = ENV_MAP[v] ?? v.toLowerCase();
       else if (dbKey === 'priority' && typeof v === 'string') result[dbKey] = PRIORITY_TO_DB[v] ?? v;
+      else if (dbKey === 'project_id') result[dbKey] = v || null;
       else result[dbKey] = v;
     }
   }
@@ -330,6 +334,8 @@ export function useDefectTrackerData() {
     if (filters.severity) params.set('severity', filters.severity);
     if (filters.status) params.set('status', filters.status);
     if (filters.assigneeId) params.set('assigneeId', filters.assigneeId);
+    if (filters.assigneeIds?.length) params.set('assigneeIds', filters.assigneeIds.join(','));
+    if (filters.assigneeNames?.length) params.set('assigneeNames', JSON.stringify(filters.assigneeNames));
     if (filters.regression) params.set('regression', filters.regression);
     if (filters.slaStatus) params.set('slaStatus', filters.slaStatus);
     if (filters.environment) params.set('environment', filters.environment);
@@ -350,6 +356,9 @@ export function useDefectTrackerData() {
           if (filters.severity) query = query.in('severity', filters.severity.split(','));
           if (filters.status) query = query.in('status', filters.status.split(','));
           if (filters.assigneeId) query = query.eq('assignee_id', filters.assigneeId);
+          if (filters.assigneeIds?.length && !filters.assigneeNames?.length) {
+            query = query.in('assignee_id', filters.assigneeIds);
+          }
           if (filters.regression === 'true') query = query.eq('is_regression', true);
           if (filters.regression === 'false') query = query.eq('is_regression', false);
           if (filters.environment) query = query.eq('environment', filters.environment);
@@ -363,6 +372,21 @@ export function useDefectTrackerData() {
       if (dbErr) setError(dbErr.message);
       else {
         let result = (rows ?? []).map(d => normalizeRow(d, computeSLA(d, policies ?? [])));
+        if (filters.assigneeIds?.length || filters.assigneeNames?.length) {
+          const ids = new Set(filters.assigneeIds ?? []);
+          const names = new Set(
+            (filters.assigneeNames ?? []).map(name =>
+              name.trim().toLowerCase().replace(/\s*\([^)]*\)\s*$/, '')
+            ),
+          );
+          result = result.filter(defect => {
+            const assigneeName = defect.assigneeName
+              .trim()
+              .toLowerCase()
+              .replace(/\s*\([^)]*\)\s*$/, '');
+            return ids.has(defect.assigneeId) || names.has(assigneeName);
+          });
+        }
         if (filters.slaStatus) {
           if (filters.slaStatus === 'breached') result = result.filter(d => d.slaFixBreached || d.slaVerifyBreached);
           else if (filters.slaStatus === 'at_risk') result = result.filter(d => d.slaStatus === 'at_risk');
@@ -545,9 +569,22 @@ export function useDefectTrackerData() {
       const withSLA = (all ?? []).map(d => ({ ...normalizeRow(d, computeSLA(d, policies ?? [])), _raw: d }));
       const projMap: Record<string, any> = {};
       for (const d of withSLA) {
-        const pId = d.projectId;
-        const pName = d.projectName || pId || 'Unknown';
-        if (!projMap[pId]) projMap[pId] = { projectId: pId, projectName: pName, s1: 0, s2: 0, s3: 0, s4: 0, total: 0, resolved: 0, breached: 0, criticalDefects: [] };
+        const pId = d.projectId || 'general';
+        const pName = d.projectName || 'General';
+        if (!projMap[pId]) projMap[pId] = {
+          projectId: pId,
+          projectName: pName,
+          s1: 0,
+          s2: 0,
+          s3: 0,
+          s4: 0,
+          total: 0,
+          resolved: 0,
+          breached: 0,
+          defects: [],
+          criticalDefects: [],
+        };
+        projMap[pId].defects.push(d);
         projMap[pId].total++;
         if (d.severity === 'Very High') { projMap[pId].s1++; projMap[pId].criticalDefects.push(d); }
         if (d.severity === 'High') projMap[pId].s2++;

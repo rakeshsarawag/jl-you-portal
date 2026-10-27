@@ -73,6 +73,165 @@ app.get('/audit/logs', async (c) => {
   }
 });
 
+// Record one authenticated browser session and its first successful login.
+app.post('/session-event', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const authUserId = (c as any).get('userId') as string;
+    const verifiedEmail = (c as any).get('userEmail') as string;
+    const body = await c.req.json();
+    if (!body.sessionToken) return c.json({ error: 'Missing session token' }, 400);
+
+    let { data: appUser, error: userError } = await supabase
+      .from('app_users')
+      .select('id, email')
+      .eq('auth_user_id', authUserId)
+      .maybeSingle();
+
+    if (!appUser && !userError && verifiedEmail) {
+      const fallback = await supabase
+        .from('app_users')
+        .select('id, email')
+        .ilike('email', verifiedEmail)
+        .maybeSingle();
+      appUser = fallback.data;
+      userError = fallback.error;
+      if (appUser) {
+        await supabase.from('app_users').update({ auth_user_id: authUserId }).eq('id', appUser.id);
+      }
+    }
+    if (userError || !appUser) return c.json({ error: 'Portal user not found' }, 404);
+
+    const now = new Date().toISOString();
+    const { data: existing, error: existingError } = await supabase
+      .from('app_user_sessions')
+      .select('id')
+      .eq('session_token', body.sessionToken)
+      .maybeSingle();
+    if (existingError) return c.json({ error: existingError.message }, 500);
+
+    if (existing) {
+      const { error } = await supabase
+        .from('app_user_sessions')
+        .update({ last_seen_at: now })
+        .eq('id', existing.id);
+      if (error) return c.json({ error: error.message }, 500);
+    } else {
+      const ipAddress =
+        c.req.header('cf-connecting-ip') ||
+        c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ||
+        null;
+      const { error: sessionError } = await supabase.from('app_user_sessions').insert([{
+        user_id: appUser.id,
+        session_token: body.sessionToken,
+        ip_address: ipAddress,
+        user_agent: body.userAgent || null,
+        device_type: body.deviceType || null,
+        started_at: now,
+        last_seen_at: now,
+        revoked: false,
+      }]);
+      if (sessionError) return c.json({ error: sessionError.message }, 500);
+
+      const { error: historyError } = await supabase.from('login_history').insert([{
+        user_id: appUser.id,
+        email: appUser.email || verifiedEmail,
+        ip_address: ipAddress,
+        user_agent: body.userAgent || null,
+        device_type: body.deviceType || null,
+        success: true,
+        mfa_used: Boolean(body.mfaUsed),
+        logged_in_at: now,
+      }]);
+      if (historyError) return c.json({ error: historyError.message }, 500);
+    }
+
+    await supabase.from('app_users').update({ last_login: now }).eq('id', appUser.id);
+    return c.json({ success: true });
+  } catch (error) {
+    console.error('Error recording session:', error);
+    return c.json({ error: 'Failed to record login session' }, 500);
+  }
+});
+
+app.get('/sessions', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .from('app_user_sessions')
+      .select('*')
+      .order('started_at', { ascending: false })
+      .limit(500);
+    if (error) return c.json({ error: error.message }, 500);
+
+    const userIds = [...new Set((data || []).map((row: any) => row.user_id).filter(Boolean))];
+    const { data: users, error: usersError } = userIds.length
+      ? await supabase.from('app_users').select('id, name, email').in('id', userIds)
+      : { data: [], error: null };
+    if (usersError) return c.json({ error: usersError.message }, 500);
+    const usersById = new Map((users || []).map((user: any) => [user.id, user]));
+
+    return c.json({
+      sessions: (data || []).map((session: any) => ({
+        ...session,
+        user_name: usersById.get(session.user_id)?.name || '',
+        user_email: usersById.get(session.user_id)?.email || '',
+      })),
+    });
+  } catch (error) {
+    return c.json({ error: 'Failed to fetch sessions' }, 500);
+  }
+});
+
+app.put('/sessions/:id/revoke', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const authUserId = (c as any).get('userId') as string;
+    const { data: actor } = await supabase
+      .from('app_users')
+      .select('id')
+      .eq('auth_user_id', authUserId)
+      .maybeSingle();
+    const { error } = await supabase.from('app_user_sessions').update({
+      revoked: true,
+      revoked_by: actor?.id || null,
+      revoked_at: new Date().toISOString(),
+    }).eq('id', c.req.param('id'));
+    if (error) return c.json({ error: error.message }, 500);
+    return c.json({ success: true });
+  } catch (error) {
+    return c.json({ error: 'Failed to revoke session' }, 500);
+  }
+});
+
+app.get('/login-history', async (c) => {
+  try {
+    const supabase = getSupabase();
+    const { data, error } = await supabase
+      .from('login_history')
+      .select('*')
+      .order('logged_in_at', { ascending: false })
+      .limit(1000);
+    if (error) return c.json({ error: error.message }, 500);
+
+    const userIds = [...new Set((data || []).map((row: any) => row.user_id).filter(Boolean))];
+    const { data: users, error: usersError } = userIds.length
+      ? await supabase.from('app_users').select('id, name').in('id', userIds)
+      : { data: [], error: null };
+    if (usersError) return c.json({ error: usersError.message }, 500);
+    const usersById = new Map((users || []).map((user: any) => [user.id, user.name]));
+
+    return c.json({
+      entries: (data || []).map((entry: any) => ({
+        ...entry,
+        user_name: usersById.get(entry.user_id) || '',
+      })),
+    });
+  } catch (error) {
+    return c.json({ error: 'Failed to fetch login history' }, 500);
+  }
+});
+
 app.get('/:id', async (c) => {
   try {
     const supabase = getSupabase();

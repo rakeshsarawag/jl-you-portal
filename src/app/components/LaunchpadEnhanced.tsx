@@ -12,7 +12,7 @@ import {
   Brain, BarChart3, MessageSquare, HardDrive, Share2, Database,
   ChevronRight, Calendar, CheckSquare, ArrowUpRight, Star, Inbox,
   Briefcase, Award, BookOpen, LayoutDashboard, LucideIcon,
-  GitBranch, Lock, Cpu, Bug, Globe, Quote,
+  GitBranch, Lock, Cpu, BugOff, Globe, Quote,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useUser } from '../context/UserContext';
@@ -47,7 +47,7 @@ const TILE_CONFIG = [
   { id: 'onboarding',          titleKey: 'tile.onboarding',         subKey: 'tile.sub.onboarding',         icon: Star,            path: '/onboarding',          color: 'text-pink-600',    iconBg: 'bg-pink-50',    category: 'people' },
   { id: 'communications',      titleKey: 'tile.communications',     subKey: 'tile.sub.communications',     icon: MessageSquare,   path: '/communications',      color: 'text-blue-500',    iconBg: 'bg-blue-50',    category: 'operations' },
   { id: 'projects',            titleKey: 'tile.projects',           subKey: 'tile.sub.projects',           icon: Folder,          path: '/projects',            color: 'text-lime-600',    iconBg: 'bg-lime-50',    category: 'operations' },
-  { id: 'defect-tracker',      titleKey: 'tile.defectTracker',      subKey: 'tile.sub.defectTracker',      icon: Bug,             path: '/defect-tracker',      color: 'text-red-600',     iconBg: 'bg-red-50',     category: 'operations' },
+  { id: 'defect-tracker',      titleKey: 'tile.defectTracker',      subKey: 'tile.sub.defectTracker',      icon: BugOff,          path: '/defect-tracker',      color: 'text-red-600',     iconBg: 'bg-red-50',     category: 'operations' },
   { id: 'it-services',         titleKey: 'tile.itServices',         subKey: 'tile.sub.itServices',         icon: Laptop,          path: '/it-services',         color: 'text-cyan-600',    iconBg: 'bg-cyan-50',    category: 'operations' },
   { id: 'assets',              titleKey: 'tile.assets',             subKey: 'tile.sub.assets',             icon: HardDrive,       path: '/assets',              color: 'text-gray-600',    iconBg: 'bg-gray-50',    category: 'operations' },
   { id: 'workflow-dashboard',  titleKey: 'tile.workflow',           subKey: 'tile.sub.workflow',           icon: GitBranch,       path: '/workflow-dashboard',  color: 'text-amber-600',   iconBg: 'bg-amber-50',   category: 'intelligence' },
@@ -59,6 +59,7 @@ const TILE_CONFIG = [
   { id: 'payroll',             titleKey: 'tile.payroll',            subKey: 'tile.sub.payroll',            icon: DollarSign,      path: '/payroll',             color: 'text-green-700',   iconBg: 'bg-green-50',   category: 'finance' },
   { id: 'linkedin',            titleKey: 'tile.linkedin',           subKey: 'tile.sub.linkedin',           icon: Share2,          path: '/linkedin',            color: 'text-blue-700',    iconBg: 'bg-blue-50',    category: 'operations' },
   { id: 'executive-dashboard', titleKey: 'tile.executiveDashboard', subKey: 'tile.sub.executiveDashboard', icon: BarChart3,       path: '/executive-dashboard', color: 'text-purple-600',  iconBg: 'bg-purple-50',  category: 'intelligence' },
+  { id: 'advanced-analytics',  titleKey: 'tile.advancedAnalytics',  subKey: 'tile.sub.advancedAnalytics',  icon: Brain,           path: '/advanced-analytics',  color: 'text-indigo-600',  iconBg: 'bg-indigo-50',  category: 'intelligence' },
   { id: 'user-management',     titleKey: 'tile.userManagement',     subKey: 'tile.sub.userManagement',     icon: Shield,          path: '/user-management',     color: 'text-red-600',     iconBg: 'bg-red-50',     category: 'admin' },
   { id: 'permissions',         titleKey: 'tile.permissions',        subKey: 'tile.sub.permissions',        icon: Settings,        path: '/permissions',         color: 'text-red-700',     iconBg: 'bg-red-50',     category: 'admin' },
   { id: 'master-data',         titleKey: 'tile.masterData',         subKey: 'tile.sub.masterData',         icon: Database,        path: '/master-data',         color: 'text-slate-600',   iconBg: 'bg-slate-50',   category: 'admin' },
@@ -104,10 +105,10 @@ const TILE_GROUPS: {
     accent: 'border-sky-400',
     headerBg: 'bg-sky-50/60',
     iconColor: 'text-sky-500',
-    ids: ['communications', 'linkedin', 'executive-dashboard', 'invoices', 'payroll'],
+    ids: ['communications', 'linkedin', 'executive-dashboard', 'advanced-analytics', 'invoices', 'payroll'],
     segments: [
       { label: 'Communication', ids: ['communications', 'linkedin'] },
-      { label: 'Insights', ids: ['executive-dashboard'] },
+      { label: 'Insights', ids: ['executive-dashboard', 'advanced-analytics'] },
       { label: 'Finance', ids: ['invoices', 'payroll'] },
     ],
   },

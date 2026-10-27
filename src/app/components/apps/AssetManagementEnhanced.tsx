@@ -159,11 +159,10 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
     refresh,
   } = useAssetData();
 
-  const isAdmin = currentUser?.roles?.some(r => r === 'admin' || r === 'it') || currentUser?.primaryRole === 'admin' || currentUser?.primaryRole === 'it';
-  const isManager = currentUser?.primaryRole === 'manager';
   const userEmail = currentUser?.email;
   const userName = currentUser?.name;
 
+  const secView = useSectionPermission('assets', 'view');
   const secDocuments = useSectionPermission('assets', 'documents');
   const secReports = useSectionPermission('assets', 'reports');
   const secCreate = useSectionPermission('assets', 'create');
@@ -650,6 +649,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
     }
   }
 
+  if (!secView) return <div className="p-8 text-center text-sm text-muted-foreground">You do not have permission to view assets.</div>;
   if (loading) return <InlineLoader />;
 
   return (
@@ -1004,7 +1004,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
                               <UserCheck className="h-4 w-4" />
                             </button>
                           )}
-                          {isAdmin && asset.status === 'Assigned' && (
+                          {secAssign && asset.status === 'Assigned' && (
                             <button
                               onClick={() => handleReturn(asset)}
                               className="p-1.5 rounded hover:bg-orange-100 text-orange-500 hover:text-orange-700 transition-colors"
@@ -1013,7 +1013,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
                               <RotateCcw className="h-4 w-4" />
                             </button>
                           )}
-                          {isAdmin && (
+                          {secCreate && (
                             <button
                               onClick={() => openEditAsset(asset)}
                               className="p-1.5 rounded hover:bg-gray-200 text-muted-foreground hover:text-foreground transition-colors"
@@ -1022,7 +1022,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
                               <Edit className="h-4 w-4" />
                             </button>
                           )}
-                          {isAdmin && (
+                          {secView && (
                             <button
                               onClick={() => setQrAsset(asset)}
                               className="p-1.5 rounded hover:bg-indigo-100 text-indigo-400 hover:text-indigo-600 transition-colors"
@@ -1031,7 +1031,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
                               <QrCode className="h-4 w-4" />
                             </button>
                           )}
-                          {isAdmin && (
+                          {secDispose && (
                             <button
                               onClick={() => handleDelete(asset)}
                               className="p-1.5 rounded hover:bg-red-100 text-red-400 hover:text-red-600 transition-colors"
@@ -1571,7 +1571,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
                       <p className="text-sm font-medium text-foreground">{viewingAsset.assignedToName}</p>
                       <p className="text-xs text-muted-foreground">{t('Since')} {viewingAsset.assignedDate ?? '—'}</p>
                     </div>
-                    {isAdmin && (
+                    {secAssign && (
                       <button
                         onClick={() => { handleReturn(viewingAsset); setViewingAsset(null); }}
                         className="px-3 py-1.5 text-sm border border-orange-300 text-orange-600 rounded-md hover:bg-orange-50 transition-colors"
@@ -1581,7 +1581,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
                     )}
                   </div>
                 ) : (
-                  isAdmin && viewingAsset.status === 'Available' ? (
+                  secAssign && viewingAsset.status === 'Available' ? (
                     <div className="flex gap-2">
                       <EmployeeSearchDropdown
                         value={assigneeName}

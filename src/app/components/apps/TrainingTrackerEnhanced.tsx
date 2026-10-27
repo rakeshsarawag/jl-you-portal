@@ -10,7 +10,9 @@ import {
 } from 'lucide-react';
 import { useUser } from '../../context/UserContext';
 import { useSectionPermission } from "../SectionGuard";
-import { useTrainingData, Course, Enrollment } from '../../hooks/useTrainingData';
+import {
+  useTrainingData, Course, Enrollment, Assessment, AssessmentResult,
+} from '../../hooks/useTrainingData';
 import { t } from '../../../i18n/index';
 import { supabase, API_BASE, publicAnonKey, getApiAccessToken } from '../../utils/constants';
 import {
@@ -22,6 +24,11 @@ import {
 } from '../../../constants/apps/training';
 import { SelectOptions } from '../../context/ValueHelpsContext';
 import { ALL_ROLES } from '../../../constants/apps/user-management';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '../ui/dialog';
+import { RadioGroup, RadioGroupItem } from '../ui/radio-group';
+import { Button } from '../ui/button';
 
 // ─── types ───────────────────────────────────────────────────────────────────
 
@@ -130,8 +137,8 @@ function isHRAdmin(roles: string[]) {
 function isManager(roles: string[]) {
   return roles.some((r) => r === 'manager');
 }
-function canManageCourses(roles: string[]) {
-  return isHRAdmin(roles);
+function canAdministerCourses(roles: string[]) {
+  return roles.includes('admin');
 }
 function canSeeTeam(roles: string[]) {
   return isHRAdmin(roles) || isManager(roles);
@@ -2756,6 +2763,173 @@ function TrainingNeedsQueue({ managerId, isManager: isMgr }: { managerId: string
   );
 }
 
+function MandatoryTrainingDialog({
+  enrollment,
+  course,
+  onClose,
+  getAssessment,
+  submitAssessment,
+}: {
+  enrollment?: Enrollment;
+  course: Course;
+  onClose: () => void;
+  getAssessment: (courseId: string) => Promise<Assessment>;
+  submitAssessment: (enrollmentId: string, answers: Record<string, number>) => Promise<AssessmentResult>;
+}) {
+  const [assessment, setAssessment] = useState<Assessment | null>(null);
+  const [answers, setAnswers] = useState<Record<string, number>>({});
+  const [result, setResult] = useState<AssessmentResult | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    getAssessment(course.id)
+      .then(setAssessment)
+      .catch((error: Error) => setLoadError(error.message));
+  }, [course.id, getAssessment]);
+
+  const questions = assessment?.questions || [];
+  const allAnswered = questions.length > 0 &&
+    questions.every((question) => answers[question.id] !== undefined);
+
+  async function handleSubmit() {
+    if (!enrollment) return;
+    setSubmitting(true);
+    try {
+      const nextResult = await submitAssessment(enrollment.id, answers);
+      setResult(nextResult);
+      toast[nextResult.passed ? 'success' : 'error'](
+        nextResult.passed
+          ? `Passed with ${nextResult.score}%. Training completed.`
+          : `Score: ${nextResult.score}%. ${nextResult.passingScore}% is required to pass.`,
+      );
+    } catch (error) {
+      toast.error((error as Error).message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>{course.title}</DialogTitle>
+          <DialogDescription>
+            {course.mandatory ? 'Statutory-aligned mandatory workplace training' : 'Recommended organizational training'}
+            {enrollment && (
+              <> · {course.mandatory ? 'Due' : 'Target completion'} {fmtDate(enrollment.dueDate)}</>
+            )}
+            {' '}· Pass mark {course.passingScore}%
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          {enrollment?.assessmentPassed
+            ? `Assessment passed${enrollment.bestScore != null ? ` with a best score of ${enrollment.bestScore}%` : ''}.`
+            : !enrollment
+              ? 'Review the complete course material below. Enrol in the course to unlock its assessment.'
+            : course.mandatory
+              ? 'Complete this required training within the organizational timeline shown above and pass the assessment.'
+              : 'This course is recommended by organizational policy and includes an assessment to confirm understanding.'}
+          {' '}Legal requirements can vary by jurisdiction and role.
+        </div>
+
+        {course.description && (
+          <p className="text-sm leading-6 text-muted-foreground">{course.description}</p>
+        )}
+
+        {course.content?.map((module, index) => (
+          <section key={module.title} className="space-y-2 rounded-lg border border-border p-4">
+            <h3 className="font-semibold text-foreground">
+              {index + 1}. {module.title}
+            </h3>
+            <p className="whitespace-pre-line text-sm leading-6 text-muted-foreground">{module.body}</p>
+            {module.bullets?.length ? (
+              <ul className="list-disc space-y-1 pl-5 text-sm text-foreground">
+                {module.bullets.map((bullet) => <li key={bullet}>{bullet}</li>)}
+              </ul>
+            ) : null}
+          </section>
+        ))}
+
+        <div className="border-t border-border pt-5">
+          <h3 className="mb-1 font-semibold">Knowledge assessment</h3>
+          <p className="mb-5 text-sm text-muted-foreground">
+            Select one answer for every question. You can retake the test if needed.
+          </p>
+          {!enrollment ? (
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-900">
+              Enrol in this course from the catalogue before taking the assessment.
+            </div>
+          ) : enrollment.assessmentPassed ? (
+            <div className="flex items-center gap-2 rounded-lg bg-green-50 p-3 text-sm font-medium text-green-800">
+              <CheckCircle2 className="h-4 w-4" />
+              Assessment complete. You may review the course modules at any time.
+            </div>
+          ) : loadError ? (
+            <p className="text-sm text-red-600">{loadError}</p>
+          ) : !assessment ? (
+            <InlineLoader />
+          ) : questions.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No assessment has been configured for this course.</p>
+          ) : (
+            <div className="space-y-6">
+              {questions.map((question, questionIndex) => (
+                <fieldset key={question.id} disabled={enrollment.assessmentPassed || Boolean(result?.passed)}>
+                  <legend className="mb-3 text-sm font-medium">
+                    {questionIndex + 1}. {question.question}
+                  </legend>
+                  <RadioGroup
+                    value={answers[question.id]?.toString()}
+                    onValueChange={(value) => setAnswers((previous) => ({
+                      ...previous,
+                      [question.id]: Number(value),
+                    }))}
+                  >
+                    {question.options.map((option, optionIndex) => (
+                      <label
+                        key={option}
+                        className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 text-sm hover:bg-muted"
+                      >
+                        <RadioGroupItem value={optionIndex.toString()} />
+                        <span>{option}</span>
+                      </label>
+                    ))}
+                  </RadioGroup>
+                </fieldset>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {course.standardReferences?.length ? (
+          <div className="border-t border-border pt-4 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Reference standards: </span>
+            {course.standardReferences.map((reference, index) => (
+              <span key={reference.url}>
+                {index > 0 && ' · '}
+                <a className="underline hover:text-foreground" href={reference.url} target="_blank" rel="noreferrer">
+                  {reference.name}
+                </a>
+              </span>
+            ))}
+          </div>
+        ) : null}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+          {enrollment && !enrollment.assessmentPassed && !result?.passed && (
+            <Button disabled={!allAnswered || submitting} onClick={handleSubmit}>
+              {submitting ? 'Submitting…' : result ? 'Retake assessment' : 'Submit assessment'}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -2767,6 +2941,7 @@ export function TrainingTrackerEnhanced({
   onLogout: () => void;
 }) {
   const { currentUser } = useUser();
+  const secViewCourses = useSectionPermission("training", "view_courses");
   const secEnroll = useSectionPermission("training", "enroll");
   const secManageSessions = useSectionPermission("training", "manage_sessions");
   const secIssueCertificates = useSectionPermission("training", "issue_certificates");
@@ -2790,6 +2965,8 @@ export function TrainingTrackerEnhanced({
     updateProgress,
     unenroll,
     issueCertificate,
+    getAssessment,
+    submitAssessment,
   } = useTrainingData();
 
   type TabKey = 'my-training' | 'catalogue' | 'learning-paths' | 'certificates' | 'calendar' | 'gap-analysis' | 'team' | 'compliance' | 'training-needs';
@@ -2814,18 +2991,21 @@ export function TrainingTrackerEnhanced({
   const [showEnrollTeam, setShowEnrollTeam] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [confirmUnenroll, setConfirmUnenroll] = useState<string | null>(null);
+  const [trainingEnrollment, setTrainingEnrollment] = useState<Enrollment | null>(null);
+  const [previewCourse, setPreviewCourse] = useState<Course | null>(null);
+  const canAdministerTraining = canAdministerCourses(roles) && secManageSessions;
 
   useEffect(() => {
     if (!userId) return;
-    loadAll(isEmployee ? userId : undefined);
-  }, [userId]);
+    loadAll(isEmployee ? employeeId : undefined);
+  }, [employeeId, isEmployee, loadAll, userId]);
 
   const myEnrollments = enrollments.filter((e) =>
-    isEmployee ? e.employeeId === userId : true,
+    isEmployee ? e.employeeId === employeeId : true,
   );
   const myCompleted = myEnrollments.filter((e) => e.status === 'Completed');
   const myCerts = certificates.filter((c) =>
-    isEmployee ? c.employeeId === userId : true,
+    isEmployee ? c.employeeId === employeeId : true,
   );
 
   const filteredCourses = courses.filter((c) => {
@@ -2917,13 +3097,13 @@ export function TrainingTrackerEnhanced({
     async (courseId: string) => {
       if (!currentUser) return;
       try {
-        await enrollEmployee(courseId, userId, currentUser.name);
+        await enrollEmployee(courseId, employeeId, currentUser.name);
         toast.success(t('training.enroll'));
       } catch (err: unknown) {
         toast.error((err as Error).message ?? t('common.error'));
       }
     },
-    [enrollEmployee, userId, currentUser],
+    [enrollEmployee, employeeId, currentUser],
   );
 
   const handleEnrollTeam = useCallback(
@@ -2939,7 +3119,7 @@ export function TrainingTrackerEnhanced({
   );
 
   const isEnrolled = (courseId: string) =>
-    enrollments.some((e) => e.courseId === courseId && e.employeeId === userId);
+    enrollments.some((e) => e.courseId === courseId && e.employeeId === employeeId);
 
   // Expiring certificates
   const expiringCerts: ExpiringCert[] = (isEmployee ? myCerts : certificates)
@@ -2975,6 +3155,10 @@ export function TrainingTrackerEnhanced({
     { key: 'training-needs', label: t('training.needs.tab') },
   ];
 
+  if (!secViewCourses) {
+    return <div className="p-8 text-center text-sm text-muted-foreground">You do not have permission to view training courses.</div>;
+  }
+
   return (
     <div className="min-h-screen bg-muted">
       {/* Header */}
@@ -2995,7 +3179,7 @@ export function TrainingTrackerEnhanced({
               <Plus className="h-3.5 w-3.5" />
               <span className="hidden sm:inline">{t('training.needs.request')}</span>
             </button>
-            {canManageCourses(roles) && secManageSessions && (
+            {canAdministerTraining && (
               <button
                 onClick={() => { setEditCourse(null); setShowCourseForm(true); }}
                 className="flex items-center gap-1.5 bg-indigo-600 text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-indigo-700"
@@ -3097,7 +3281,15 @@ export function TrainingTrackerEnhanced({
                               {e.mandatory && (
                                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500 flex-shrink-0" title={t('training.mandatory')} />
                               )}
-                              {e.courseName}
+                              {course ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setTrainingEnrollment(e)}
+                                  className="text-left text-indigo-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                                >
+                                  {e.courseName}
+                                </button>
+                              ) : e.courseName}
                               {e.mandatory && (
                                 <span className="hidden sm:inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-700">
                                   {t('training.mandatory')}
@@ -3121,13 +3313,25 @@ export function TrainingTrackerEnhanced({
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center justify-end gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                title={t('training.updateProgress')}
-                                onClick={() => setProgressEnrollment(e)}
-                                className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-indigo-600"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
+                              {course?.content?.length && course.assessmentRequired ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => setTrainingEnrollment(e)}
+                                  className="h-8 gap-1.5"
+                                >
+                                  <BookOpen className="h-3.5 w-3.5" />
+                                  {e.assessmentPassed ? 'Review' : 'Open training'}
+                                </Button>
+                              ) : (
+                                <button
+                                  title={t('training.updateProgress')}
+                                  onClick={() => setProgressEnrollment(e)}
+                                  className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-indigo-600"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                              )}
                               {e.status === 'Completed' && (
                                 <button
                                   title={t('training.certificate')}
@@ -3217,8 +3421,20 @@ export function TrainingTrackerEnhanced({
                     >
                       <div>
                         <div className="flex items-start justify-between gap-2 mb-1">
-                          <h3 className="font-semibold text-foreground text-sm leading-snug flex-1">
-                            {course.title}
+                          <h3 className="font-semibold text-sm leading-snug flex-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const enrollment = enrollments.find((item) =>
+                                  item.courseId === course.id && item.employeeId === employeeId
+                                );
+                                if (enrollment) setTrainingEnrollment(enrollment);
+                                else setPreviewCourse(course);
+                              }}
+                              className="text-left text-indigo-700 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                            >
+                              {course.title}
+                            </button>
                           </h3>
                           {course.mandatory && (
                             <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-orange-100 text-orange-700 whitespace-nowrap">
@@ -3259,7 +3475,7 @@ export function TrainingTrackerEnhanced({
                             {t('training.enroll')}
                           </button>
                         ) : null}
-                        {canManageCourses(roles) && (
+                        {canAdministerTraining && (
                           <div className="ml-auto flex gap-1 sm:opacity-0 group-hover:opacity-100">
                             <button
                               onClick={() => { setEditCourse(course); setShowCourseForm(true); }}
@@ -3289,7 +3505,7 @@ export function TrainingTrackerEnhanced({
           <LearningPathsTab
             courses={courses}
             employeeId={employeeId}
-            canManage={canManageCourses(roles) || isManager(roles)}
+            canManage={secManageSessions}
           />
         )}
 
@@ -3450,6 +3666,28 @@ export function TrainingTrackerEnhanced({
       </main>
 
       {/* ── Modals ── */}
+      {previewCourse && (
+        <MandatoryTrainingDialog
+          course={previewCourse}
+          onClose={() => setPreviewCourse(null)}
+          getAssessment={getAssessment}
+          submitAssessment={submitAssessment}
+        />
+      )}
+
+      {trainingEnrollment && (() => {
+        const course = courses.find((item) => item.id === trainingEnrollment.courseId);
+        return course ? (
+          <MandatoryTrainingDialog
+            enrollment={trainingEnrollment}
+            course={course}
+            onClose={() => setTrainingEnrollment(null)}
+            getAssessment={getAssessment}
+            submitAssessment={submitAssessment}
+          />
+        ) : null;
+      })()}
+
       {progressEnrollment && (
         <UpdateProgressModal
           enrollment={progressEnrollment}

@@ -1,18 +1,14 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
-import { requireFields, requireParam } from "./validate.ts";
+import { requireParam } from "./validate.ts";
+import { dispatchWorkflowEvent } from "./workflow-api.tsx";
 
 const app = new Hono();
 
 function triggerWorkflowEvent(event: string, entity_type: string, entity_id: string, context: Record<string, unknown>, triggered_by?: string) {
-  const base = Deno.env.get("SUPABASE_URL")!;
-  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  fetch(`${base}/functions/v1/make-server-1fe2c468/workflow/trigger`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
-    body: JSON.stringify({ event, entity_type, entity_id, context, triggered_by }),
-  }).catch(() => {});
+  dispatchWorkflowEvent({ event, entity_type, entity_id, context, triggered_by })
+    .catch((error) => console.error(`Workflow event "${event}" failed`, error));
 }
 
 function getSupabase() {
@@ -43,11 +39,15 @@ function shapeInvoice(inv: any) {
     id: inv.id,
     invoiceNumber: inv.invoice_number,
     invoiceDate: inv.invoice_date,
+    invoicePeriodFrom: inv.invoice_period_from,
+    invoicePeriodTo: inv.invoice_period_to,
+    poNumber: inv.po_number,
     dueDate: inv.due_date,
     currency: inv.currency || 'INR',
-    currencySymbol: inv.currency === 'USD' ? '$' : '₹',
+    currencySymbol: ({ INR: '₹', USD: '$', EUR: '€', GBP: '£', AUD: 'A$', CAD: 'C$', SGD: 'S$', AED: 'د.إ' } as Record<string, string>)[inv.currency] || `${inv.currency || 'INR'} `,
     billToId: inv.client_id,
     billToName: inv.client_name,
+    amountPaid: inv.amount_paid || 0,
     status: inv.status,
     subtotal: inv.subtotal,
     gstRate: inv.tax_rate,
@@ -138,9 +138,17 @@ app.get('/:id', async (c) => {
 app.post('/create', async (c) => {
   try {
     const supabase = getSupabase();
-    const v = await requireFields(c, ['clientName']);
-    if (!v.ok) return v.response;
-    const body = v.body;
+    const body = await c.req.json();
+    const clientName = body.clientName || body.billToName;
+    if (!clientName) {
+      return c.json({ success: false, error: 'Missing required fields: clientName' }, 400);
+    }
+    if (!body.invoicePeriodFrom || !body.invoicePeriodTo) {
+      return c.json({ success: false, error: 'Missing required fields: invoicePeriodFrom, invoicePeriodTo' }, 400);
+    }
+    if (body.invoicePeriodTo < body.invoicePeriodFrom) {
+      return c.json({ success: false, error: 'Invoice period end date cannot be before the start date' }, 400);
+    }
 
     const invoiceNumber = body.invoiceNumber || await getNextInvoiceNumber(supabase);
     const lineItems = body.lineItems || body.descriptions || [];
@@ -177,13 +185,40 @@ app.post('/create', async (c) => {
       }
     }
 
+    // Keep saves compatible while older databases still point invoices.client_id
+    // at invoice_clients. Migration 27 moves the FK to clients.
+    if (clientId) {
+      const { data: modernClient } = await supabase
+        .from('clients')
+        .select('id, name, email, phone, address, city, country, gst_number, pan_number')
+        .eq('id', clientId)
+        .maybeSingle();
+      if (modernClient) {
+        const { error: mirrorError } = await supabase.from('invoice_clients').upsert({
+          id: modernClient.id,
+          company_name: modernClient.name,
+          email: modernClient.email,
+          phone: modernClient.phone,
+          address: modernClient.address,
+          city: modernClient.city,
+          country: modernClient.country,
+          gst_number: modernClient.gst_number,
+          pan_number: modernClient.pan_number,
+        }, { onConflict: 'id' });
+        if (mirrorError) return c.json({ success: false, error: mirrorError.message }, 500);
+      }
+    }
+
     const { data: inv, error } = await supabase
       .from('invoices')
       .insert([{
         invoice_number: invoiceNumber,
         client_id: clientId,
-        client_name: body.billToName || body.clientName || '',
+        client_name: clientName,
         invoice_date: body.invoiceDate || new Date().toISOString().split('T')[0],
+        invoice_period_from: body.invoicePeriodFrom,
+        invoice_period_to: body.invoicePeriodTo,
+        po_number: body.poNumber || null,
         due_date: body.dueDate || null,
         status: body.status || 'Draft',
         subtotal,

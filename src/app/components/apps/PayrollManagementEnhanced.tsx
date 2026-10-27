@@ -1005,6 +1005,7 @@ export function PayrollManagementEnhanced(_props: Props) {
   const { records, stats, loading, processPayroll, refresh } = usePayrollData();
 
   // All permissions sourced exclusively from the DB role_permissions matrix
+  const secViewPayslips    = useSectionPermission('payroll', 'view_payslips');
   const secProcessPayroll  = useSectionPermission('payroll', 'process_payroll');
   const secApprovePayroll  = useSectionPermission('payroll', 'approve_payroll');
   const secSalaryStructure = useSectionPermission('payroll', 'salary_structure');
@@ -1198,14 +1199,28 @@ export function PayrollManagementEnhanced(_props: Props) {
   const canApprove = secApprovePayroll;
 
   const tabs: { key: Tab; label: string }[] = [
-    { key: 'payslips', label: t('payroll.myPayslips') },
+    ...(secViewPayslips ? [{ key: 'payslips' as Tab, label: t('payroll.myPayslips') }] : []),
     ...(isPrivileged ? [{ key: 'processing' as Tab, label: t('payroll.processPayroll') }] : []),
-    { key: 'summary', label: t('payroll.summary') },
+    ...(isPrivileged ? [{ key: 'summary' as Tab, label: t('payroll.summary') }] : []),
     ...(canEdit ? [{ key: 'salary-structure' as Tab, label: t('payroll.salaryStructureTab') }] : []),
     ...(secRevHistory || canEdit ? [{ key: 'salary-revision' as Tab, label: t('payroll.revisionHistory') }] : []),
-    { key: 'payslip-viewer', label: t('payroll.payslipViewer') },
+    ...(secViewPayslips ? [{ key: 'payslip-viewer' as Tab, label: t('payroll.payslipViewer') }] : []),
     ...(canApprove && secCompliance ? [{ key: 'compliance' as Tab, label: t('payroll.complianceTab') }] : []),
   ];
+
+  useEffect(() => {
+    if (!tabs.some(tab => tab.key === activeTab)) {
+      setActiveTab(tabs[0]?.key ?? 'payslips');
+    }
+  }, [
+    activeTab,
+    canApprove,
+    canEdit,
+    isPrivileged,
+    secCompliance,
+    secRevHistory,
+    secViewPayslips,
+  ]);
 
   // Monthly trend chart state
   const [trendData, setTrendData] = useState<{ month: string; gross: number; net: number; tds: number }[]>([]);
@@ -1825,7 +1840,7 @@ export function PayrollManagementEnhanced(_props: Props) {
       ) : (
         <>
           {/* My Payslips Tab — card grid */}
-          {activeTab === 'payslips' && (() => {
+          {secViewPayslips && activeTab === 'payslips' && (() => {
             const fyOptions = [CURRENT_FY - 2, CURRENT_FY - 1, CURRENT_FY] as const;
             // Build month→record map for selected FY
             const fyMap: Record<string, PayrollRecord> = {};
@@ -2355,7 +2370,7 @@ export function PayrollManagementEnhanced(_props: Props) {
           )}
 
           {/* Summary Tab */}
-          {activeTab === 'summary' && (
+          {isPrivileged && activeTab === 'summary' && (
             <div className="space-y-6">
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div className="bg-card rounded-2xl border border-border shadow-sm p-6 flex items-center gap-4">
@@ -2784,7 +2799,7 @@ export function PayrollManagementEnhanced(_props: Props) {
           })()}
 
           {/* Payslip Viewer Tab */}
-          {activeTab === 'payslip-viewer' && (
+          {secViewPayslips && activeTab === 'payslip-viewer' && (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-3">
                 <div className="space-y-1">

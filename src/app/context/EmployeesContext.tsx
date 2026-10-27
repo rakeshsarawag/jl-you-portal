@@ -91,7 +91,7 @@ export function EmployeesProvider({ children }: { children: ReactNode }) {
   useEffect(() => { load(); }, [load]);
 
   const activeEmployees = employees.filter(
-    e => !e.status || e.status === 'active',
+    e => !e.status || e.status.toLowerCase() === 'active',
   );
 
   const byId = useCallback(

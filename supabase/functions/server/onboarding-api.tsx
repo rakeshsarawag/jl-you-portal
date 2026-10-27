@@ -2,17 +2,13 @@ import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
 import { requireParam } from "./validate.ts";
+import { dispatchWorkflowEvent } from "./workflow-api.tsx";
 
 const app = new Hono();
 
 function triggerWorkflowEvent(event: string, entity_type: string, entity_id: string, context: Record<string, unknown>, triggered_by?: string) {
-  const base = Deno.env.get("SUPABASE_URL")!;
-  const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  fetch(`${base}/functions/v1/make-server-1fe2c468/workflow/trigger`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
-    body: JSON.stringify({ event, entity_type, entity_id, context, triggered_by }),
-  }).catch(() => {});
+  dispatchWorkflowEvent({ event, entity_type, entity_id, context, triggered_by })
+    .catch((error) => console.error(`Workflow event "${event}" failed`, error));
 }
 
 function getSupabase() {
@@ -50,11 +46,16 @@ async function autoEnrolMandatoryTraining(supabase: any, employeeId: string) {
   try {
     const { data: courses } = await supabase
       .from('training_courses')
-      .select('id')
+      .select('id, title, deadline_days, passing_score, assessment_required')
       .eq('mandatory', true)
       .eq('is_active', true);
 
     if (!courses?.length) return;
+    const { data: employee } = await supabase
+      .from('employees')
+      .select('name, auth_user_id')
+      .eq('id', employeeId)
+      .maybeSingle();
 
     for (const course of courses) {
       const { data: existing } = await supabase
@@ -65,15 +66,34 @@ async function autoEnrolMandatoryTraining(supabase: any, employeeId: string) {
         .maybeSingle();
 
       if (!existing) {
+        const enrolledAt = new Date();
+        const dueDate = new Date(enrolledAt);
+        dueDate.setUTCDate(dueDate.getUTCDate() + (course.deadline_days || 30));
         await supabase.from('training_enrollments').insert({
           id: crypto.randomUUID(),
           employee_id: employeeId,
+          employee_name: employee?.name || '',
           course_id: course.id,
           status: 'Enrolled',
           progress: 0,
+          mandatory: true,
+          assessment_required: Boolean(course.assessment_required),
+          enrolled_date: enrolledAt.toISOString().slice(0, 10),
           enrolled_at: new Date().toISOString(),
+          due_date: dueDate.toISOString().slice(0, 10),
           created_at: new Date().toISOString(),
         });
+        if (employee?.auth_user_id) {
+          await supabase.from('notifications').insert({
+            user_id: employee.auth_user_id,
+            type: 'mandatory_training_assigned',
+            title: 'Mandatory training assigned',
+            body: `${course.title} must be completed by ${dueDate.toLocaleDateString('en-IN')} with a score of at least ${course.passing_score || 70}%.`,
+            message: `${course.title} must be completed by ${dueDate.toLocaleDateString('en-IN')} with a score of at least ${course.passing_score || 70}%.`,
+            read: false,
+            link: '/training',
+          });
+        }
       }
     }
   } catch (err) {
@@ -314,7 +334,7 @@ app.post('/tasks/update', async (c) => {
 
     // Auto-enrol in mandatory training when onboarding reaches 100%
     if (stats.status === 'completed' && record?.employee_id) {
-      autoEnrolMandatoryTraining(supabase, record.employee_id);
+      await autoEnrolMandatoryTraining(supabase, record.employee_id);
     }
 
     return c.json({ success: true, data: record ? shapeRecord(record) : null });

@@ -1,8 +1,10 @@
 import { useEffect } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { useUser } from '../context/UserContext';
 import { toast } from 'sonner';
 import { MfaEnrollmentGate } from './MfaEnrollmentGate';
+import { usePermissions } from '../hooks/usePermissions';
+import { APP_BY_PATH } from '../../constants/appRegistry';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -18,10 +20,16 @@ interface ProtectedRouteProps {
 export function ProtectedRoute({ children, requiredRoles, appName }: ProtectedRouteProps) {
   const { currentUser, loading } = useUser();
   const navigate = useNavigate();
+  const location = useLocation();
+  const appId = APP_BY_PATH[location.pathname]?.appId ?? null;
+  const { canSeeApp, matrixLoaded } = usePermissions(
+    (currentUser?.roles ?? []) as any[],
+    currentUser?.permissionOverrides ?? [],
+  );
 
   useEffect(() => {
     // Wait for user data to load
-    if (loading) return;
+    if (loading || !matrixLoaded) return;
 
     // Check if user is logged in
     if (!currentUser) {
@@ -36,8 +44,9 @@ export function ProtectedRoute({ children, requiredRoles, appName }: ProtectedRo
     const hasRequiredRole = currentUser.roles?.some(role => 
       requiredRoles.includes(role)
     ) ?? false;
+    const hasAppPermission = appId ? canSeeApp(appId) : false;
 
-    if (!hasRequiredRole) {
+    if (!hasRequiredRole || !hasAppPermission) {
       console.warn(
         `🚫 SECURITY: Blocked unauthorized access to ${appName}`,
         `\n   User: ${currentUser.name} (${currentUser.email})`,
@@ -60,10 +69,10 @@ export function ProtectedRoute({ children, requiredRoles, appName }: ProtectedRo
       `\n   User: ${currentUser.name}`,
       `\n   User role: ${currentUser.roles?.[0]}`
     );
-  }, [currentUser, loading, navigate, requiredRoles, appName]);
+  }, [appId, appName, canSeeApp, currentUser, loading, matrixLoaded, navigate, requiredRoles]);
 
   // Show loading state while checking authorization
-  if (loading) {
+  if (loading || !matrixLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
@@ -77,7 +86,7 @@ export function ProtectedRoute({ children, requiredRoles, appName }: ProtectedRo
   // Only render children if user has required roles
   const hasAccess = currentUser?.roles?.some(role => 
     requiredRoles.includes(role)
-  ) ?? false;
+  ) && Boolean(appId && canSeeApp(appId));
 
   if (!hasAccess) {
     return null; // Will redirect in useEffect

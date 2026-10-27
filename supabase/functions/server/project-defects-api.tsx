@@ -41,7 +41,7 @@ app.get('/defects', async (c) => {
 app.post('/defects', async (c) => {
   try {
     const supabase = getSupabase();
-    const v = await requireFields(c, ['projectId', 'title']);
+    const v = await requireFields(c, ['title']);
     if (!v.ok) return v.response;
     const body = v.body;
 
@@ -50,7 +50,8 @@ app.post('/defects', async (c) => {
     const { data, error } = await supabase
       .from('project_defects')
       .insert([{
-        project_id: body.projectId,
+        project_id: body.projectId || null,
+        project_name: body.projectName || 'General',
         defect_id: defectId,
         title: body.title,
         severity: body.severity || 'Medium',

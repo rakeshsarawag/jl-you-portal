@@ -3148,6 +3148,7 @@ export function OKRManagementEnhanced({
   onLogout: () => void;
 }) {
   const { currentUser } = useUser();
+  const secView = useSectionPermission("okr", "view");
   const secCreate = useSectionPermission("okr", "create");
   const secUpdateProgress = useSectionPermission("okr", "update_progress");
   const secAlign = useSectionPermission("okr", "align");
@@ -3517,6 +3518,10 @@ export function OKRManagementEnhanced({
 
   const selectedCycle = cycles.find(c => c.id === selectedCycleId);
 
+  if (!secView) {
+    return <div className="p-8 text-center text-sm text-muted-foreground">You do not have permission to view OKRs.</div>;
+  }
+
   return (
     <div className="min-h-screen bg-muted">
       {/* Header */}
@@ -3810,7 +3815,7 @@ export function OKRManagementEnhanced({
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {visibleOkrs.map((okr) => {
                   const isOwner = okr.ownerId === userId || okr.owner === currentUser?.name;
-                  const canEdit = isOwner || isManager || isAdmin;
+                  const canEdit = secCreate && (isOwner || isManager || isAdmin);
                   const canGrade = isManager && !isOwner;
                   const showDisabledGrade = isManager && isOwner;
                   return (
