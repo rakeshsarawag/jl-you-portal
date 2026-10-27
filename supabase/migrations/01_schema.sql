@@ -4630,7 +4630,20 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='invoices' AND column_name='recurring_config_id') THEN
     ALTER TABLE invoices ADD COLUMN IF NOT EXISTS recurring_config_id UUID REFERENCES recurring_invoice_configs(id);
   END IF;
+  ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_period_from DATE;
+  ALTER TABLE invoices ADD COLUMN IF NOT EXISTS invoice_period_to DATE;
+  ALTER TABLE invoices ADD COLUMN IF NOT EXISTS po_number TEXT;
 END $$;
+
+-- The current Invoice Generation UI uses clients, not the legacy invoice_clients table.
+UPDATE invoices
+SET client_id = NULL
+WHERE client_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM clients WHERE clients.id = invoices.client_id);
+ALTER TABLE invoices DROP CONSTRAINT IF EXISTS invoices_client_id_fkey;
+ALTER TABLE invoices
+  ADD CONSTRAINT invoices_client_id_fkey
+  FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL;
 
 -- ========================
 -- PAYROLL

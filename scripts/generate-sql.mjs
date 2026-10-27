@@ -12,23 +12,16 @@
  *   npm run generate:sql                    — same
  */
 
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { readSql, MIGRATIONS, REPO_ROOT } from './_db.mjs';
-
-const MIGRATION_FILES = [
-  '01_schema.sql',
-  '02_seed.sql',
-  '02_recruitment_extensions.sql',
-  '03_onboarding_source.sql',
-  '04_value_helps_extensions.sql',
-];
+import { readSql, MIGRATIONS } from './_db.mjs';
+import { ACTIVE_MIGRATIONS } from './migration-manifest.mjs';
 
 const OUT_FILE = join(MIGRATIONS, 'run-all.sql');
 
 const BANNER = `-- ============================================================
 -- Jeshan Labs HR Portal — Full Migration Suite
--- Generated: ${new Date().toISOString()}
+-- Generated from scripts/migration-manifest.mjs
 --
 -- HOW TO RUN:
 --   1. Open the Supabase SQL editor:
@@ -36,25 +29,40 @@ const BANNER = `-- ============================================================
 --   2. Paste the entire contents of this file
 --   3. Click "Run"
 --
--- All statements are idempotent (IF NOT EXISTS / ON CONFLICT DO UPDATE)
--- so this is safe to run multiple times.
+-- Statements are written for repeat execution using existence checks,
+-- replacement guards, and conflict-safe data operations.
 -- ============================================================
 
 `;
 
-function run() {
+function buildCombinedSql() {
   const parts = [BANNER];
 
-  for (const file of MIGRATION_FILES) {
+  for (const { file, description } of ACTIVE_MIGRATIONS) {
     const sql = readSql(file);
     parts.push(`-- ────────────────────────────────────────────────────────────
 -- File: ${file}
+-- Purpose: ${description}
 -- ────────────────────────────────────────────────────────────\n\n`);
     parts.push(sql.trim());
     parts.push('\n\n');
   }
 
-  const combined = parts.join('');
+  return `${parts.join('').trimEnd()}\n`;
+}
+
+function run() {
+  const combined = buildCombinedSql();
+  if (process.argv.includes('--check')) {
+    const existing = readFileSync(OUT_FILE, 'utf8');
+    if (existing !== combined) {
+      console.error('supabase/migrations/run-all.sql is stale. Run: pnpm generate:sql');
+      process.exit(1);
+    }
+    console.log('run-all.sql is current.');
+    return;
+  }
+
   writeFileSync(OUT_FILE, combined, 'utf8');
 
   const sizeKB = Math.round(combined.length / 1024);

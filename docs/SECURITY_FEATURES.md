@@ -194,7 +194,7 @@ export function ProtectedRoute({
 ### Test Scenario 1: Bookmark Access Denial
 
 **Steps:**
-1. Login as admin (`rakesh.sarawag@jeshanlabs.com` / `admin123`)
+1. Login with an administrator test account supplied through the approved secret-management process
 2. Access "Invoice Generation" app
 3. Bookmark the page: `http://localhost:5173/invoices`
 4. Go to Permission Manager

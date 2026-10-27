@@ -240,7 +240,6 @@ export function DemoDataManager() {
             <div className="bg-white rounded p-2 border border-blue-100">
               <p className="font-medium text-gray-900">Rakesh Sarawag</p>
               <p className="text-xs text-gray-600">Email: rakesh.sarawag@jeshanlabs.com</p>
-              <p className="text-xs text-gray-600">Password: admin123</p>
               <div className="flex gap-1 mt-1">
                 <Badge className="bg-red-100 text-red-800 text-xs">Admin</Badge>
                 <Badge className="bg-purple-100 text-purple-800 text-xs">Full Access</Badge>
@@ -249,12 +248,14 @@ export function DemoDataManager() {
             <div className="bg-white rounded p-2 border border-blue-100">
               <p className="font-medium text-gray-900">Employee User</p>
               <p className="text-xs text-gray-600">Email: employee@jeshanlabs.com</p>
-              <p className="text-xs text-gray-600">Password: employee123</p>
               <div className="flex gap-1 mt-1">
                 <Badge className="bg-blue-100 text-blue-800 text-xs">Employee</Badge>
                 <Badge className="bg-gray-100 text-gray-800 text-xs">Limited Access</Badge>
               </div>
             </div>
+            <p className="text-xs text-blue-700">
+              Test-user passwords are configured securely on the server.
+            </p>
           </div>
           <Button
             onClick={createTestUsers}

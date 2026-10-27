@@ -150,7 +150,8 @@ INSERT INTO role_permissions (role, permissions) VALUES
   "settings": [],
   "reports": []
 }'::jsonb)
-ON CONFLICT (role) DO UPDATE SET permissions = EXCLUDED.permissions;
+-- Never overwrite permissions edited through the Permission Manager.
+ON CONFLICT (role) DO NOTHING;
 
 -- ============================================================
 -- 2. MASTER DEPARTMENTS
@@ -1549,13 +1550,13 @@ ON CONFLICT (lower(name)) DO UPDATE SET
 
 INSERT INTO training_courses (title, description, category, instructor, duration_hours, type, status, passing_score, tags) VALUES
 ('New Employee Orientation','Mandatory first-day orientation covering company culture, values, policies, and systems.','Compliance','HR Team',4,'In-Person','Active',80,'["mandatory","orientation","onboarding"]'::jsonb),
-('Information Security Awareness','Covers data protection, phishing awareness, password hygiene, and incident reporting. Mandatory for all.','Compliance','IT Team',2,'Online','Active',85,'["mandatory","security","compliance","annual"]'::jsonb),
-('Prevention of Sexual Harassment (POSH)','Mandatory POSH training covering the law, workplace conduct expectations, and the reporting mechanism.','Compliance','Legal Team',3,'Online','Active',90,'["mandatory","posh","compliance","annual"]'::jsonb),
-('Code of Conduct & Ethics','Company values, code of conduct, anti-bribery policy and conflict of interest guidelines.','Compliance','HR Team',1.5,'Online','Active',80,'["mandatory","ethics","compliance"]'::jsonb),
+('Information Security, Phishing & Account Protection','Covers data protection, phishing awareness, password hygiene, and incident reporting.','Compliance','IT Team',2,'Online','Active',85,'["security","compliance","annual"]'::jsonb),
+('Prevention of Sexual Harassment & Respectful Workplace','Mandatory POSH training covering the law, workplace conduct expectations, and the reporting mechanism.','Compliance','Legal Team',3,'Online','Active',80,'["mandatory","posh","compliance","annual"]'::jsonb),
+('Code of Conduct, Ethics & Acceptable Use','Company values, code of conduct, anti-bribery policy, acceptable use, and conflict of interest guidelines.','Compliance','HR Team',1.5,'Online','Active',80,'["ethics","compliance"]'::jsonb),
 ('Leadership Essentials','Core leadership skills for first-time and mid-level managers: delegation, feedback, conflict resolution.','Leadership & Management','External Trainer',16,'Blended','Active',75,'["leadership","management","managers"]'::jsonb),
 ('Effective Communication in the Workplace','Written and verbal communication, active listening, and stakeholder communication.','Soft Skills','HR Team',8,'Blended','Active',70,'["communication","soft-skills"]'::jsonb),
 ('Project Management Fundamentals','Introduction to agile methodology, Jira basics, and sprint planning.','Technical Skills','Engineering Lead',12,'Online','Active',75,'["project-management","agile","scrum"]'::jsonb),
-('Data Privacy & GDPR Compliance','Personal data, data subject rights, processing lawfulness, and breach procedures.','Compliance','Legal Team',2,'Online','Active',85,'["gdpr","data-privacy","compliance","annual"]'::jsonb),
+('Data Privacy & Secure Data Handling','Personal data, data subject rights, processing lawfulness, secure handling, and breach procedures.','Compliance','Legal Team',2,'Online','Active',80,'["gdpr","data-privacy","compliance","annual"]'::jsonb),
 ('Financial Literacy for Managers','Reading P&L statements, budget management, cost centre ownership.','Finance & Accounting','Finance Manager',8,'Blended','Active',70,'["finance","managers","budgeting"]'::jsonb),
 ('Customer Success & Service Excellence','Client relationship management, SLA adherence, escalation handling.','Soft Skills','Customer Success Lead',8,'In-Person','Active',70,'["customer-success","service","client-facing"]'::jsonb),
 ('Public Cloud Fundamentals (AWS)','AWS core services: EC2, S3, RDS, Lambda, IAM and cost management basics.','Technical Skills','DevOps Team',20,'Online','Active',80,'["aws","cloud","devops","technical"]'::jsonb),
@@ -1578,9 +1579,9 @@ ON CONFLICT (lower(title)) DO UPDATE SET
 -- ============================================================
 
 INSERT INTO learning_paths (name, description, target_role, courses, estimated_hours) VALUES
-('Engineering Onboarding Track','Mandatory learning path for all new engineering hires.','Software Engineer','["New Employee Orientation","Information Security Awareness","Code of Conduct & Ethics","React & TypeScript for Frontend Developers","Project Management Fundamentals"]'::jsonb,51),
-('Manager Readiness Programme','Prepares individual contributors transitioning into first-time management roles.','Engineering Manager','["Leadership Essentials","Effective Communication in the Workplace","Financial Literacy for Managers","Prevention of Sexual Harassment (POSH)","Data Privacy & GDPR Compliance"]'::jsonb,31),
-('Mandatory Compliance Bundle','Annual mandatory compliance training required for all employees.','All Employees','["Information Security Awareness","Prevention of Sexual Harassment (POSH)","Code of Conduct & Ethics","Data Privacy & GDPR Compliance"]'::jsonb,9),
+('Engineering Onboarding Track','Compliance and technical learning path for new engineering hires.','Software Engineer','["New Employee Orientation","Information Security, Phishing & Account Protection","Code of Conduct, Ethics & Acceptable Use","React & TypeScript for Frontend Developers","Project Management Fundamentals"]'::jsonb,51),
+('Manager Readiness Programme','Prepares individual contributors transitioning into first-time management roles.','Engineering Manager','["Leadership Essentials","Effective Communication in the Workplace","Financial Literacy for Managers","Prevention of Sexual Harassment & Respectful Workplace","Data Privacy & Secure Data Handling"]'::jsonb,31),
+('Mandatory Compliance Bundle','Core compliance learning bundle. Individual course requirements depend on law, role, and organizational policy.','All Employees','["Information Security, Phishing & Account Protection","Prevention of Sexual Harassment & Respectful Workplace","Code of Conduct, Ethics & Acceptable Use","Data Privacy & Secure Data Handling"]'::jsonb,9),
 ('Finance Fundamentals Track','Core finance knowledge for non-finance business stakeholders.','Operations / Product','["Financial Literacy for Managers","Advanced Excel & Data Analysis"]'::jsonb,16),
 ('Customer Success Excellence','Equips CS team members with tools, frameworks and soft skills.','Customer Success Manager','["Customer Success & Service Excellence","Effective Communication in the Workplace","Mental Health & Wellbeing at Work"]'::jsonb,18)
 ON CONFLICT (lower(name)) DO UPDATE SET
@@ -1627,9 +1628,9 @@ ON CONFLICT (lower(title)) DO UPDATE SET
 
 INSERT INTO learning_paths (name, description, target_role, courses, estimated_hours) VALUES
 ('Sales Excellence Programme','Core skills for sales reps and BDEs to accelerate pipeline.','Sales Executive','["Customer Success & Service Excellence","Effective Communication in the Workplace","Mental Health & Wellbeing at Work"]'::jsonb,18),
-('DevOps & Cloud Track','Cloud-native operations for DevOps and SRE engineers.','DevOps Engineer','["Public Cloud Fundamentals (AWS)","Project Management Fundamentals","Information Security Awareness"]'::jsonb,24),
-('New Manager Onboarding','All-round preparation for a first-time people manager.','Engineering Manager','["Leadership Essentials","Effective Communication in the Workplace","Financial Literacy for Managers","Data Privacy & GDPR Compliance","Prevention of Sexual Harassment (POSH)"]'::jsonb,31),
-('Annual Compliance Refresh','Mandatory annual refresh for every employee.','All Employees','["Information Security Awareness","Prevention of Sexual Harassment (POSH)","Code of Conduct & Ethics","Data Privacy & GDPR Compliance"]'::jsonb,9)
+('DevOps & Cloud Track','Cloud-native operations for DevOps and SRE engineers.','DevOps Engineer','["Public Cloud Fundamentals (AWS)","Project Management Fundamentals","Information Security, Phishing & Account Protection"]'::jsonb,24),
+('New Manager Onboarding','All-round preparation for a first-time people manager.','Engineering Manager','["Leadership Essentials","Effective Communication in the Workplace","Financial Literacy for Managers","Data Privacy & Secure Data Handling","Prevention of Sexual Harassment & Respectful Workplace"]'::jsonb,31),
+('Annual Compliance Refresh','Annual compliance refresh; mandatory status is determined per course, role, and applicable law.','All Employees','["Information Security, Phishing & Account Protection","Prevention of Sexual Harassment & Respectful Workplace","Code of Conduct, Ethics & Acceptable Use","Data Privacy & Secure Data Handling"]'::jsonb,9)
 ON CONFLICT (lower(name)) DO UPDATE SET
   description     = EXCLUDED.description,
   target_role     = EXCLUDED.target_role,

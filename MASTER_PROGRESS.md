@@ -1,6 +1,6 @@
 # MASTER PROGRESS — JL You Portal
 **Single source of truth for feature implementation status, FSD compliance, and performance tracking.**  
-Last updated: 2026-09-23 (Round 20 — Performance + E2E resilience + FSD gap merge)  
+Last updated: 2026-10-27 (Round 21 — Workflow reliability core + future automation backlog)
 Derived from: app-specs.md, APP_BLUEPRINTS.md, APP_BLUEPRINTS_EXTENDED.md, PRODUCT_FEATURES.md, SECURITY_FEATURES.md, FSD v1.0 (September 2026), FSD_GAP_ANALYSIS sessions 1–8  
 Replaces: progress.md, PROGRESS.md, PERFORMANCE.md, docs/BUSINESS_APPS_PROGRESS.md, docs/HR_PROGRESS.md, FSD_GAP_ANALYSIS.md
 
@@ -20,7 +20,7 @@ Replaces: progress.md, PROGRESS.md, PERFORMANCE.md, docs/BUSINESS_APPS_PROGRESS.
 | Training Tracker | 11 | 11 | 0 | 0 | 0 | 100% |
 | Communications Hub | 13 | 13 | 0 | 0 | 0 | 100% |
 | Collaboration Hub | 13 | 13 | 0 | 0 | 0 | 100% |
-| Workflow Automation | 10 | 10 | 0 | 0 | 0 | 100% |
+| Workflow Automation | 18 | 10 | 8 | 0 | 0 | 56% |
 | Notification Bell | 11 | 11 | 0 | 0 | 0 | 100% |
 | OKR Management | 20 | 20 | 0 | 0 | 0 | 100% |
 | Executive Dashboard | 22 | 22 | 0 | 0 | 0 | 100% |
@@ -40,7 +40,7 @@ Replaces: progress.md, PROGRESS.md, PERFORMANCE.md, docs/BUSINESS_APPS_PROGRESS.
 | Cross-App Integrations | 25 | 25 | 0 | 0 | 0 | 100% |
 | Portal Notifications (~143 events) | 143 | 143 | 0 | 0 | 0 | 100% |
 | Engineering Standards | 22 | 22 | 0 | 0 | 0 | 100% |
-| **TOTAL** | **390+** | **390+** | **0** | **0** | **0** | **100%** |
+| **TOTAL** | **398+** | **390+** | **8** | **0** | **0** | **98%** |
 
 ---
 
@@ -90,7 +90,7 @@ All FSD modules and dev guidelines in one view. Status: ✅ Done · ⚠️ Parti
 | G-04 | Rate Limiting | Security | P1 | ✅ Done | Sliding-window in-memory (120 read / 30 write req/min) in Hono middleware |
 | G-05 | Audit Log for All CRUD | Security | P1 | ✅ Done | `logAuditFromContext()` wired in payroll, project, recruitment, invoice, onboarding APIs |
 | G-06 | Structured Error Handling | Engineering | P1 | ✅ Done | `apiError()` / `apiSuccess()` helpers; consistent 4xx/5xx shape with timestamp |
-| G-07 | Workflow Engine Integration | Engineering | P1 | ✅ Done | 9 events wired: leave_applied, leave_approved, payroll_run_initiated, asset_created, asset_assigned, project_created, job_posted, invoice_created, onboarding_started |
+| G-07 | Workflow Engine Integration | Engineering | P1 | 🔶 Partial | Reliable manual/event core, approvals, traces, retry, identity scoping, and 9 event emitters are wired. Durable scheduling, advanced actions, outbox/retry delivery, and publish semantics remain in the future backlog. |
 | G-08 | JL Prefix Sequential IDs | Engineering | P1 | ✅ Done | Migration 12 DB sequences; JL-EMP, JL-LVE, JL-PAY, JL-JRQ, JL-AST, JL-INV |
 | G-09 | Virtual Scrolling | Engineering | P2 | ✅ Done | `@tanstack/react-virtual` in Employee Directory list view |
 | G-10 | React Query Caching | Engineering | P2 | ✅ Done | `@tanstack/react-query` + `QueryClientProvider`; 60s stale / 5m gc |
@@ -204,7 +204,7 @@ Constants files generally used. Master data loaded from DB. Round 20 adds `Emplo
 - **466 E2E tests, 47 spec files** (Playwright): all 24 modules + RBAC, auth, collaboration, security, defect tracker, knowledge base, workflow, linkedin, leaves, payroll, invoices, IT services, directory, recruitment, performance, training, onboarding, OKR, analytics, communications, security compliance, preboarding, employee dashboard, user management, assets, projects, security audit trail
 
 ### G-10: Row-Level Security & Role-Based Data Access — ✅ Followed
-`05_rls_security.sql` and `06_rls_fix.sql` implement Postgres RLS. `ProtectedRoute.tsx` enforces route access. `useRBAC.ts` provides `hasPermission()`. `SectionGuard.tsx` for feature-level gating.
+`04_security_and_access.sql` implements Postgres RLS, JWT claims, grants, and anonymous-access lockdown. `ProtectedRoute.tsx` enforces route access. `useRBAC.ts` provides `hasPermission()`. `SectionGuard.tsx` provides feature-level gating.
 
 ### G-11: CSRF Token on Every DB-Mutating Call; Mandatory Login — ✅ Compliant (N/A)
 All API calls use `Authorization: Bearer <JWT>` (not cookies). CSRF architecturally impossible. `ProtectedRoute.tsx` enforces auth for all routes. 30-minute session timeout.
@@ -233,8 +233,8 @@ DB sequences and RPC functions in schema. Migration 12 adds JL-JRQ, JL-LVE, JL-P
 ### G-19: Notifications Triggered on Assignment — ✅ Followed
 `notificationService.ts` sends in-portal and push notifications. `notify-helpers.tsx` called from multiple API handlers. Supabase Realtime delivers real-time updates.
 
-### G-20: Workflow Integration for Automation — ✅ Fully Implemented
-`workflowEngine.ts` + `WorkflowDashboard.tsx`. 9 business events wired: leave_applied, leave_approved, payroll_run_initiated, asset_created, asset_assigned, project_created, job_posted, invoice_created, onboarding_started.
+### G-20: Workflow Integration for Automation — 🔶 Core Functional; Advanced Automation Pending
+`workflow-api.tsx`, `WorkflowDashboard.tsx`, `WorkflowBuilder.tsx`, and migration 29 provide a reliable manual/event execution path with conditions, notifications, approvals, completion, durable step traces, failed-step retry, assignment validation, owner-scoped reads, compatible default workflows, and direct internal event dispatch. Nine business emitters are wired: leave_applied, leave_approved, payroll_run_initiated, asset_created, asset_assigned, project_created, job_posted, invoice_created, onboarding_started. Scheduled execution, durable delays, advanced action nodes, event delivery queues, and draft/publish semantics remain tracked below.
 
 ### G-21: Seed Default Master Data — ✅ Followed
 `02_seed_data.sql` migration provides seed data. `demo-data-api.tsx` for demo seeding. Separation between dev/prod seed is logical but not enforced at migration level.
@@ -303,7 +303,73 @@ Creation forms include both mandatory and optional fields. Multi-step wizards fo
 
 **M-17/4.3 Asset Management** — ✅ Complete. `AssetManagementEnhanced.tsx`. JL-AST IDs, lifecycle tracking, depreciation calculation, QR codes.
 
-**M-18/4.4 Workflow Automation** — ⚠️ Partial note: Engine exists and 9 events are wired. Pre-configured workflow templates exist but leave approval and payroll approval flows use their own logic rather than the workflow engine. Engine-to-business-module deep wiring is an ongoing improvement area.
+**M-18/4.4 Workflow Automation** — 🔶 Core functional. Manual/event triggers, grouped conditions, notifications, approvals, completion, execution traces, retries, identity scoping, API normalization, compatible default workflows, and direct internal event dispatch are implemented. The UI only exposes executable core nodes; advanced templates are visibly disabled until their required actions are available. Remaining work is tracked in the dedicated backlog below.
+
+### Workflow Automation — Future Development Backlog
+
+#### P1 — Durable execution and scheduling
+
+| Item | Status | Future work |
+|---|---|---|
+| WF-F01 Scheduled workflow runner | 🔶 Pending | Add cron worker, timezone support, `next_run_at`, missed-run policy, duplicate-run prevention, and schedule concurrency controls. |
+| WF-F02 Durable delay/resume | 🔶 Pending | Persist delayed jobs and resume from the next node without holding an Edge Function request open. |
+| WF-F03 Transactional event outbox | 🔶 Pending | Write domain events with business transactions, dispatch asynchronously, retry transient failures, and prevent silent event loss. |
+| WF-F04 Retry and dead-letter processing | 🔶 Pending | Add exponential backoff, maximum attempts, dead-letter state, operator alerts, and controlled replay. |
+| WF-F05 Idempotent execution | 🔶 Pending | Add event/run idempotency keys and per-node attempt numbers to prevent duplicate side effects. |
+
+#### P1 — Advanced workflow nodes
+
+| Item | Status | Future work |
+|---|---|---|
+| WF-F06 Email action | 🔶 Pending | Integrate server-side email templates/provider, variable substitution, delivery status, retries, and redacted logs. |
+| WF-F07 Webhook action | 🔶 Pending | Add server-managed connections, secret references, URL allowlisting, SSRF protection, timeouts, response limits, retries, and signed requests. |
+| WF-F08 Create-record action | 🔶 Pending | Add an allowlisted entity/action registry, field mapping validation, authorization, output capture, and rollback/error semantics. |
+| WF-F09 Update-field action | 🔶 Pending | Add allowlisted targets, typed values, authorization, before/after audit data, and optimistic concurrency checks. |
+| WF-F10 Parallel branches | 🔶 Pending | Execute all configured branches, persist branch state, define join behavior, and handle partial branch failure. |
+| WF-F11 Bounded loops | 🔶 Pending | Resolve collections, enforce maximum iterations, persist iteration state, and expose per-item trace details. |
+| WF-F12 Audit-log action | 🔶 Pending | Write structured audit entries through the server audit helper with actor, resource, severity, and metadata. |
+| WF-F13 Generic action registry | 🔶 Pending | Replace arbitrary action strings with registered, typed, permission-aware server actions. |
+
+#### P2 — Workflow lifecycle and publishing
+
+| Item | Status | Future work |
+|---|---|---|
+| WF-F14 Draft/publish lifecycle | 🔶 Pending | Separate editable drafts from active published revisions and validate before publish. |
+| WF-F15 Immutable run versions | 🔶 Pending | Pin every instance to the exact immutable definition version used when it started. |
+| WF-F16 Rollback and comparison | 🔶 Pending | Add version diff, release notes, publisher identity, rollback, and atomic activation. |
+| WF-F17 Safe active-workflow editing | 🔶 Pending | Ensure edits never mutate definitions used by already-running instances. |
+
+#### P2 — Builder and operator experience
+
+| Item | Status | Future work |
+|---|---|---|
+| WF-F18 Guided creation flow | 🔶 Pending | Add trigger → conditions → actions → test → activate wizard while retaining the canvas as an advanced editor. |
+| WF-F19 Test mode | 🔶 Pending | Run sample payloads with mocked side effects, variable previews, branch explanations, and explicit live-test opt-in. |
+| WF-F20 Inline validation | 🔶 Pending | Show node-level errors, unreachable nodes, missing branches, invalid variables, missing approvers, and unsupported integrations before activation. |
+| WF-F21 Template configuration | 🔶 Pending | Preview steps and required payloads, collect required values, show integration dependencies, and only create executable templates. |
+| WF-F22 Catalogue consolidation | 🔶 Pending | Merge Templates and Automation Studio recipes into one canonical catalogue backed by one schema. |
+| WF-F23 Search and filters | 🔶 Pending | Filter by name, status, trigger, source app, owner, category, last result, and validation state. |
+| WF-F24 Explainable run history | 🔶 Pending | Show trigger source, entity, version, branch decisions, action outputs, approval actors, errors, attempts, and safe retry options. |
+| WF-F25 Accessible builder | 🔶 Pending | Complete keyboard node creation/reordering/connection, focus management, screen-reader descriptions, and non-pointer alternatives. |
+
+#### P2 — Security, governance, and integration consistency
+
+| Item | Status | Future work |
+|---|---|---|
+| WF-F26 Central event registry | 🔶 Pending | Define canonical event keys, producers, payload schemas, versions, examples, and availability in one shared registry. |
+| WF-F27 Event-name alignment | 🔶 Pending | Reconcile emitters, templates, event mappings, seeded definitions, and builder catalogues; remove legacy aliases after migration. |
+| WF-F28 Event mapping execution | 🔶 Pending | Make `workflow_trigger_event_mappings` and filter conditions part of server dispatch or retire the unused mapping model. |
+| WF-F29 API-only workflow writes | 🔶 Pending | Move remaining version/mapping writes behind authenticated API commands and tighten permissive workflow-table RLS. |
+| WF-F30 Runtime observability | 🔶 Pending | Add structured metrics for dispatches, queue depth, run duration, failures, retries, approvals, scheduler lag, and dead letters. |
+
+#### Deployment and runtime validation
+
+| Item | Status | Required action |
+|---|---|---|
+| WF-D01 Apply reliability migration | 🔶 Pending deployment | Apply the workflow reliability section in `supabase/migrations/05_business_extensions.sql`. |
+| WF-D02 Deploy workflow Edge Function | 🔶 Pending deployment | Deploy the updated `supabase/functions/server` function bundle. |
+| WF-D03 Production smoke test | 🔶 Pending deployment | Verify leave submission, payroll initiation, onboarding creation, approval response, execution trace, ownership controls, and failed-step retry. |
+| WF-D04 Monitor first production runs | 🔶 Pending deployment | Review logs and workflow step records for failed dispatches, missing role assignments, and unexpected duplicate runs. |
 
 ### Finance & Analytics Modules
 
@@ -745,19 +811,15 @@ All modules fully implemented. Detailed feature tables omitted for brevity — s
 
 ## DB Migration Files
 
-| File | Tables | Status |
-|------|--------|--------|
-| `01_schema.sql` | 39 core tables | ✅ |
-| `02_seed.sql` | Audit columns, seed data | ✅ |
-| `03_defect_tracker.sql` | Defect tracker tables | ✅ |
-| `04_pm_master.sql` | Project management master data | ✅ |
-| `05_hr_spec_gaps.sql` | 35+ HR spec tables, RLS, triggers | ✅ |
-| `06_hr_master_data_seed.sql` | 20 master data entities seeded | ✅ |
-| `07_business_apps_spec.sql` | OKR cycles, analytics, payroll locks, etc. | ✅ |
-| Migration 12 | JL sequences, knowledge bookmarks, push subscriptions, Realtime publication | ✅ |
-| Migration 13 | TDS/PT slabs, tax rebates | ✅ |
-| Migration 14 | Temporary access grants with RLS + expiry + revoke | ✅ |
-| `run-all.sql` | Combined migration | ✅ |
+| File | Responsibility | Status |
+|------|----------------|--------|
+| `01_schema.sql` | Core schema, tables, indexes, functions, and base RLS | ✅ |
+| `02_seed_data.sql` | Reference data, lookup values, and conflict-safe starter data | ✅ |
+| `03_platform_services.sql` | Notifications, push delivery, analytics anomalies, and reports | ✅ |
+| `04_security_and_access.sql` | RLS, grants, JWT role claims, and anonymous-access lockdown | ✅ |
+| `05_business_extensions.sql` | Current module extensions, identifiers, and corrective migrations | ✅ |
+| `run-all.sql` | Deterministically generated combined migration | ✅ |
+| `supabase/migration_history/legacy/` | Archived pre-consolidation source files; never executed | ✅ |
 | **Total tables** | **77+** | ✅ |
 
 ---
@@ -865,11 +927,11 @@ Run from the repo root (requires Supabase CLI):
 supabase functions deploy make-server-1fe2c468
 ```
 
-### 3. Run SQL Migrations 12–14
-In Supabase SQL Editor, run in order if not already applied:
-- `supabase/migrations/12_notifications_complete.sql` — push subscriptions, Realtime, JL sequences, knowledge bookmarks
-- `supabase/migrations/13_tds_slabs.sql` — income_tax_slabs, professional_tax_slabs, tax_rebates
-- `supabase/migrations/14_temp_grants.sql` — temporary_access_grants with RLS + expiry
+### 3. Apply Canonical SQL Migrations
+Run `pnpm generate:sql`, verify with `pnpm verify:migrations`, then apply
+`supabase/migrations/run-all.sql` in the Supabase SQL Editor. The bundle is
+designed for repeated application; validate it in the target environment
+before production use.
 
 ---
 

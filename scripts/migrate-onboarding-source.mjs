@@ -1,9 +1,7 @@
 /**
- * Applies pending incremental DB migrations:
- *
- *   03_onboarding_source.sql  — adds source column to onboarding_records
- *   04_value_helps_extensions.sql — adds missing dropdown value-help rows
- *   permission_audit_log table  — created via the permissions/migrate endpoint
+ * Compatibility wrapper retained for existing developer commands.
+ * Onboarding schema and value-help changes now live in the canonical schema
+ * and seed migrations.
  *
  * Run once (idempotent — safe to re-run):
  *   node scripts/migrate-onboarding-source.mjs
@@ -32,9 +30,8 @@ async function run() {
   console.log('Applying incremental migrations…\n');
   let ok = true;
 
-  // Schema changes from SQL migration files
-  ok = await runFile('03_onboarding_source.sql') && ok;
-  ok = await runFile('04_value_helps_extensions.sql') && ok;
+  ok = await runFile('01_schema.sql') && ok;
+  ok = await runFile('02_seed_data.sql') && ok;
 
   // permission_audit_log: created via the dedicated endpoint (uses postgres internally)
   ok = await callEndpoint(

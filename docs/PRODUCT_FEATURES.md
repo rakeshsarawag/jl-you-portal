@@ -13,7 +13,7 @@
 | 🔲 External dependency / Future | 6 features |
 
 **Total apps:** 22 live + 5 placeholder shells  
-**DB migrations:** 4 files (01_schema + 02_seed + 03_defect_tracker + 04_pm_master)
+**DB migrations:** 5 canonical files; see `supabase/MIGRATIONS.md`
 
 ---
 
@@ -133,8 +133,10 @@ These rules apply to **every feature, every app, every change**. No exceptions.
 
 ### 0.20 Versioning & Deployment
 - Every deployment increments `APP_VERSION` in `src/constants/global.ts`.
-- DB changes = new migration files (format `NN_description.sql`). Never edit existing migrations.
-- `run-all.sql` concatenates all migrations in order for full-schema re-runs.
+- DB changes go into the responsible canonical migration file documented in
+  `supabase/MIGRATIONS.md`; legacy source files are retained outside the
+  active migration path for audit history.
+- `run-all.sql` is generated deterministically from the shared migration manifest.
 
 ### 0.21 Environment Management
 - Three environments: dev (local), staging (QA), production.
@@ -155,9 +157,10 @@ These rules apply to **every feature, every app, every change**. No exceptions.
 | Unit tests | `tests/unit/` |
 | Test fixtures/personas | `tests/e2e/shared/fixtures.ts` |
 | DB schema (core) | `supabase/migrations/01_schema.sql` |
-| DB seed data | `supabase/migrations/02_seed.sql` |
-| DB defect tracker | `supabase/migrations/03_defect_tracker.sql` |
-| DB PM master data | `supabase/migrations/04_pm_master.sql` |
+| DB seed data | `supabase/migrations/02_seed_data.sql` |
+| Platform services | `supabase/migrations/03_platform_services.sql` |
+| Security and RLS | `supabase/migrations/04_security_and_access.sql` |
+| Business extensions | `supabase/migrations/05_business_extensions.sql` |
 | Full migration suite | `supabase/migrations/run-all.sql` |
 
 ---
@@ -793,7 +796,7 @@ Phase 7–10 — Robustness, Cross-App, Standards ✅ COMPLETE
 ### APP 20 — Master Data Management (`/master-data`)
 **Roles:** Admin, Finance, HR | **Status:** ✅ 25+ entities, 6 categories
 
-**PM-specific master data (from `04_pm_master.sql`):**
+**PM-specific master data (from the canonical schema and seed migrations):**
 | Table | Seeded Values |
 |-------|---------------|
 | `pm_project_categories` | Product Development, IT Infrastructure, Business Process, Research & Innovation, Compliance, Marketing, Operations, Client Delivery, Internal Tools |

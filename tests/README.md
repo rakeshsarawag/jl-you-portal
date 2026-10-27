@@ -76,8 +76,8 @@ cp .env.test.example .env.test
 # Edit .env.test — set the real email/password for each role
 ```
 
-The form uses `id="email"` and `id="password"` (not `name` attributes).  
-Credentials default to `admin123` but can be overridden via env vars.
+The form uses `id="email"` and `id="password"` (not `name` attributes).
+E2E credentials are required environment variables; there are no source-controlled defaults.
 
 ---
 

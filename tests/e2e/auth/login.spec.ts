@@ -20,16 +20,6 @@ test.describe("Authentication", () => {
     expect(fieldType).toBe("password");
   });
 
-  test("Quick Fill Admin button populates credentials", async ({ page }) => {
-    await page.goto(`${BASE_URL}/login`);
-    const fillBtn = page.getByRole('button', { name: /fill admin/i });
-    if (!await fillBtn.isVisible({ timeout: 5000 }).catch(() => false)) return;
-    await fillBtn.click();
-    await page.waitForTimeout(300);
-    const emailVal = await page.locator('#email, input[type=email]').first().inputValue();
-    expect(emailVal.length).toBeGreaterThan(0);
-  });
-
   // ── Valid logins ──────────────────────────────────────────────────────────────
 
   test("Valid admin login succeeds and leaves /login", async ({ page }) => {

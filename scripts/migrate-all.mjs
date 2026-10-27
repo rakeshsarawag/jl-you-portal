@@ -14,17 +14,11 @@
  * To skip the HTTP attempt and go straight to file generation:
  *   npm run generate:sql
  *
- * Migration files applied (in order):
- *   01_schema.sql                — full DB schema (tables, indexes, RLS)
- *   02_seed.sql                  — reference/master data (value-helps, holidays, etc.)
- *   02_recruitment_extensions.sql — extra columns for recruitment tables
- *   03_onboarding_source.sql     — adds source column to onboarding_records
- *   04_value_helps_extensions.sql — missing dropdown value-help rows
- *   + permission_audit_log table via dedicated endpoint
- *   + role_permissions table via dedicated endpoint (if missing)
+ * The canonical order is defined once in migration-manifest.mjs.
  */
 
 import { runFile, API_BASE, HEADERS } from './_db.mjs';
+import { ACTIVE_MIGRATION_FILES } from './migration-manifest.mjs';
 
 async function endpoint(label, url) {
   process.stdout.write(`  [endpoint] ${label}… `);
@@ -46,33 +40,27 @@ async function endpoint(label, url) {
   return true;
 }
 
-const MIGRATION_FILES = [
-  '01_schema.sql',
-  '02_seed.sql',
-  '02_recruitment_extensions.sql',
-  '03_onboarding_source.sql',
-  '04_value_helps_extensions.sql',
-];
-
 async function run() {
   console.log('Running full DB migration suite…\n');
 
-  // Probe: check if POST requests reach the edge function
-  const probe = await runFile('03_onboarding_source.sql');
-  if (!probe) {
-    // Blocked or failed on first attempt — fall back to SQL file generation
-    console.log('\n─────────────────────────────────────────────────────────────');
-    console.log('  POST requests are blocked in this environment (Cloudflare 520).');
-    console.log('  Generating a combined SQL file for manual execution…');
-    console.log('─────────────────────────────────────────────────────────────\n');
-    await import('./generate-sql.mjs');
-    process.exit(1);
+  let ok = true;
+  for (const [index, file] of ACTIVE_MIGRATION_FILES.entries()) {
+    const applied = await runFile(file);
+    if (!applied && index === 0) {
+      // The first request is also the network/endpoint availability probe.
+      console.log('\n─────────────────────────────────────────────────────────────');
+      console.log('  SQL execution is unavailable from this environment.');
+      console.log('  Generating a combined SQL file for manual execution…');
+      console.log('─────────────────────────────────────────────────────────────\n');
+      await import('./generate-sql.mjs');
+      process.exit(1);
+    }
+    ok = applied && ok;
   }
 
-  // POST is working — run remaining files
-  let ok = probe;
-  for (const file of MIGRATION_FILES.filter(f => f !== '03_onboarding_source.sql')) {
-    ok = await runFile(file) && ok;
+  if (!ok) {
+    // Blocked or failed on first attempt — fall back to SQL file generation
+    console.log('\nOne or more canonical migrations failed; continuing with setup checks.');
   }
 
   // Dedicated endpoints for tables that require postgres-driver DDL

@@ -410,39 +410,6 @@ export function LoginPage({
               </form>
             )}
 
-            {/* Quick Fill — test credentials */}
-            {!passwordRecovery && !forgotPassword && !otpSent && (
-              <div className="mt-4 space-y-2">
-                <p className="text-xs text-center text-muted-foreground">{t('login.quickFill')}</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setEmail('rakesh.sarawag@jeshanlabs.com');
-                      if (loginMode === 'password') setPassword('admin123');
-                    }}
-                    className="text-xs"
-                  >
-                    {t('login.fillAdmin')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setEmail('Rakesh.sarawag9@gmail.com');
-                      if (loginMode === 'password') setPassword('Initial@123');
-                    }}
-                    className="text-xs"
-                  >
-                    {t('login.fillEmployee')}
-                  </Button>
-                </div>
-              </div>
-            )}
-
             {/* Login mode toggle */}
             {!passwordRecovery && !forgotPassword && !otpSent && (
               <div className="mt-6 pt-4 border-t">

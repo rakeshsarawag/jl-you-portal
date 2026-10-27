@@ -16,17 +16,10 @@ Open: **http://localhost:5173**
 
 ## 🔐 Login Credentials
 
-**Admin (Full Access):**
-- **Email:** `rakesh.sarawag@jeshanlabs.com`
-- **Password:** `admin123`
-- **Roles:** All 8 roles
-
-**Employee (Limited Access):**
-- **Email:** `employee@jeshanlabs.com`
-- **Password:** `employee123`
-- **Roles:** employee
-
-**OTP Demo Code:** `123456`
+Credentials are not stored in the repository. Use accounts provisioned through
+Supabase Auth and obtain test credentials through the approved secret-management
+process. E2E runs require `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `EMPLOYEE_EMAIL`, and
+`EMPLOYEE_PASSWORD` in the test environment.
 
 ---
 

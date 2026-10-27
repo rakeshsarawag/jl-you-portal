@@ -11,15 +11,17 @@ app.post('/create-test-users', async (c) => {
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const demoAdminPassword = Deno.env.get('DEMO_ADMIN_PASSWORD');
+    const demoEmployeePassword = Deno.env.get('DEMO_EMPLOYEE_PASSWORD');
     
     console.log('Supabase URL:', supabaseUrl);
     console.log('Service Role Key present:', !!supabaseServiceRoleKey);
     
-    if (!supabaseUrl || !supabaseServiceRoleKey) {
+    if (!supabaseUrl || !supabaseServiceRoleKey || !demoAdminPassword || !demoEmployeePassword) {
       console.error('Missing Supabase configuration');
       return c.json({
         success: false,
-        error: 'Server configuration error: Missing Supabase credentials'
+        error: 'Server configuration error: Missing Supabase or demo-user credentials'
       }, 500);
     }
     
@@ -31,7 +33,7 @@ app.post('/create-test-users', async (c) => {
     const testUsers = [
       {
         email: 'rakesh.sarawag@jeshanlabs.com',
-        password: 'admin123',
+        password: demoAdminPassword,
         user_metadata: {
           name: 'Rakesh Sarawag',
           roles: ['admin', 'hr', 'finance', 'manager', 'employee', 'it', 'marketing', 'developer'],
@@ -43,7 +45,7 @@ app.post('/create-test-users', async (c) => {
       },
       {
         email: 'employee@jeshanlabs.com',
-        password: 'employee123',
+        password: demoEmployeePassword,
         user_metadata: {
           name: 'Employee User',
           role: 'employee',

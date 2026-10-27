@@ -4,19 +4,13 @@ export { expect };
 export const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8443';
 
 // ---------------------------------------------------------------------------
-// Credentials — two real Supabase accounts visible on the login quick-fill.
-//
-// Admin  : rakesh.sarawag@jeshanlabs.com  / admin123
-// Employee: Rakesh.sarawag9@gmail.com     / Initial@123
-//
-// All "privileged" roles (hr, finance, manager, it, marketing) are mapped to
-// the admin account because that account has the broadest access.
-// Override any credential via environment variable.
+// Credentials must be supplied by the test environment. Source-controlled
+// fallback passwords are intentionally prohibited.
 // ---------------------------------------------------------------------------
-const ADMIN_EMAIL    = process.env.ADMIN_EMAIL    ?? 'rakesh.sarawag@jeshanlabs.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'admin123';
-const EMP_EMAIL      = process.env.EMPLOYEE_EMAIL    ?? 'Rakesh.sarawag9@gmail.com';
-const EMP_PASSWORD   = process.env.EMPLOYEE_PASSWORD ?? 'Initial@123';
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? '';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? '';
+const EMP_EMAIL = process.env.EMPLOYEE_EMAIL ?? '';
+const EMP_PASSWORD = process.env.EMPLOYEE_PASSWORD ?? '';
 
 export const TEST_USERS = {
   admin:    { email: ADMIN_EMAIL, password: ADMIN_PASSWORD, role: 'admin'    },
@@ -31,17 +25,16 @@ export const TEST_USERS = {
 export type Role = keyof typeof TEST_USERS;
 
 /**
- * Log in by clicking the on-screen Quick Fill button, then submitting.
- *
- * Strategy:
- *  1. Try clicking the "Fill Admin" / "Fill Employee" quick-fill button — it
- *     sets state correctly via React's own onClick, avoiding selector fragility.
- *  2. Fall back to directly filling #email + #password if the button isn't found.
- *  3. Submit and wait for navigation away from /login.
+ * Log in using credentials supplied through the E2E environment.
  */
 export async function loginAs(page: Page, role: Role) {
   const user = TEST_USERS[role];
-  const isEmployee = user.email === EMP_EMAIL;
+  if (!user.email || !user.password) {
+    throw new Error(
+      `Missing E2E credentials for "${role}". Set ADMIN_EMAIL and ADMIN_PASSWORD ` +
+      `for privileged roles, or EMPLOYEE_EMAIL and EMPLOYEE_PASSWORD for employees.`,
+    );
+  }
 
   await page.goto(`${BASE_URL}/login`, { waitUntil: 'domcontentloaded' });
 
@@ -49,21 +42,10 @@ export async function loginAs(page: Page, role: Role) {
   await page.locator('#email, input[type="email"]').first()
     .waitFor({ state: 'visible', timeout: 20000 });
 
-  // --- Strategy 1: click the Quick Fill button (always up to date) ----------
-  const fillBtnText = isEmployee ? /fill employee/i : /fill admin/i;
-  const fillBtn = page.getByRole('button', { name: fillBtnText });
-
-  if (await fillBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await fillBtn.click();
-    // Short pause for React state to flush into the input values
-    await page.waitForTimeout(300);
-  } else {
-    // --- Strategy 2: type credentials directly -------------------------------
-    const emailField = page.locator('#email').or(page.locator('input[type="email"]')).first();
-    const passField  = page.locator('#password').or(page.locator('input[type="password"]')).first();
-    await emailField.fill(user.email);
-    await passField.fill(user.password);
-  }
+  const emailField = page.locator('#email').or(page.locator('input[type="email"]')).first();
+  const passField = page.locator('#password').or(page.locator('input[type="password"]')).first();
+  await emailField.fill(user.email);
+  await passField.fill(user.password);
 
   // Submit the form
   await page.locator('button[type="submit"]').first().click();
