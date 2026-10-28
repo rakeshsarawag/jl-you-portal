@@ -99,6 +99,7 @@ export interface Defect {
   slaFirstResponseRemainingMins: number | null;
   slaFixRemainingMins: number | null;
   slaVerifyRemainingMins: number | null;
+  slaFirstResponseDueAt: string | null;
   slaFixDueAt: string | null;
   slaVerifyDueAt: string | null;
   slaFirstResponseMet: boolean;
@@ -238,6 +239,7 @@ function normalizeRow(d: any, sla?: ReturnType<typeof computeSLA>): Defect {
     slaFirstResponseRemainingMins: sla?.slaFirstResponseRemainingMins ?? null,
     slaFixRemainingMins: sla?.slaFixRemainingMins ?? null,
     slaVerifyRemainingMins: sla?.slaVerifyRemainingMins ?? null,
+    slaFirstResponseDueAt: sla?.slaFirstResponseDueAt ?? null,
     slaFixDueAt: sla?.slaFixDueAt ?? null,
     slaVerifyDueAt: sla?.slaVerifyDueAt ?? null,
     slaFirstResponseMet: sla?.slaFirstResponseMet ?? false,
@@ -246,6 +248,20 @@ function normalizeRow(d: any, sla?: ReturnType<typeof computeSLA>): Defect {
     slaVerifyBreached: sla?.slaVerifyBreached ?? false,
     slaPolicyName: sla?.slaPolicyName ?? '',
   };
+}
+
+const COMPATIBILITY_DETAIL_FIELDS: Record<string, string> = {
+  systemName: 'system_name',
+  clientName: 'client_name',
+  externalTicketNo: 'external_ticket_no',
+  transportRequest: 'transport_request',
+};
+
+function isMissingDetailColumn(error: any) {
+  const message = String(error?.message ?? '');
+  return error?.code === 'PGRST204'
+    || (message.includes('schema cache')
+      && Object.values(COMPATIBILITY_DETAIL_FIELDS).some((column) => message.includes(column)));
 }
 
 // DB stores legacy values ('Critical','High','Medium','Low') due to old constraint.
@@ -285,7 +301,7 @@ function toDbBody(body: Partial<Defect> & Record<string, any>) {
   for (const [k, v] of Object.entries(body)) {
     const dbKey = map[k] ?? k;
     if (!k.startsWith('_') && !['id','createdAt','updatedAt','ageInDays','slaStatus','slaFixRemainingMins',
-          'slaVerifyRemainingMins','slaFirstResponseRemainingMins','slaFixDueAt','slaVerifyDueAt','slaFirstResponseMet',
+          'slaVerifyRemainingMins','slaFirstResponseRemainingMins','slaFirstResponseDueAt','slaFixDueAt','slaVerifyDueAt','slaFirstResponseMet',
           'slaFirstResponseBreached','slaFixBreached','slaVerifyBreached','slaPolicyName','comments','activityLog','linkedItems'].includes(k)) {
       if (dbKey === 'priority' && typeof v === 'string') result[dbKey] = PRIORITY_TO_DB[v] ?? v;
       else if (dbKey === 'project_id') result[dbKey] = v || null;
@@ -608,7 +624,15 @@ export function useDefectTrackerData() {
         id: l.id, itemType: l.item_type, itemRef: l.item_ref,
         itemTitle: l.item_title, itemStatus: l.item_status,
       }));
-      const full = { ...defect, comments, activityLog, linkedItems };
+      const compatibilityDetails = Object.fromEntries(
+        Object.entries(COMPATIBILITY_DETAIL_FIELDS)
+          .filter(([, dbColumn]) => !Object.prototype.hasOwnProperty.call(defectRes.data, dbColumn))
+          .map(([field]) => {
+            const latestValue = activityLog.find((entry) => entry.fieldChanged === field)?.newValue ?? '';
+            return [field, latestValue];
+          }),
+      );
+      const full = { ...defect, ...compatibilityDetails, comments, activityLog, linkedItems };
       setSelectedDefect(full);
       return full;
     } catch {} finally {
@@ -622,7 +646,7 @@ export function useDefectTrackerData() {
       const [resCodesRes, rootCauseRes, rejectionRes, labelsRes, envRes, priorityRes, statusRes, escalationRes] = await Promise.all([
         supabase.from('defect_resolution_codes').select('*').order('sort_order'),
         supabase.from('defect_root_cause_categories').select('*').order('sort_order'),
-        supabase.from('defect_rejection_reasons').select('*').order('name'),
+        supabase.from('defect_rejection_reasons').select('*').order('label'),
         supabase.from('defect_labels').select('*').order('name'),
         supabase.from('defect_environments').select('*').order('sort_order'),
         supabase.from('defect_priorities').select('*').order('sort_order'),
@@ -672,8 +696,8 @@ export function useDefectTrackerData() {
 
   const updateDefect = useCallback(async (id: string, body: Partial<Defect> & Record<string, any>, actorId?: string, actorName?: string): Promise<Defect | null> => {
     try {
-      if (selectedDefect?.status === 'Closed' && body.status && body.status !== 'Closed') {
-        toast.error('Closed defects cannot be reopened');
+      if (selectedDefect?.id === id && selectedDefect.status === 'Closed') {
+        toast.error('Closed defects are read-only');
         return null;
       }
       if (body.status === 'Resolved' && (!body.rootCause?.trim() || !body.resolutionCode?.trim())) {
@@ -683,10 +707,31 @@ export function useDefectTrackerData() {
       const updateBody = { ...body };
       if (body.status === 'Resolved' && !body.fixedDate) updateBody.fixedDate = new Date().toISOString();
       if (body.status === 'Verified' && !body.verifiedDate) updateBody.verifiedDate = new Date().toISOString();
-      const { data, error: dbErr } = await supabase.from('project_defects').update(toDbBody(updateBody)).eq('id', id).select().single();
+      let { data, error: dbErr } = await supabase.from('project_defects').update(toDbBody(updateBody)).eq('id', id).select().single();
+      let compatibilityUpdates: Record<string, any> = {};
+      if (dbErr && isMissingDetailColumn(dbErr)) {
+        compatibilityUpdates = Object.fromEntries(
+          Object.entries(updateBody).filter(([field]) => field in COMPATIBILITY_DETAIL_FIELDS),
+        );
+        const supportedUpdates = Object.fromEntries(
+          Object.entries(updateBody).filter(([field]) => !(field in COMPATIBILITY_DETAIL_FIELDS)),
+        );
+        if (Object.keys(supportedUpdates).length > 0) {
+          const retry = await supabase.from('project_defects').update(toDbBody(supportedUpdates)).eq('id', id).select().single();
+          data = retry.data;
+          dbErr = retry.error;
+        } else {
+          const current = await supabase.from('project_defects').select('*').eq('id', id).single();
+          data = current.data;
+          dbErr = current.error;
+        }
+      }
       if (dbErr) { toast.error(dbErr.message); return null; }
       const { data: policies } = await supabase.from('defect_sla_policies').select('*');
-      const updated = normalizeRow(data, computeSLA(data, policies ?? []));
+      const updated = {
+        ...normalizeRow(data, computeSLA(data, policies ?? [])),
+        ...compatibilityUpdates,
+      };
       setDefects(prev => prev.map(d => d.id === id ? updated : d));
       if (selectedDefect?.id === id) {
         setSelectedDefect(prev => prev ? {
@@ -696,20 +741,37 @@ export function useDefectTrackerData() {
           linkedItems: prev.linkedItems,
         } : updated);
       }
-      // Audit log (fire-and-forget)
       const changedFields = Object.keys(updateBody)
-        .filter(k => !['id','createdAt','updatedAt','ageInDays','slaStatus','slaFixRemainingMins',
-                        'slaVerifyRemainingMins','slaFixDueAt','slaVerifyDueAt','slaFirstResponseMet',
+        .filter(k => !k.startsWith('_') && !['id','createdAt','updatedAt','ageInDays','slaStatus','slaFixRemainingMins',
+                        'slaVerifyRemainingMins','slaFirstResponseDueAt','slaFixDueAt','slaVerifyDueAt','slaFirstResponseMet',
                         'slaFixBreached','slaVerifyBreached','slaPolicyName','comments','activityLog','linkedItems'].includes(k));
       if (changedFields.length > 0) {
-        void supabase.from('defect_activity_log').insert([{
+        const activityRows = changedFields.map((field) => ({
           defect_id: id,
           actor_id: actorId ?? 'system',
           actor_name: actorName ?? 'System',
-          action: 'updated',
-          field_changed: changedFields.join(', '),
-          new_value: changedFields.length === 1 ? String(updateBody[changedFields[0]] ?? '') : '',
-        }]);
+          action: field === 'status' ? 'changed status' : 'updated',
+          field_changed: field,
+          old_value: selectedDefect?.id === id ? String((selectedDefect as any)[field] ?? '') : '',
+          new_value: String(updateBody[field] ?? ''),
+        }));
+        const { data: activities } = await supabase.from('defect_activity_log').insert(activityRows).select();
+        if (activities?.length && selectedDefect?.id === id) {
+          const activityEntries: ActivityEntry[] = activities.map((activity: any) => ({
+            id: activity.id,
+            actorId: activity.actor_id,
+            actorName: activity.actor_name,
+            action: activity.action,
+            fieldChanged: activity.field_changed ?? '',
+            oldValue: activity.old_value ?? '',
+            newValue: activity.new_value ?? '',
+            comment: activity.comment ?? '',
+            occurredAt: activity.occurred_at,
+          }));
+          setSelectedDefect(prev => prev
+            ? { ...prev, activityLog: [...activityEntries.reverse(), ...(prev.activityLog ?? [])] }
+            : prev);
+        }
       }
       toast.success(t('defectTracker.defectUpdated'));
       return updated;
@@ -733,6 +795,10 @@ export function useDefectTrackerData() {
 
   const addComment = useCallback(async (defectId: string, content: string, authorId: string, authorName: string): Promise<DefectComment | null> => {
     try {
+      if (selectedDefect?.id === defectId && selectedDefect.status === 'Closed') {
+        toast.error('Closed defects are read-only');
+        return null;
+      }
       const { data, error: dbErr } = await supabase.from('defect_comments').insert([{
         defect_id: defectId, content, author_id: authorId, author_name: authorName, is_internal: false,
       }]).select().single();
@@ -744,10 +810,47 @@ export function useDefectTrackerData() {
       if (selectedDefect?.id === defectId) {
         setSelectedDefect(prev => prev ? { ...prev, comments: [...(prev.comments ?? []), comment] } : prev);
       }
+      const { data: activity } = await supabase.from('defect_activity_log').insert([{
+        defect_id: defectId,
+        actor_id: authorId || 'system',
+        actor_name: authorName || 'System',
+        action: 'commented',
+        comment: content.slice(0, 100),
+      }]).select().single();
+      if (activity && selectedDefect?.id === defectId) {
+        const activityEntry: ActivityEntry = {
+          id: activity.id,
+          actorId: activity.actor_id,
+          actorName: activity.actor_name,
+          action: activity.action,
+          fieldChanged: activity.field_changed ?? '',
+          oldValue: activity.old_value ?? '',
+          newValue: activity.new_value ?? '',
+          comment: activity.comment ?? '',
+          occurredAt: activity.occurred_at,
+        };
+        setSelectedDefect(prev => prev
+          ? { ...prev, activityLog: [activityEntry, ...(prev.activityLog ?? [])] }
+          : prev);
+      }
       if (selectedDefect?.id === defectId && !selectedDefect.firstResponseAt && authorId !== selectedDefect.reporterId) {
         const firstResponseAt = new Date().toISOString();
         await supabase.from('project_defects').update({ first_response_at: firstResponseAt }).eq('id', defectId).is('first_response_at', null);
-        setSelectedDefect(prev => prev ? { ...prev, firstResponseAt } : prev);
+        setSelectedDefect(prev => {
+          if (!prev) return prev;
+          const dueAt = prev.slaFirstResponseDueAt
+            ? new Date(prev.slaFirstResponseDueAt).getTime()
+            : null;
+          const respondedAt = new Date(firstResponseAt).getTime();
+          const breached = dueAt !== null && respondedAt > dueAt;
+          return {
+            ...prev,
+            firstResponseAt,
+            slaFirstResponseRemainingMins: dueAt === null ? null : Math.round((dueAt - respondedAt) / 60_000),
+            slaFirstResponseMet: dueAt !== null && !breached,
+            slaFirstResponseBreached: breached,
+          };
+        });
       }
       toast.success(t('defectTracker.commentAdded'));
       return comment;
@@ -757,6 +860,10 @@ export function useDefectTrackerData() {
 
   const addLink = useCallback(async (defectId: string, link: Omit<LinkedItem, 'id'>) => {
     try {
+      if (selectedDefect?.id === defectId && selectedDefect.status === 'Closed') {
+        toast.error('Closed defects are read-only');
+        return null;
+      }
       const { data, error: dbErr } = await supabase.from('defect_linked_items').insert([{
         defect_id: defectId, item_type: link.itemType, item_ref: link.itemRef,
         item_title: link.itemTitle, item_status: link.itemStatus,
