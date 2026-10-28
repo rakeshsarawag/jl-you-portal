@@ -1242,16 +1242,28 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT app_user.employee_id
-  FROM public.app_users AS app_user
-  WHERE (
-    app_user.auth_user_id = auth.uid()
-    OR (
-      app_user.auth_user_id IS NULL
-      AND LOWER(app_user.email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+  SELECT COALESCE(
+    (
+      SELECT app_user.employee_id
+      FROM public.app_users AS app_user
+      WHERE (
+        app_user.auth_user_id = auth.uid()
+        OR LOWER(app_user.email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+      )
+      ORDER BY (app_user.auth_user_id = auth.uid()) DESC NULLS LAST
+      LIMIT 1
+    ),
+    (
+      SELECT employee.id
+      FROM public.employees AS employee
+      WHERE (
+        employee.auth_user_id = auth.uid()
+        OR LOWER(employee.email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+      )
+      ORDER BY (employee.auth_user_id = auth.uid()) DESC NULLS LAST
+      LIMIT 1
     )
-  )
-  LIMIT 1;
+  );
 $$;
 
 CREATE OR REPLACE FUNCTION public.defect_tracker_can_access_project(target_project_id uuid)

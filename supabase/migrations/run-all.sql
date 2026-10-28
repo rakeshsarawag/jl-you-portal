@@ -10267,16 +10267,28 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
-  SELECT app_user.employee_id
-  FROM public.app_users AS app_user
-  WHERE (
-    app_user.auth_user_id = auth.uid()
-    OR (
-      app_user.auth_user_id IS NULL
-      AND LOWER(app_user.email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+  SELECT COALESCE(
+    (
+      SELECT app_user.employee_id
+      FROM public.app_users AS app_user
+      WHERE (
+        app_user.auth_user_id = auth.uid()
+        OR LOWER(app_user.email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+      )
+      ORDER BY (app_user.auth_user_id = auth.uid()) DESC NULLS LAST
+      LIMIT 1
+    ),
+    (
+      SELECT employee.id
+      FROM public.employees AS employee
+      WHERE (
+        employee.auth_user_id = auth.uid()
+        OR LOWER(employee.email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+      )
+      ORDER BY (employee.auth_user_id = auth.uid()) DESC NULLS LAST
+      LIMIT 1
     )
-  )
-  LIMIT 1;
+  );
 $$;
 
 CREATE OR REPLACE FUNCTION public.defect_tracker_can_access_project(target_project_id uuid)
@@ -10611,7 +10623,10 @@ ALTER TABLE knowledge_bookmarks ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS kb_bookmarks_select ON knowledge_bookmarks;
 CREATE POLICY kb_bookmarks_select ON knowledge_bookmarks
   FOR SELECT USING (user_id = auth.uid()::TEXT OR auth.uid()::TEXT IN (
-    SELECT auth_user_id::TEXT FROM app_users WHERE role IN ('admin','hr')
+    SELECT auth_user_id::TEXT
+    FROM app_users
+    WHERE primary_role IN ('admin', 'hr')
+       OR roles ?| ARRAY['admin', 'hr']
   ));
 
 DROP POLICY IF EXISTS kb_bookmarks_insert ON knowledge_bookmarks;
@@ -10630,33 +10645,65 @@ CREATE POLICY kb_bookmarks_delete ON knowledge_bookmarks
 CREATE TABLE IF NOT EXISTS professional_tax_slabs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   state TEXT NOT NULL DEFAULT 'Karnataka',
+  state_code TEXT,
   fy TEXT NOT NULL DEFAULT '2025-26',
+  income_from NUMERIC,
+  income_to NUMERIC,
   min_salary NUMERIC NOT NULL,
   max_salary NUMERIC,
-  monthly_tax NUMERIC NOT NULL,
-  annual_tax NUMERIC NOT NULL,
+  monthly_pt NUMERIC NOT NULL,
+  annual_pt NUMERIC NOT NULL,
+  monthly_tax NUMERIC,
+  annual_tax NUMERIC,
+  effective_from DATE NOT NULL DEFAULT '2025-04-01',
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Add fy column in case table existed before this migration
+-- Reconcile the original payroll schema with the field names consumed by the
+-- current Payroll UI/API. ADD COLUMN is intentionally used because CREATE
+-- TABLE IF NOT EXISTS does not upgrade an already-existing table.
 ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS fy TEXT NOT NULL DEFAULT '2025-26';
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS state_code TEXT;
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS income_from NUMERIC;
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS income_to NUMERIC;
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS min_salary NUMERIC;
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS max_salary NUMERIC;
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS monthly_pt NUMERIC;
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS annual_pt NUMERIC;
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS monthly_tax NUMERIC;
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS annual_tax NUMERIC;
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS effective_from DATE NOT NULL DEFAULT '2025-04-01';
+ALTER TABLE professional_tax_slabs ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+
+UPDATE professional_tax_slabs
+SET min_salary = COALESCE(min_salary, income_from),
+    max_salary = COALESCE(max_salary, income_to)
+WHERE min_salary IS NULL
+   OR (max_salary IS NULL AND income_to IS NOT NULL);
 
 -- Clear and seed Karnataka PT slabs FY 2025-26
 DELETE FROM professional_tax_slabs WHERE state = 'Karnataka' AND fy = '2025-26';
-INSERT INTO professional_tax_slabs (state, fy, min_salary, max_salary, monthly_tax, annual_tax) VALUES
-  ('Karnataka', '2025-26', 0,       14999,  0,    0),
-  ('Karnataka', '2025-26', 15000,   29999,  150,  1800),
-  ('Karnataka', '2025-26', 30000,   44999,  200,  2400),
-  ('Karnataka', '2025-26', 45000,   59999,  300,  3600),
-  ('Karnataka', '2025-26', 60000,   74999,  400,  4800),
-  ('Karnataka', '2025-26', 75000,   NULL,   200,  2400);  -- capped at ₹2400/yr for Karnataka
+INSERT INTO professional_tax_slabs (
+  state, state_code, fy, income_from, income_to,
+  min_salary, max_salary, monthly_pt, annual_pt, monthly_tax, annual_tax
+) VALUES
+  ('Karnataka', 'KA', '2025-26', 0,     14999, 0,     14999, 0,   0,    0,   0),
+  ('Karnataka', 'KA', '2025-26', 15000, 29999, 15000, 29999, 150, 1800, 150, 1800),
+  ('Karnataka', 'KA', '2025-26', 30000, 44999, 30000, 44999, 200, 2400, 200, 2400),
+  ('Karnataka', 'KA', '2025-26', 45000, 59999, 45000, 59999, 300, 3600, 300, 3600),
+  ('Karnataka', 'KA', '2025-26', 60000, 74999, 60000, 74999, 400, 4800, 400, 4800),
+  ('Karnataka', 'KA', '2025-26', 75000, NULL,  75000, NULL,  200, 2400, 200, 2400);  -- capped at ₹2400/yr for Karnataka
 
 -- Maharashtra PT slabs
 DELETE FROM professional_tax_slabs WHERE state = 'Maharashtra' AND fy = '2025-26';
-INSERT INTO professional_tax_slabs (state, fy, min_salary, max_salary, monthly_tax, annual_tax) VALUES
-  ('Maharashtra', '2025-26', 0,      7499,   0,    0),
-  ('Maharashtra', '2025-26', 7500,   9999,   175,  2100),
-  ('Maharashtra', '2025-26', 10000,  NULL,   200,  2500);  -- Feb ₹300, rest ₹200
+INSERT INTO professional_tax_slabs (
+  state, state_code, fy, income_from, income_to,
+  min_salary, max_salary, monthly_pt, annual_pt, monthly_tax, annual_tax
+) VALUES
+  ('Maharashtra', 'MH', '2025-26', 0,     7499, 0,     7499, 0,   0,    0,   0),
+  ('Maharashtra', 'MH', '2025-26', 7500,  9999, 7500,  9999, 175, 2100, 175, 2100),
+  ('Maharashtra', 'MH', '2025-26', 10000, NULL, 10000, NULL, 200, 2500, 200, 2500);  -- Feb ₹300, rest ₹200
 
 -- Income Tax slabs table (New Regime FY 2025-26)
 CREATE TABLE IF NOT EXISTS income_tax_slabs (

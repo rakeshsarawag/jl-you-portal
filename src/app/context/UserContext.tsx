@@ -176,6 +176,30 @@ export function UserProvider({ children, accessToken }: UserProviderProps) {
           dbForceMfa = row.force_mfa ?? false;
           dbMfaEnrolled = row.mfa_enrolled ?? false;
         }
+
+        // Project memberships reference employees.id. Older portal users can
+        // have a valid employee record without app_users.employee_id being
+        // populated, so resolve that link from the verified auth identity.
+        if (!dbEmployeeId) {
+          let { data: employee } = await supabase
+            .from('employees')
+            .select('id')
+            .eq('auth_user_id', authUser.id)
+            .limit(1)
+            .maybeSingle();
+
+          if (!employee && authUser.email) {
+            const fallback = await supabase
+              .from('employees')
+              .select('id')
+              .ilike('email', authUser.email)
+              .limit(1)
+              .maybeSingle();
+            employee = fallback.data;
+          }
+
+          dbEmployeeId = employee?.id ?? null;
+        }
       } catch {
         // Network error — fall through to metadata fallback
       }

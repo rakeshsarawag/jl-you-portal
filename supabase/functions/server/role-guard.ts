@@ -158,7 +158,38 @@ async function lookupUserRole(
   }
 
   const role = resolvePrimaryRole(data.roles, data.primary_role);
-  const employeeId = data.employee_id ?? null;
+  let employeeId = data.employee_id ?? null;
+
+  // project_members stores employees.id, but legacy app_users rows may not
+  // have employee_id populated. Resolve from the verified auth identity/email
+  // and repair the link so all downstream authorization uses the same ID.
+  if (!employeeId) {
+    let { data: employee } = await supabase
+      .from("employees")
+      .select("id")
+      .eq("auth_user_id", authUserId)
+      .limit(1)
+      .maybeSingle();
+
+    if (!employee && verifiedEmail) {
+      const fallback = await supabase
+        .from("employees")
+        .select("id")
+        .ilike("email", verifiedEmail)
+        .limit(1)
+        .maybeSingle();
+      employee = fallback.data;
+    }
+
+    if (employee?.id) {
+      employeeId = employee.id;
+      await supabase
+        .from("app_users")
+        .update({ employee_id: employeeId })
+        .eq("id", data.id)
+        .is("employee_id", null);
+    }
+  }
 
   _roleCache.set(authUserId, { role, employeeId, cachedAt: now });
   return { role, employeeId };
