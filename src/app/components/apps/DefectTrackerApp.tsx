@@ -26,9 +26,13 @@ import { useUser } from "../../context/UserContext";
 import EmployeeSearchDropdown from "../ui/EmployeeSearchDropdown";
 import { useEmployeeOptions } from "../../hooks/useSharedData";
 import { useSectionPermission } from "../SectionGuard";
+import { useProjectMembership } from "../../hooks/useProjectMembership";
 import { formatDefectAge } from "../../utils/defectSla";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Input } from "../ui/input";
+import { Label } from "../ui/label";
 
 // ── Utility functions ─────────────────────────────────────────────────────────
 
@@ -2469,7 +2473,7 @@ function DefectDetailScreen({
           {[
             {
               label: "First Response",
-              help: "Time from defect creation until the first response by someone other than the reporter. The target comes from the severity SLA policy.",
+              help: "Time from defect creation until the first non-reporter comment or until the defect is first moved to In Progress. The target comes from the severity SLA policy.",
               met: d.slaFirstResponseMet,
               pct: firstResponsePct,
               color: d.slaFirstResponseBreached ? "bg-red-500" : d.slaFirstResponseMet ? "bg-green-500" : "bg-blue-400",
@@ -2890,7 +2894,7 @@ function DefectDetailScreen({
             <h4 className="text-sm font-bold text-gray-700">SLA Detail</h4>
             <p className="text-xs text-gray-500">{d.slaPolicyName}</p>
             {[
-              { label: "First Response", due: d.slaFirstResponseDueAt, remaining: d.slaFirstResponseRemainingMins, status: d.slaFirstResponseMet ? "all_met" : "on_track", breached: d.slaFirstResponseBreached, help: "Target for the first non-reporter response after creation." },
+              { label: "First Response", due: d.slaFirstResponseDueAt, remaining: d.slaFirstResponseRemainingMins, status: d.slaFirstResponseMet ? "all_met" : "on_track", breached: d.slaFirstResponseBreached, help: "Stops on the first non-reporter comment or when the defect is first moved to In Progress." },
               { label: "Fix SLA", due: d.slaFixDueAt, remaining: d.slaFixRemainingMins, status: d.slaFixBreached ? "fix_breached" : isResolved ? "all_met" : d.slaStatus, breached: false, help: "Target for resolving the defect, excluding paused Awaiting Info time." },
               { label: "Verify SLA", due: d.slaVerifyDueAt, remaining: d.slaVerifyRemainingMins, status: d.slaVerifyBreached ? "verify_breached" : d.verifiedDate ? "all_met" : "on_track", breached: false, help: "Target for verifying the fix after resolution." },
             ].map((row) => (
@@ -3699,10 +3703,12 @@ function AnalyticsScreen({ canExport = true }: { canExport?: boolean }) {
 
 // ── Settings Screen ───────────────────────────────────────────────────────────
 
-function SettingsScreen() {
+function SettingsScreen({ canManageSla }: { canManageSla: boolean }) {
   const [slaPolicies, setSlaPolicies] = useState<any[]>([]);
   const [settingsMasterData, setSettingsMasterData] = useState<any>({});
   const [settingsLoading, setSettingsLoading] = useState(true);
+  const [editingPolicy, setEditingPolicy] = useState<any | null>(null);
+  const [savingPolicy, setSavingPolicy] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -3743,6 +3749,50 @@ function SettingsScreen() {
     return `${mins}m`;
   };
 
+  const savePolicy = async () => {
+    if (!editingPolicy) return;
+    const name = String(editingPolicy.name ?? "").trim();
+    const firstResponseMins = Number(editingPolicy.first_response_mins);
+    const fixMins = Number(editingPolicy.fix_mins);
+    const verificationMins = Number(editingPolicy.verification_mins);
+    const escalateAtPercent = Number(editingPolicy.escalate_at_percent);
+    if (!name) {
+      toast.error("Policy name is required");
+      return;
+    }
+    if (![firstResponseMins, fixMins, verificationMins].every(value => Number.isInteger(value) && value > 0)) {
+      toast.error("SLA targets must be positive whole minutes");
+      return;
+    }
+    if (!Number.isInteger(escalateAtPercent) || escalateAtPercent < 1 || escalateAtPercent > 100) {
+      toast.error("Escalation threshold must be between 1 and 100");
+      return;
+    }
+
+    setSavingPolicy(true);
+    const { data, error } = await supabase
+      .from("defect_sla_policies")
+      .update({
+        name,
+        first_response_mins: firstResponseMins,
+        fix_mins: fixMins,
+        verification_mins: verificationMins,
+        escalate_at_percent: escalateAtPercent,
+      })
+      .eq("id", editingPolicy.id)
+      .select()
+      .single();
+    setSavingPolicy(false);
+
+    if (error) {
+      toast.error("Unable to update SLA policy", { description: error.message });
+      return;
+    }
+    setSlaPolicies(current => current.map(policy => policy.id === data.id ? data : policy));
+    setEditingPolicy(null);
+    toast.success("SLA policy updated");
+  };
+
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div>
@@ -3765,7 +3815,7 @@ function SettingsScreen() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50">
               <tr>
-                {["Severity", "Policy Name", "First Response", "Fix Target", "Verification", "Escalate At"].map(h => (
+                {["Severity", "Policy Name", "First Response", "Fix Target", "Verification", "Escalate At", ...(canManageSla ? ["Actions"] : [])].map(h => (
                   <th key={h} className="text-left py-3 px-5 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -3781,14 +3831,72 @@ function SettingsScreen() {
                   <td className="py-3 px-5 font-medium text-gray-800">{formatMins(p.fix_mins)}</td>
                   <td className="py-3 px-5 font-medium text-gray-800">{formatMins(p.verification_mins)}</td>
                   <td className="py-3 px-5 text-gray-500">{p.escalate_at_percent ?? 80}%</td>
+                  {canManageSla && (
+                    <td className="py-3 px-5">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setEditingPolicy({ ...p })}
+                      >
+                        <Edit2 className="h-3.5 w-3.5" />
+                        Edit
+                      </Button>
+                    </td>
+                  )}
                 </tr>
               )) : (
-                <tr><td colSpan={6} className="py-6 text-center text-gray-400 text-sm">No SLA policies found. Run migration 06_defect_tracker.sql</td></tr>
+                <tr><td colSpan={canManageSla ? 7 : 6} className="py-6 text-center text-gray-400 text-sm">No SLA policies found. Run migration 06_defect_tracker.sql</td></tr>
               )}
             </tbody>
           </table>
         )}
       </div>
+
+      <Dialog open={Boolean(editingPolicy)} onOpenChange={(open) => { if (!open && !savingPolicy) setEditingPolicy(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit {editingPolicy?.severity} SLA</DialogTitle>
+            <DialogDescription>Targets are stored in minutes and apply to SLA calculations immediately.</DialogDescription>
+          </DialogHeader>
+          {editingPolicy && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 space-y-1.5">
+                <Label htmlFor="sla-policy-name">Policy name</Label>
+                <Input
+                  id="sla-policy-name"
+                  value={editingPolicy.name ?? ""}
+                  onChange={(event) => setEditingPolicy((current: any) => ({ ...current, name: event.target.value }))}
+                />
+              </div>
+              {[
+                ["First response (minutes)", "first_response_mins"],
+                ["Fix target (minutes)", "fix_mins"],
+                ["Verification (minutes)", "verification_mins"],
+                ["Escalate at (%)", "escalate_at_percent"],
+              ].map(([label, field]) => (
+                <div key={field} className="space-y-1.5">
+                  <Label htmlFor={`sla-${field}`}>{label}</Label>
+                  <Input
+                    id={`sla-${field}`}
+                    type="number"
+                    min={1}
+                    max={field === "escalate_at_percent" ? 100 : undefined}
+                    step="1"
+                    value={editingPolicy[field] ?? ""}
+                    onChange={(event) => setEditingPolicy((current: any) => ({ ...current, [field]: event.target.value }))}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingPolicy(null)} disabled={savingPolicy}>Cancel</Button>
+            <Button onClick={() => void savePolicy()} disabled={savingPolicy}>
+              {savingPolicy ? "Saving..." : "Save policy"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Escalation Rules */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -3899,8 +4007,11 @@ function SettingsScreen() {
 
 export function DefectTrackerApp({ accessToken, onLogout }: Props) {
   const { currentUser } = useUser();
-  const secViewDefects = useSectionPermission("defect-tracker", "view_defects");
-  const secLogDefect = useSectionPermission("defect-tracker", "log_defect");
+  const { hasProjectMembership } = useProjectMembership();
+  const configuredViewDefects = useSectionPermission("defect-tracker", "view_defects");
+  const configuredLogDefect = useSectionPermission("defect-tracker", "log_defect");
+  const secViewDefects = configuredViewDefects || hasProjectMembership;
+  const secLogDefect = configuredLogDefect || hasProjectMembership;
   const secUpdateDefects = useSectionPermission("defect-tracker", "update_defects");
   const secDeleteDefects = useSectionPermission("defect-tracker", "delete_defects");
   const secManageSla = useSectionPermission("defect-tracker", "manage_sla");
@@ -3995,7 +4106,7 @@ export function DefectTrackerApp({ accessToken, onLogout }: Props) {
           <AnalyticsScreen canExport={secExport} />
         )}
         {screen === "settings" && (
-          <SettingsScreen />
+          <SettingsScreen canManageSla={secManageSla} />
         )}
       </main>
     </div>

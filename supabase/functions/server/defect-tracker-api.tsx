@@ -454,8 +454,11 @@ app.put('/defects/:id', async (c) => {
     if (body.fixedDate) updates.fixed_date = body.fixedDate;
     if (body.status === 'Verified' && !body.verifiedDate) updates.verified_date = new Date().toISOString();
 
-    // First response tracking
-    if (body.firstResponse) updates.first_response_at = new Date().toISOString();
+    // First response tracking. Taking ownership by moving the defect to
+    // In Progress is a qualifying response even when no comment is posted.
+    if (body.firstResponse || body.status === 'In Progress') {
+      updates.first_response_at = new Date().toISOString();
+    }
 
     // Reopen regression
     if (body.status === 'Open' && body._wasClosedBefore) {
@@ -464,7 +467,8 @@ app.put('/defects/:id', async (c) => {
     }
 
     // Fetch existing defect for notification context
-    const { data: existing } = await supabase.from('project_defects').select('defect_id, title, severity, reporter_id, assignee_id, watchers, status, root_cause, resolution_code').eq('id', id).single().catch(() => ({ data: null }));
+    const { data: existing } = await supabase.from('project_defects').select('defect_id, title, severity, reporter_id, assignee_id, watchers, status, root_cause, resolution_code, first_response_at').eq('id', id).single().catch(() => ({ data: null }));
+    if (existing?.first_response_at) delete updates.first_response_at;
     if (existing?.status === 'Closed' && body.status && body.status !== 'Closed') {
       return c.json({ success: false, error: 'Closed defects cannot be reopened' }, 409);
     }

@@ -21,6 +21,7 @@ import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../utils/c
 import { APP_VERSION } from '../../constants/global';
 import { APP_BY_PATH } from '../../constants/appRegistry';
 import { usePermissions } from '../hooks/usePermissions';
+import { useProjectMembership } from '../hooks/useProjectMembership';
 import { t } from '../../i18n/index';
 import { useEmployees } from '../context/EmployeesContext';
 
@@ -485,6 +486,7 @@ export function Launchpad({ accessToken, onLogout }: LaunchpadProps) {
 
   const userRoles = currentUser?.roles ?? ['employee'];
   const { canSeeApp, matrixLoaded } = usePermissions(userRoles, currentUser?.permissionOverrides ?? []);
+  const { hasProjectMembership, membershipLoaded } = useProjectMembership();
 
   const ALL_TILES = useMemo<AppTile[]>(() => TILE_CONFIG.map(cfg => ({
     id: cfg.id as any,
@@ -501,9 +503,10 @@ export function Launchpad({ accessToken, onLogout }: LaunchpadProps) {
     const app = APP_BY_PATH[tile.path];
     if (!app) return false;
     if (userRoles.includes('admin')) return true;
-    if (!matrixLoaded) return false;
+    if (!matrixLoaded || !membershipLoaded) return false;
+    if (app.appId === 'defect-tracker' && hasProjectMembership) return true;
     return canSeeApp(app.appId);
-  }), [ALL_TILES, userRoles, canSeeApp, matrixLoaded]);
+  }), [ALL_TILES, userRoles, canSeeApp, hasProjectMembership, matrixLoaded, membershipLoaded]);
 
   const filteredTiles = useMemo(() => search
     ? accessibleTiles.filter(tile =>

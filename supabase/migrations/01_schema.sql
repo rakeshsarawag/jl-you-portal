@@ -2279,6 +2279,9 @@ ALTER TABLE project_defects
   ADD COLUMN IF NOT EXISTS sla_paused_at         TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS sla_total_paused_mins INTEGER     DEFAULT 0,
   ADD COLUMN IF NOT EXISTS first_response_at     TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS auto_close_reference_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS auto_close_warning_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS auto_closed_at        TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS introduced_in_sprint  TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS os                    TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS browser               TEXT        DEFAULT '',
@@ -2312,7 +2315,12 @@ BEGIN
     IF OLD.status = 'Closed' THEN
       RAISE EXCEPTION 'Closed defects cannot be reopened';
     END IF;
-    IF NOT (OLD.status = 'Fixed' AND NEW.status = 'Resolved')
+    IF NOT (
+      NEW.status = 'Closed'
+      AND OLD.status IN ('Awaiting Info', 'Resolved')
+      AND NEW.updated_by = 'system:auto-close'
+    )
+      AND NOT (OLD.status = 'Fixed' AND NEW.status = 'Resolved')
       AND NOT (COALESCE(allowed_transitions -> OLD.status, '[]'::JSONB) ? NEW.status) THEN
       RAISE EXCEPTION 'Invalid defect status transition from % to %', OLD.status, NEW.status;
     END IF;
@@ -2328,6 +2336,17 @@ BEGIN
           AND comment.created_at >= COALESCE(OLD.sla_paused_at, OLD.fixed_date, OLD.updated_at)
       ) THEN
       RAISE EXCEPTION 'A reporter comment is required before returning this defect to In Progress';
+    END IF;
+    IF NEW.status = 'In Progress' AND OLD.first_response_at IS NULL THEN
+      NEW.first_response_at := NOW();
+    END IF;
+    IF NEW.status IN ('Awaiting Info', 'Resolved') THEN
+      NEW.auto_close_reference_at := NOW();
+      NEW.auto_close_warning_at := NULL;
+      NEW.auto_closed_at := NULL;
+    ELSIF OLD.status IN ('Awaiting Info', 'Resolved') THEN
+      NEW.auto_close_reference_at := NULL;
+      NEW.auto_close_warning_at := NULL;
     END IF;
   END IF;
 
@@ -2424,6 +2443,227 @@ CREATE TABLE IF NOT EXISTS defect_comments (
   updated_at  TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_comments_defect ON defect_comments(defect_id);
+
+-- A non-reporter comment is also a qualifying first response. Enforce this in
+-- the database so direct REST writes and Edge Function writes behave equally.
+CREATE OR REPLACE FUNCTION mark_defect_first_response_from_comment()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  defect_reporter_id TEXT;
+  defect_reporter_name TEXT;
+  defect_status TEXT;
+  is_reporter_comment BOOLEAN;
+BEGIN
+  SELECT reporter_id, reporter_name, status
+    INTO defect_reporter_id, defect_reporter_name, defect_status
+  FROM public.project_defects
+  WHERE id = NEW.defect_id;
+
+  is_reporter_comment := (
+    (NULLIF(defect_reporter_id, '') IS NOT NULL AND NEW.author_id = defect_reporter_id)
+    OR (
+      NULLIF(defect_reporter_name, '') IS NOT NULL
+      AND LOWER(NEW.author_name) = LOWER(defect_reporter_name)
+    )
+  );
+
+  IF is_reporter_comment AND defect_status IN ('Awaiting Info', 'Resolved') THEN
+    UPDATE public.project_defects
+    SET auto_close_reference_at = COALESCE(NEW.created_at, NOW()),
+        auto_close_warning_at = NULL
+    WHERE id = NEW.defect_id;
+  ELSIF NOT is_reporter_comment AND NEW.author_id IS DISTINCT FROM 'system:auto-close' THEN
+    UPDATE public.project_defects
+    SET first_response_at = COALESCE(first_response_at, NEW.created_at, NOW())
+    WHERE id = NEW.defect_id
+      AND first_response_at IS NULL;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_mark_defect_first_response_from_comment ON defect_comments;
+CREATE TRIGGER trg_mark_defect_first_response_from_comment
+  AFTER INSERT ON defect_comments
+  FOR EACH ROW EXECUTE FUNCTION mark_defect_first_response_from_comment();
+
+-- Repair existing records whose response was already provided before the
+-- automatic lifecycle tracking was introduced.
+UPDATE project_defects AS defect
+SET first_response_at = COALESCE(
+  (
+    SELECT MIN(comment.created_at)
+    FROM defect_comments AS comment
+    WHERE comment.defect_id = defect.id
+      AND NOT (
+        (NULLIF(defect.reporter_id, '') IS NOT NULL AND comment.author_id = defect.reporter_id)
+        OR (
+          NULLIF(defect.reporter_name, '') IS NOT NULL
+          AND LOWER(comment.author_name) = LOWER(defect.reporter_name)
+        )
+      )
+  ),
+  (
+    SELECT MIN(activity.occurred_at)
+    FROM defect_activity_log AS activity
+    WHERE activity.defect_id = defect.id
+      AND activity.field_changed = 'status'
+      AND activity.new_value = 'In Progress'
+  ),
+  CASE
+    WHEN defect.status IN ('In Progress', 'Blocked', 'Resolved', 'Verified', 'Closed')
+      THEN defect.updated_at
+  END
+)
+WHERE defect.first_response_at IS NULL
+  AND (
+    defect.status IN ('In Progress', 'Blocked', 'Resolved', 'Verified', 'Closed')
+    OR EXISTS (
+      SELECT 1
+      FROM defect_comments AS comment
+      WHERE comment.defect_id = defect.id
+        AND NOT (
+          (NULLIF(defect.reporter_id, '') IS NOT NULL AND comment.author_id = defect.reporter_id)
+          OR (
+            NULLIF(defect.reporter_name, '') IS NOT NULL
+            AND LOWER(comment.author_name) = LOWER(defect.reporter_name)
+          )
+        )
+    )
+  );
+
+-- Existing Awaiting Info/Resolved defects begin their inactivity period from
+-- their last recorded update. Future reporter comments reset this timestamp.
+UPDATE project_defects
+SET auto_close_reference_at = COALESCE(auto_close_reference_at, updated_at, NOW())
+WHERE status IN ('Awaiting Info', 'Resolved')
+  AND auto_close_reference_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_defects_auto_close_due
+  ON project_defects(auto_close_reference_at)
+  WHERE status IN ('Awaiting Info', 'Resolved');
+
+CREATE OR REPLACE FUNCTION process_defect_auto_closure()
+RETURNS TABLE(warned_count INTEGER, closed_count INTEGER)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  target RECORD;
+  warned_total INTEGER := 0;
+  closed_total INTEGER := 0;
+  warning_message TEXT;
+  closure_message TEXT;
+BEGIN
+  -- Warn once between day 25 and day 30. Reporter comments reset the
+  -- reference timestamp and clear the warning marker.
+  FOR target IN
+    SELECT id, defect_id, title, status, reporter_id
+    FROM public.project_defects
+    WHERE status IN ('Awaiting Info', 'Resolved')
+      AND auto_close_reference_at <= NOW() - INTERVAL '25 days'
+      AND auto_close_reference_at > NOW() - INTERVAL '30 days'
+      AND auto_close_warning_at IS NULL
+    FOR UPDATE SKIP LOCKED
+  LOOP
+    warning_message := format(
+      'System reminder: This defect has remained %s for 25 days without a reporter response. It will be automatically closed in 5 days unless the reporter comments or the status changes.',
+      target.status
+    );
+
+    UPDATE public.project_defects
+    SET auto_close_warning_at = NOW()
+    WHERE id = target.id
+      AND auto_close_warning_at IS NULL;
+
+    INSERT INTO public.defect_comments (
+      defect_id, author_id, author_name, content, is_internal
+    ) VALUES (
+      target.id, 'system:auto-close', 'System', warning_message, FALSE
+    );
+
+    IF NULLIF(target.reporter_id, '') IS NOT NULL THEN
+      INSERT INTO public.notifications (
+        user_id, title, body, message, type, link, read
+      ) VALUES (
+        target.reporter_id,
+        format('%s will auto-close in 5 days', COALESCE(target.defect_id, 'Defect')),
+        warning_message,
+        warning_message,
+        'defect_auto_close_warning',
+        '/defect-tracker',
+        FALSE
+      );
+    END IF;
+
+    warned_total := warned_total + 1;
+  END LOOP;
+
+  -- Close after 30 days of reporter inactivity. The workflow trigger permits
+  -- this otherwise-disallowed transition only for the system marker below.
+  FOR target IN
+    SELECT id, defect_id, title, status, reporter_id
+    FROM public.project_defects
+    WHERE status IN ('Awaiting Info', 'Resolved')
+      AND auto_close_reference_at <= NOW() - INTERVAL '30 days'
+    FOR UPDATE SKIP LOCKED
+  LOOP
+    closure_message := format(
+      'System update: This defect was automatically closed after 30 days in %s without a reporter response or manual closure.',
+      target.status
+    );
+
+    UPDATE public.project_defects
+    SET status = 'Closed',
+        auto_closed_at = NOW(),
+        updated_by = 'system:auto-close',
+        updated_at = NOW()
+    WHERE id = target.id
+      AND status IN ('Awaiting Info', 'Resolved');
+
+    INSERT INTO public.defect_comments (
+      defect_id, author_id, author_name, content, is_internal
+    ) VALUES (
+      target.id, 'system:auto-close', 'System', closure_message, FALSE
+    );
+
+    INSERT INTO public.defect_activity_log (
+      defect_id, actor_id, actor_name, action, field_changed,
+      old_value, new_value, comment
+    ) VALUES (
+      target.id, 'system:auto-close', 'System', 'status_changed', 'status',
+      target.status, 'Closed', closure_message
+    );
+
+    IF NULLIF(target.reporter_id, '') IS NOT NULL THEN
+      INSERT INTO public.notifications (
+        user_id, title, body, message, type, link, read
+      ) VALUES (
+        target.reporter_id,
+        format('%s was automatically closed', COALESCE(target.defect_id, 'Defect')),
+        closure_message,
+        closure_message,
+        'defect_auto_closed',
+        '/defect-tracker',
+        FALSE
+      );
+    END IF;
+
+    closed_total := closed_total + 1;
+  END LOOP;
+
+  RETURN QUERY SELECT warned_total, closed_total;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.process_defect_auto_closure() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.process_defect_auto_closure() TO service_role;
 
 -- ── Step 7: defect_linked_items ───────────────────────────────────────────────
 

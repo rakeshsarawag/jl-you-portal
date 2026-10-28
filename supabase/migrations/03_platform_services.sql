@@ -23,6 +23,31 @@
 -- SECTION 1: Extensions
 -- ============================================================
 CREATE EXTENSION IF NOT EXISTS pg_net;
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- Run defect inactivity warnings and auto-closure hourly. Re-scheduling by
+-- stable job name keeps this migration idempotent.
+DO $$
+DECLARE
+  existing_job_id BIGINT;
+BEGIN
+  SELECT jobid
+    INTO existing_job_id
+  FROM cron.job
+  WHERE jobname = 'defect-auto-closure'
+  LIMIT 1;
+
+  IF existing_job_id IS NOT NULL THEN
+    PERFORM cron.unschedule(existing_job_id);
+  END IF;
+
+  PERFORM cron.schedule(
+    'defect-auto-closure',
+    '15 * * * *',
+    'SELECT public.process_defect_auto_closure();'
+  );
+END;
+$$;
 
 -- ============================================================
 -- SECTION 2: push_subscriptions table
