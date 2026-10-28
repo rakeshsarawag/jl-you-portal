@@ -32,6 +32,50 @@ function isMissing(error: unknown): boolean {
   return msg.includes('relation') && msg.includes('does not exist') || msg.includes('column') && msg.includes('does not exist');
 }
 
+const COMPATIBILITY_DETAIL_COLUMNS = [
+  'system_name',
+  'client_name',
+  'external_ticket_no',
+  'transport_request',
+];
+
+function isMissingDetailColumn(error: unknown): boolean {
+  const message = String((error as any)?.message ?? '');
+  return (error as any)?.code === 'PGRST204'
+    || (message.includes('schema cache')
+      && COMPATIBILITY_DETAIL_COLUMNS.some((column) => message.includes(column)));
+}
+
+async function getAccessibleProjectIds(c: any, supabase: any): Promise<string[] | null> {
+  if (c.get('role') === 'admin') return null;
+  const employeeId = c.get('employeeId') as string | null;
+  if (!employeeId) return [];
+  const { data, error } = await supabase
+    .from('project_members')
+    .select('project_id')
+    .eq('employee_id', employeeId);
+  if (error) throw error;
+  return [...new Set((data ?? []).map((membership: any) => membership.project_id).filter(Boolean))] as string[];
+}
+
+async function canAccessProject(c: any, supabase: any, projectId: string | null | undefined) {
+  const projectIds = await getAccessibleProjectIds(c, supabase);
+  return projectIds === null || Boolean(projectId && projectIds.includes(projectId));
+}
+
+async function canAccessDefect(c: any, supabase: any, defectId: string) {
+  const projectIds = await getAccessibleProjectIds(c, supabase);
+  if (projectIds === null) return true;
+  if (!projectIds.length) return false;
+  const { data } = await supabase
+    .from('project_defects')
+    .select('id')
+    .eq('id', defectId)
+    .in('project_id', projectIds)
+    .maybeSingle();
+  return Boolean(data);
+}
+
 // Compute SLA status for a defect
 function computeSLA(defect: any, policies: any[]) {
   const policy = policies.find(p => p.severity === defect.severity);
@@ -158,8 +202,13 @@ app.get('/defects', async (c) => {
   try {
     const supabase = getSupabase();
     const q = c.req.query();
+    const accessibleProjectIds = await getAccessibleProjectIds(c, supabase);
+    if (accessibleProjectIds?.length === 0) {
+      return c.json({ success: true, data: [], total: 0 });
+    }
 
     let query = supabase.from('project_defects').select('*').order('created_at', { ascending: false });
+    if (accessibleProjectIds) query = query.in('project_id', accessibleProjectIds);
 
     if (q.projectId) query = query.eq('project_id', q.projectId);
     if (q.severity) query = query.in('severity', q.severity.split(','));
@@ -224,6 +273,9 @@ app.get('/defects/:id', async (c) => {
   try {
     const supabase = getSupabase();
     const id = c.req.param('id');
+    if (!await canAccessDefect(c, supabase, id)) {
+      return c.json({ success: false, error: 'Defect not found or project access denied' }, 404);
+    }
 
     const [defectRes, commentsRes, activityRes, linksRes, policiesRes] = await Promise.all([
       supabase.from('project_defects').select('*').eq('id', id).single(),
@@ -267,13 +319,16 @@ app.post('/defects', async (c) => {
     const v = await requireFields(c, ['title']);
     if (!v.ok) return v.response;
     const body = v.body;
+    if (!await canAccessProject(c, supabase, body.projectId)) {
+      return c.json({ success: false, error: 'You can only log defects for assigned projects' }, 403);
+    }
 
     const { data: lastDef } = await supabase.from('project_defects').select('defect_id').like('defect_id', 'DEF%').order('defect_id', { ascending: false }).limit(1);
     let defNext = 1;
     if (lastDef?.length) { const m = String(lastDef[0].defect_id).match(/DEF(\d+)/); if (m) defNext = parseInt(m[1]) + 1; }
     const defectId = `DEF${String(defNext).padStart(4, '0')}`;
 
-    const { data, error } = await supabase.from('project_defects').insert([{
+    let insertValues: Record<string, any> = {
       project_id: body.projectId || null,
       project_name: body.projectName || 'General',
       defect_id: defectId,
@@ -303,7 +358,16 @@ app.post('/defects', async (c) => {
       introduced_in_sprint: body.introducedInSprint ?? '',
       os: body.os ?? '',
       browser: body.browser ?? '',
-    }]).select().single();
+    };
+    let { data, error } = await supabase.from('project_defects').insert([insertValues]).select().single();
+    if (error && isMissingDetailColumn(error)) {
+      insertValues = Object.fromEntries(
+        Object.entries(insertValues).filter(([column]) => !COMPATIBILITY_DETAIL_COLUMNS.includes(column)),
+      );
+      const retry = await supabase.from('project_defects').insert([insertValues]).select().single();
+      data = retry.data;
+      error = retry.error;
+    }
 
     if (error) {
       if (isMissing(error)) return c.json({ success: false, error: 'Run migration 06_defect_tracker.sql first', tableNotReady: true }, 503);
@@ -355,6 +419,9 @@ app.put('/defects/:id', async (c) => {
     if (!pv.ok) return pv.response;
     const id = pv.value;
     const body = await c.req.json();
+    if (!await canAccessDefect(c, supabase, id)) {
+      return c.json({ success: false, error: 'Project access denied' }, 403);
+    }
 
     const updates: any = { updated_at: new Date().toISOString() };
 
@@ -444,6 +511,14 @@ app.put('/defects/:id', async (c) => {
           message: `Defect ${notifDefectId} needs more information from you`,
         });
       }
+      if (body.assigneeId && body.assigneeId !== existing.assignee_id) {
+        await sendDefectNotification(supabase, {
+          defectId: notifDefectId, defectTitle: notifTitle, severity: notifSeverity,
+          recipientIds: [body.assigneeId],
+          type: 'defect_assigned',
+          message: `You have been assigned defect ${notifDefectId}: ${notifTitle}`,
+        });
+      }
       if (body.status === 'Verified' && existing.assignee_id) {
         await sendDefectNotification(supabase, {
           defectId: notifDefectId, defectTitle: notifTitle, severity: notifSeverity,
@@ -531,7 +606,11 @@ app.put('/defects/:id', async (c) => {
 app.delete('/defects/:id', async (c) => {
   try {
     const supabase = getSupabase();
-    const { error } = await supabase.from('project_defects').delete().eq('id', c.req.param('id'));
+    const id = c.req.param('id');
+    if (!await canAccessDefect(c, supabase, id)) {
+      return c.json({ success: false, error: 'Project access denied' }, 403);
+    }
+    const { error } = await supabase.from('project_defects').delete().eq('id', id);
     if (error) return c.json({ success: false, error: error.message }, 500);
     return c.json({ success: true });
   } catch (err) {
@@ -546,6 +625,9 @@ app.post('/defects/:id/comments', async (c) => {
     const pv = requireParam(c, 'id');
     if (!pv.ok) return pv.response;
     const defectId = pv.value;
+    if (!await canAccessDefect(c, supabase, defectId)) {
+      return c.json({ success: false, error: 'Project access denied' }, 403);
+    }
     const v = await requireFields(c, ['content']);
     if (!v.ok) return v.response;
     const body = v.body;
@@ -615,6 +697,9 @@ app.post('/defects/:id/links', async (c) => {
   try {
     const supabase = getSupabase();
     const defectId = c.req.param('id');
+    if (!await canAccessDefect(c, supabase, defectId)) {
+      return c.json({ success: false, error: 'Project access denied' }, 403);
+    }
     const body = await c.req.json();
 
     const { data, error } = await supabase.from('defect_linked_items').insert([{
@@ -636,6 +721,9 @@ app.post('/defects/:id/links', async (c) => {
 app.delete('/defects/:defectId/links/:linkId', async (c) => {
   try {
     const supabase = getSupabase();
+    if (!await canAccessDefect(c, supabase, c.req.param('defectId'))) {
+      return c.json({ success: false, error: 'Project access denied' }, 403);
+    }
     const { error } = await supabase.from('defect_linked_items').delete().eq('id', c.req.param('linkId'));
     if (error) return c.json({ success: false, error: error.message }, 500);
     return c.json({ success: true });
@@ -648,9 +736,18 @@ app.delete('/defects/:defectId/links/:linkId', async (c) => {
 app.get('/dashboard', async (c) => {
   try {
     const supabase = getSupabase();
+    const accessibleProjectIds = await getAccessibleProjectIds(c, supabase);
+    if (accessibleProjectIds?.length === 0) {
+      return c.json({ success: true, data: {
+        totalOpen: 0, s1Count: 0, slaBreached: 0, fixedToday: 0, pendingVerify: 0,
+        s1Defects: [], recentActivity: [], severityBreakdown: [], projectBreakdown: [], slaCompliance: [], trendData: [],
+      }});
+    }
+    let allQuery = supabase.from('project_defects').select('*');
+    if (accessibleProjectIds) allQuery = allQuery.in('project_id', accessibleProjectIds);
 
     const [allRes, policiesRes] = await Promise.all([
-      supabase.from('project_defects').select('*'),
+      allQuery,
       supabase.from('defect_sla_policies').select('*'),
     ]);
 
@@ -672,9 +769,7 @@ app.get('/dashboard', async (c) => {
 
     // Fixed today
     const todayStart = new Date(); todayStart.setHours(0,0,0,0);
-    const { count: fixedToday } = await supabase.from('project_defects')
-      .select('id', { count: 'exact', head: true })
-      .gte('fixed_date', todayStart.toISOString());
+    const fixedToday = all.filter(d => d.fixed_date && d.fixed_date >= todayStart.toISOString()).length;
 
     const pendingVerify = withSLA.filter(d => d.status === 'Resolved').length;
 
@@ -716,24 +811,27 @@ app.get('/dashboard', async (c) => {
     });
 
     // Recent activity (last 10)
-    const { data: activityData } = await supabase.from('defect_activity_log')
-      .select('*, project_defects(defect_id, title, project_name)')
-      .order('occurred_at', { ascending: false }).limit(10).catch(() => ({ data: [] }));
+    const defectIds = all.map((defect: any) => defect.id);
+    const { data: activityData } = defectIds.length
+      ? await supabase.from('defect_activity_log')
+        .select('*')
+        .in('defect_id', defectIds)
+        .order('occurred_at', { ascending: false }).limit(10).catch(() => ({ data: [] }))
+      : { data: [] };
+    const defectById = new Map(all.map((defect: any) => [defect.id, defect]));
 
     const recentActivity = (activityData ?? []).map((a: any) => ({
       id: a.id, actorName: a.actor_name, action: a.action,
-      defectId: a.project_defects?.defect_id ?? '',
-      defectTitle: a.project_defects?.title ?? '',
-      projectName: a.project_defects?.project_name ?? '',
+      defectId: (defectById.get(a.defect_id) as any)?.defect_id ?? '',
+      defectTitle: (defectById.get(a.defect_id) as any)?.title ?? '',
+      projectName: (defectById.get(a.defect_id) as any)?.project_name ?? '',
       occurredAt: a.occurred_at,
     }));
 
     // 30-day trend (simplified: generate from created_at)
     const trendDays: Record<string, { opened: number; closed: number }> = {};
     const thirtyDaysAgo = Date.now() - 30 * 86400000;
-    const { data: trendDefects } = await supabase.from('project_defects')
-      .select('created_at, status, fixed_date')
-      .gte('created_at', new Date(thirtyDaysAgo).toISOString());
+    const trendDefects = all.filter((defect: any) => defect.created_at >= new Date(thirtyDaysAgo).toISOString());
 
     for (let i = 29; i >= 0; i--) {
       const d = new Date(Date.now() - i * 86400000);
@@ -756,7 +854,7 @@ app.get('/dashboard', async (c) => {
       openDelta: totalOpen - openLastWeek,
       s1Count: s1.length,
       slaBreached: breached.length,
-      fixedToday: fixedToday ?? 0,
+      fixedToday,
       pendingVerify,
       s1Defects: s1.map(d => normalizeDefect(d, computeSLA(d, policies))).slice(0, 10),
       recentActivity,
@@ -774,7 +872,13 @@ app.get('/dashboard', async (c) => {
 app.get('/sla', async (c) => {
   try {
     const supabase = getSupabase();
-    const { data: all, error } = await supabase.from('project_defects').select('*');
+    const accessibleProjectIds = await getAccessibleProjectIds(c, supabase);
+    if (accessibleProjectIds?.length === 0) {
+      return c.json({ success: true, data: { bySeverity: [], atRisk: [], breached: [], byProject: [] } });
+    }
+    let query = supabase.from('project_defects').select('*');
+    if (accessibleProjectIds) query = query.in('project_id', accessibleProjectIds);
+    const { data: all, error } = await query;
     if (error && isMissing(error)) return c.json({ success: true, data: { bySeverity: [], atRisk: [], breached: [], byProject: [] } });
 
     const { data: policies } = await supabase.from('defect_sla_policies').select('*');
@@ -832,7 +936,15 @@ app.get('/sla', async (c) => {
 app.get('/analytics', async (c) => {
   try {
     const supabase = getSupabase();
+    const accessibleProjectIds = await getAccessibleProjectIds(c, supabase);
+    if (accessibleProjectIds?.length === 0) {
+      return c.json({ success: true, data: {
+        rootCause: [], regressionRate: 0, aging: [], avgFixTime: [],
+        topReporters: [], topAssignees: [], velocity: [],
+      }});
+    }
     let query = supabase.from('project_defects').select('*');
+    if (accessibleProjectIds) query = query.in('project_id', accessibleProjectIds);
 
     const q = c.req.query();
     if (q.projectId) query = query.eq('project_id', q.projectId);
@@ -966,7 +1078,11 @@ app.get('/master-data', async (c) => {
 app.get('/by-project', async (c) => {
   try {
     const supabase = getSupabase();
-    const { data: all, error } = await supabase.from('project_defects').select('*');
+    const accessibleProjectIds = await getAccessibleProjectIds(c, supabase);
+    if (accessibleProjectIds?.length === 0) return c.json({ success: true, data: [] });
+    let query = supabase.from('project_defects').select('*');
+    if (accessibleProjectIds) query = query.in('project_id', accessibleProjectIds);
+    const { data: all, error } = await query;
     if (error && isMissing(error)) return c.json({ success: true, data: [] });
 
     const { data: policies } = await supabase.from('defect_sla_policies').select('*');

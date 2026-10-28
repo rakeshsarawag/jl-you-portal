@@ -1204,3 +1204,144 @@ CREATE POLICY "Authenticated users can read role_permissions"
   USING (true);
 
 GRANT SELECT ON TABLE public.role_permissions TO authenticated;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- DEFECT TRACKER: PROJECT MEMBERSHIP ACCESS
+-- Admins can access every defect. Other authenticated users can access defects
+-- only when their linked employee record is present in project_members.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.defect_tracker_is_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.app_users AS app_user
+    WHERE (
+      app_user.auth_user_id = auth.uid()
+      OR (
+        app_user.auth_user_id IS NULL
+        AND LOWER(app_user.email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+      )
+    )
+    AND (
+      app_user.roles ? 'admin'
+      OR app_user.primary_role = 'admin'
+    )
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.defect_tracker_current_employee_id()
+RETURNS uuid
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT app_user.employee_id
+  FROM public.app_users AS app_user
+  WHERE (
+    app_user.auth_user_id = auth.uid()
+    OR (
+      app_user.auth_user_id IS NULL
+      AND LOWER(app_user.email) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+    )
+  )
+  LIMIT 1;
+$$;
+
+CREATE OR REPLACE FUNCTION public.defect_tracker_can_access_project(target_project_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT
+    public.defect_tracker_is_admin()
+    OR (
+      target_project_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1
+        FROM public.project_members AS membership
+        WHERE membership.project_id = target_project_id
+          AND membership.employee_id = public.defect_tracker_current_employee_id()
+      )
+    );
+$$;
+
+REVOKE ALL ON FUNCTION public.defect_tracker_is_admin() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.defect_tracker_current_employee_id() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.defect_tracker_can_access_project(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.defect_tracker_is_admin() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.defect_tracker_current_employee_id() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.defect_tracker_can_access_project(uuid) TO authenticated;
+
+DROP POLICY IF EXISTS "Authenticated users full access" ON public.project_defects;
+DROP POLICY IF EXISTS "project_defects_open_access" ON public.project_defects;
+DROP POLICY IF EXISTS "project_defects_project_access" ON public.project_defects;
+CREATE POLICY "project_defects_project_access"
+  ON public.project_defects
+  FOR ALL
+  TO authenticated
+  USING (public.defect_tracker_can_access_project(project_id))
+  WITH CHECK (public.defect_tracker_can_access_project(project_id));
+
+DROP POLICY IF EXISTS "Authenticated users full access" ON public.project_members;
+DROP POLICY IF EXISTS "project_members_authenticated_read" ON public.project_members;
+DROP POLICY IF EXISTS "project_members_admin_write" ON public.project_members;
+CREATE POLICY "project_members_authenticated_read"
+  ON public.project_members
+  FOR SELECT
+  TO authenticated
+  USING (
+    public.defect_tracker_is_admin()
+    OR employee_id = public.defect_tracker_current_employee_id()
+  );
+CREATE POLICY "project_members_admin_write"
+  ON public.project_members
+  FOR ALL
+  TO authenticated
+  USING (public.defect_tracker_is_admin())
+  WITH CHECK (public.defect_tracker_is_admin());
+
+DO $$
+DECLARE
+  child_table text;
+  child_tables text[] := ARRAY[
+    'defect_comments',
+    'defect_activity_log',
+    'defect_linked_items',
+    'defect_sla_events'
+  ];
+BEGIN
+  FOREACH child_table IN ARRAY child_tables LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', child_table || '_open_access', child_table);
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', child_table || '_project_access', child_table);
+    EXECUTE format(
+      'CREATE POLICY %I ON public.%I FOR ALL TO authenticated
+       USING (
+         EXISTS (
+           SELECT 1 FROM public.project_defects AS defect
+           WHERE defect.id = %I.defect_id
+             AND public.defect_tracker_can_access_project(defect.project_id)
+         )
+       )
+       WITH CHECK (
+         EXISTS (
+           SELECT 1 FROM public.project_defects AS defect
+           WHERE defect.id = %I.defect_id
+             AND public.defect_tracker_can_access_project(defect.project_id)
+         )
+       )',
+      child_table || '_project_access',
+      child_table,
+      child_table,
+      child_table
+    );
+  END LOOP;
+END $$;

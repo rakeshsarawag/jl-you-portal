@@ -519,6 +519,17 @@ ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS closed_at    TIMESTAMPTZ;
 ALTER TABLE public.project_defects
   ALTER COLUMN project_id DROP NOT NULL;
 
+-- Keep Defect Tracker integration details available on databases that were
+-- initialized from an older project_defects schema snapshot.
+ALTER TABLE public.project_defects
+  ADD COLUMN IF NOT EXISTS system_name        TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS client_name        TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS external_ticket_no TEXT DEFAULT '',
+  ADD COLUMN IF NOT EXISTS transport_request  TEXT DEFAULT '';
+
+-- Make the new columns visible to PostgREST immediately after this migration.
+NOTIFY pgrst, 'reload schema';
+
 -- >>> LEGACY SOURCE: 27_fix_invoice_client_fk_and_fields.sql
 
 -- Align invoices with the current clients table and persist all create-form fields.

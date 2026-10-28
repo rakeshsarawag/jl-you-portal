@@ -27,6 +27,8 @@ import EmployeeSearchDropdown from "../ui/EmployeeSearchDropdown";
 import { useEmployeeOptions } from "../../hooks/useSharedData";
 import { useSectionPermission } from "../SectionGuard";
 import { formatDefectAge } from "../../utils/defectSla";
+import { Badge } from "../ui/badge";
+import { Button } from "../ui/button";
 
 // ── Utility functions ─────────────────────────────────────────────────────────
 
@@ -79,6 +81,27 @@ function commentColor(authorKey: string) {
   let hash = 0;
   for (let i = 0; i < authorKey.length; i++) hash = (hash * 31 + authorKey.charCodeAt(i)) & 0xffff;
   return colors[hash % colors.length];
+}
+
+function SLAHelp({ label, help, align = "left" }: { label: string; help: string; align?: "left" | "right" }) {
+  return (
+    <span
+      className="group relative inline-flex items-center gap-1 text-xs font-semibold text-gray-600 cursor-help outline-none"
+      tabIndex={0}
+      aria-label={`${label}: ${help}`}
+    >
+      {label}
+      <HelpCircle className="h-3.5 w-3.5 text-gray-400" />
+      <span
+        role="tooltip"
+        className={`pointer-events-none absolute bottom-full z-50 mb-2 hidden w-64 rounded-lg bg-gray-900 px-3 py-2 text-left text-xs font-normal leading-relaxed text-white shadow-lg group-hover:block group-focus:block ${
+          align === "right" ? "right-0" : "left-0"
+        }`}
+      >
+        {help}
+      </span>
+    </span>
+  );
 }
 
 const SEVERITY_CHART_COLORS: Record<string, string> = {
@@ -592,17 +615,37 @@ function LogDefectModal({
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [sprints, setSprints] = useState<{ id: string; name: string }[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const isAdmin = user?.roles?.includes("admin") || user?.primaryRole === "admin";
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", handleKey);
-    // Load projects
-    fetch(`${API_BASE}/projects/all`, { headers: apiHeaders() })
-      .then(r => r.json())
-      .then(j => setProjects((j.data ?? []).map((p: any) => ({ id: p.id, name: p.name ?? p.projectName ?? '' })).filter((p: any) => p.name)))
-      .catch(() => {});
+    const loadAccessibleProjects = async () => {
+      if (!user) return;
+      if (isAdmin) {
+        const { data } = await supabase.from("projects").select("id,name").order("name");
+        setProjects((data ?? []).filter((project: any) => project.name));
+        return;
+      }
+      if (!user.employeeId) {
+        setProjects([]);
+        return;
+      }
+      const { data: memberships } = await supabase
+        .from("project_members")
+        .select("project_id")
+        .eq("employee_id", user.employeeId);
+      const projectIds = [...new Set((memberships ?? []).map((membership: any) => membership.project_id).filter(Boolean))];
+      if (!projectIds.length) {
+        setProjects([]);
+        return;
+      }
+      const { data } = await supabase.from("projects").select("id,name").in("id", projectIds).order("name");
+      setProjects((data ?? []).filter((project: any) => project.name));
+    };
+    void loadAccessibleProjects();
     return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+  }, [isAdmin, onClose, user]);
 
   // Load sprints when project changes
   useEffect(() => {
@@ -646,6 +689,7 @@ function LogDefectModal({
     if (!form.title.trim()) errs.title = "Title is required";
     if (!form.description.trim()) errs.description = "Description is required";
     if (!form.severity) errs.severity = "Severity is required";
+    if (!isAdmin && !form.projectId) errs.projectId = "Select a project where you are a team member";
     setErrors(errs);
     if (Object.keys(errs).length > 0) {
       toast.error(`Please complete the required fields: ${Object.values(errs).join(", ")}`);
@@ -687,7 +731,9 @@ function LogDefectModal({
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-600 mb-1">{t("defectTracker.project")} (Optional)</label>
+              <label className="block text-xs font-semibold text-gray-600 mb-1">
+                {t("defectTracker.project")} {isAdmin ? "(Optional)" : "*"}
+              </label>
               <select
                 value={form.projectId}
                 onChange={(e) => {
@@ -699,10 +745,16 @@ function LogDefectModal({
                 }}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200"
               >
-                <option value="">General / Not project-specific</option>
+                {isAdmin && <option value="">General / Not project-specific</option>}
+                {!isAdmin && <option value="">Select an assigned project</option>}
                 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
-              <p className="text-xs text-gray-400 mt-1">Leave this as General for issues outside a project.</p>
+              <p className="text-xs text-gray-400 mt-1">
+                {isAdmin
+                  ? "Leave this as General for issues outside a project."
+                  : "Only projects where you are an assigned team member are available."}
+              </p>
+              {errors.projectId && <p className="text-red-500 text-xs mt-1">{errors.projectId}</p>}
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">{t("defectTracker.severity")} *</label>
@@ -958,16 +1010,18 @@ function AllDefectsScreen({
   initialFilters,
   onNavigateDetail,
   canLog = true,
+  canUpdate = true,
   canDelete = true,
   canExport = true,
 }: {
   initialFilters?: Partial<DefectFilters & { myDefects?: boolean }>;
   onNavigateDetail: (id: string) => void;
   canLog?: boolean;
+  canUpdate?: boolean;
   canDelete?: boolean;
   canExport?: boolean;
 }) {
-  const { defects, loading, loadDefects, createDefect, deleteDefect, masterData, loadMasterData } = useDefectTrackerData();
+  const { defects, loading, loadDefects, createDefect, bulkUpdateDefects, deleteDefect, masterData, loadMasterData } = useDefectTrackerData();
   const { currentUser: user } = useUser();
 
   const [search, setSearch] = useState("");
@@ -1002,6 +1056,10 @@ function AllDefectsScreen({
   const [page, setPage] = useState(0);
   const [showLogModal, setShowLogModal] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<"reassign" | "severity" | null>(null);
+  const [bulkAssignee, setBulkAssignee] = useState<{ id: string; name: string }>({ id: "", name: "" });
+  const [bulkSeverity, setBulkSeverity] = useState<DefectSeverity | "">("");
+  const [bulkUpdating, setBulkUpdating] = useState(false);
 
   const PAGE_SIZE = 50;
   const isMyDefects = Boolean(initialFilters?.myDefects);
@@ -1068,6 +1126,8 @@ function AllDefectsScreen({
 
   const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const selectedDefects = defects.filter((defect) => selectedIds.has(defect.id));
+  const selectedClosedCount = selectedDefects.filter((defect) => defect.status === "Closed").length;
 
   const toggleSelect = (id: string) => {
     setSelectedIds((prev) => {
@@ -1091,10 +1151,62 @@ function AllDefectsScreen({
     await deleteDefect(id);
   };
 
-  const exportCSV = () => {
+  const applyBulkUpdate = async () => {
+    if (!bulkAction || selectedIds.size === 0 || bulkUpdating) return;
+    if (bulkAction === "reassign" && (!bulkAssignee.id || !bulkAssignee.name)) {
+      toast.error("Select an employee before reassigning");
+      return;
+    }
+    if (bulkAction === "severity" && !bulkSeverity) {
+      toast.error("Select a severity");
+      return;
+    }
+
+    setBulkUpdating(true);
+    try {
+      const body = bulkAction === "reassign"
+        ? { assigneeId: bulkAssignee.id, assigneeName: bulkAssignee.name }
+        : { severity: bulkSeverity as DefectSeverity };
+      const result = await bulkUpdateDefects(
+        [...selectedIds],
+        body,
+        user?.id,
+        user?.name,
+      );
+      const unsuccessfulIds = [...result.failedIds, ...result.skippedIds];
+      setSelectedIds(new Set(unsuccessfulIds));
+
+      if (result.updatedIds.length > 0) {
+        toast.success(
+          `${result.updatedIds.length} defect${result.updatedIds.length === 1 ? "" : "s"} updated`,
+          {
+            description: result.skippedIds.length
+              ? `${result.skippedIds.length} closed defect${result.skippedIds.length === 1 ? " was" : "s were"} skipped.`
+              : undefined,
+          },
+        );
+      }
+      if (result.failedIds.length > 0) {
+        toast.error(`${result.failedIds.length} defect${result.failedIds.length === 1 ? "" : "s"} could not be updated`);
+      }
+      if (result.updatedIds.length === 0 && result.skippedIds.length > 0 && result.failedIds.length === 0) {
+        toast.info("Closed defects are read-only and were not changed");
+      }
+
+      if (result.failedIds.length === 0) {
+        setBulkAction(null);
+        setBulkAssignee({ id: "", name: "" });
+        setBulkSeverity("");
+      }
+    } finally {
+      setBulkUpdating(false);
+    }
+  };
+
+  const exportCSV = (rowsToExport: Defect[] = filtered) => {
     const rows = [
       ["ID", "Title", "Severity", "Status", "Project", "Assignee", "Age", "SLA Status"],
-      ...filtered.map((d) => [d.defectId, d.title, d.severity, d.status, d.projectName, d.assigneeName, formatDefectAge(d.createdAt), d.slaStatus]),
+      ...rowsToExport.map((d) => [d.defectId, d.title, d.severity, d.status, d.projectName, d.assigneeName, formatDefectAge(d.createdAt), d.slaStatus]),
     ];
     const csv = rows.map((r) => r.join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -1181,12 +1293,12 @@ function AllDefectsScreen({
         onClick={() => onNavigateDetail(d.id)}
         className={`${rowBg} border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors`}
       >
-        <td className="pl-4 py-3" onClick={(e) => e.stopPropagation()}>
+        <td className="pl-4 pr-4 py-3" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => toggleSelect(d.id)} className="text-gray-400 hover:text-red-600">
             {selectedIds.has(d.id) ? <CheckSquare className="h-4 w-4 text-red-600" /> : <Square className="h-4 w-4" />}
           </button>
         </td>
-        <td className="py-3 pr-3 font-mono text-xs text-gray-600">
+        <td className="py-3 pr-3 font-mono text-xs font-bold text-gray-700">
           {d.isRegression && (
             <span className="inline-block mr-1 w-4 h-4 bg-orange-500 text-white text-[9px] font-bold rounded text-center leading-4">R</span>
           )}
@@ -1477,7 +1589,7 @@ function AllDefectsScreen({
             <button onClick={() => setView("timeline")} className={`px-3 py-1.5 text-xs font-medium ${view === "timeline" ? "bg-red-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>Timeline</button>
           </div>
           {canExport && (
-            <button onClick={exportCSV} className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">
+            <button onClick={() => exportCSV()} className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">
               <Download className="h-3.5 w-3.5" /> Export
             </button>
           )}
@@ -1486,11 +1598,30 @@ function AllDefectsScreen({
 
       {/* Bulk Bar */}
       {selectedIds.size > 0 && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center gap-3">
-          <span className="text-sm font-medium text-blue-800">{selectedIds.size} selected</span>
-          <button className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700">Reassign</button>
-          <button className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700">Change Severity</button>
-          {canExport && <button className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700" onClick={exportCSV}>Export</button>}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex flex-wrap items-center gap-3">
+          <div>
+            <span className="text-sm font-medium text-blue-800">{selectedIds.size} selected</span>
+            {selectedClosedCount > 0 && (
+              <span className="ml-2 text-xs text-blue-600">{selectedClosedCount} closed will be skipped</span>
+            )}
+          </div>
+          {canUpdate && (
+            <>
+              <button
+                onClick={() => { setBulkAction("reassign"); setBulkAssignee({ id: "", name: "" }); }}
+                className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 flex items-center gap-1.5"
+              >
+                <Users className="h-3.5 w-3.5" /> Reassign
+              </button>
+              <button
+                onClick={() => { setBulkAction("severity"); setBulkSeverity(""); }}
+                className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 flex items-center gap-1.5"
+              >
+                <Flag className="h-3.5 w-3.5" /> Change Severity
+              </button>
+            </>
+          )}
+          {canExport && <button className="px-3 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700" onClick={() => exportCSV(selectedDefects)}>Export</button>}
           <button onClick={() => setSelectedIds(new Set())} className="ml-auto text-blue-500 hover:text-blue-700"><X className="h-4 w-4" /></button>
         </div>
       )}
@@ -1504,7 +1635,7 @@ function AllDefectsScreen({
           <table className="w-full text-sm min-w-[820px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="pl-4 py-3 w-8">
+                <th className="pl-4 pr-4 py-3 w-12">
                   <button onClick={selectAll} className="text-gray-400 hover:text-red-600">
                     {selectedIds.size === paginated.length && paginated.length > 0
                       ? <CheckSquare className="h-4 w-4 text-red-600" />
@@ -1636,6 +1767,75 @@ function AllDefectsScreen({
           masterData={masterData}
         />
       )}
+
+      {bulkAction && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => { if (!bulkUpdating) setBulkAction(null); }}>
+          <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl" onClick={(event) => event.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-semibold text-gray-900">
+                  {bulkAction === "reassign" ? "Reassign selected defects" : "Change severity"}
+                </h3>
+                <p className="mt-1 text-xs text-gray-500">
+                  This will update {selectedIds.size - selectedClosedCount} editable defect{selectedIds.size - selectedClosedCount === 1 ? "" : "s"}.
+                  {selectedClosedCount > 0 ? ` ${selectedClosedCount} closed defect${selectedClosedCount === 1 ? "" : "s"} will be skipped.` : ""}
+                </p>
+              </div>
+              <button disabled={bulkUpdating} onClick={() => setBulkAction(null)} className="text-gray-400 hover:text-gray-600 disabled:opacity-50">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {bulkAction === "reassign" ? (
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-gray-600">New assignee *</label>
+                <EmployeeSearchDropdown
+                  value={bulkAssignee.name}
+                  onChange={(name, id) => setBulkAssignee({ id: id ?? "", name })}
+                  placeholder="Search employee…"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="mb-2 block text-xs font-semibold text-gray-600">New severity *</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {DEFECT_SEVERITIES.map((severity) => (
+                    <button
+                      key={severity}
+                      onClick={() => setBulkSeverity(severity)}
+                      className={`rounded-lg border-2 px-3 py-2 text-xs font-bold transition-colors ${
+                        bulkSeverity === severity
+                          ? `${SEVERITY_CONFIG[severity].color} border-transparent`
+                          : "border-gray-200 text-gray-600 hover:border-gray-300"
+                      }`}
+                    >
+                      {severity}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                disabled={bulkUpdating}
+                onClick={() => setBulkAction(null)}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                disabled={bulkUpdating || selectedIds.size === selectedClosedCount}
+                onClick={applyBulkUpdate}
+                className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {bulkUpdating && <RefreshCw className="h-4 w-4 animate-spin" />}
+                {bulkUpdating ? "Updating..." : bulkAction === "reassign" ? "Reassign defects" : "Change severity"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1704,7 +1904,7 @@ function DefectDetailScreen({
   onBack: () => void;
   canUpdate?: boolean;
 }) {
-  const { selectedDefect, loading, loadDefectDetail, updateDefect, addComment, addLink, masterData, loadMasterData } = useDefectTrackerData();
+  const { selectedDefect, loading, error, loadDefectDetail, updateDefect, addComment, addLink, masterData, loadMasterData } = useDefectTrackerData();
   const { currentUser: user } = useUser();
 
   const [activeTab, setActiveTab] = useState<"activity" | "comments">("comments");
@@ -1774,7 +1974,7 @@ function DefectDetailScreen({
   const d = selectedDefect;
 
   if (loading && !d) return <InlineLoader color="text-red-500" />;
-  if (!d) return <EmptyState msg="Defect not found" />;
+  if (!d) return <EmptyState msg={error ?? "Defect not found"} />;
 
   const canMarkResolved = d.status === "In Progress";
   const isResolved = ["Resolved", "Verified", "Closed"].includes(d.status);
@@ -1782,6 +1982,21 @@ function DefectDetailScreen({
   const isClosed = d.status === "Closed";
   const userIds = [user?.id, user?.appUserId, user?.employeeId].filter(Boolean);
   const isReporter = userIds.includes(d.reporterId) || user?.name === d.reporterName || user?.email === d.reporterName;
+  const cancelEnvironmentEditing = () => {
+    setEnvironmentDraft({
+      environment: d.environment ?? "",
+      systemName: d.systemName ?? "",
+      clientName: d.clientName ?? "",
+      externalTicketNo: d.externalTicketNo ?? "",
+      transportRequest: d.transportRequest ?? "",
+      buildVersion: d.buildVersion ?? "",
+      os: d.os ?? "",
+      browser: d.browser ?? "",
+      foundInVersion: d.foundInVersion ?? "",
+      introducedInSprint: d.introducedInSprint ?? "",
+    });
+    setEditingEnvironment(false);
+  };
 
   const fixWindowMins = d.slaFixDueAt
     ? Math.max(1, (new Date(d.slaFixDueAt).getTime() - new Date(d.createdAt).getTime()) / 60_000)
@@ -1876,18 +2091,6 @@ function DefectDetailScreen({
           is_read: false,
         }))
       );
-    }
-    if (["Resolved", "Awaiting Info"].includes(pendingStatus) && d.reporterId) {
-      void supabase.from("notifications").insert({
-        user_id: d.reporterId,
-        type: pendingStatus === "Resolved" ? "defect_resolved" : "defect_awaiting_info",
-        title: `${d.defectId} needs your attention`,
-        message: pendingStatus === "Resolved"
-          ? `Please verify whether "${d.title}" is resolved.`
-          : `More information is required for "${d.title}".`,
-        link: "/defect-tracker",
-        is_read: false,
-      });
     }
     if (pendingStatus === "In Progress" && ["Resolved", "Awaiting Info"].includes(d.status) && d.assigneeId) {
       void supabase.from("notifications").insert({
@@ -1997,51 +2200,76 @@ function DefectDetailScreen({
             )}
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-gray-500">Status:</span>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-gray-50/70 p-3 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 block mb-1">Status</span>
               <select
                 value={pendingStatus ?? d.status}
                 onChange={(e) => setPendingStatus(e.target.value as DefectStatus)}
                 disabled={isClosed || !canUpdate}
-                className="border border-gray-200 rounded-lg px-2 py-1 text-sm font-medium focus:outline-none"
+                className="w-full border-0 bg-transparent p-0 text-sm font-semibold text-gray-800 focus:outline-none disabled:cursor-not-allowed"
               >
                 <option value={d.status}>{d.status}</option>
                 {validTransitions.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
-
-            <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded font-medium">{priorityLabel(d.priority)}</span>
-            <span className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded font-medium">{d.projectName}</span>
-
-            {canMarkResolved && canUpdate && (
-              <button
-                onClick={() => setPendingStatus("Resolved")}
-                className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700"
-              >
-                Mark Resolved
-              </button>
-            )}
-            {!isClosed && canUpdate && <button
-              onClick={() => setPendingStatus("Won't Fix")}
-              className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-200"
-            >
-              {"Won't Fix"}
-            </button>}
-            {!isClosed && canUpdate && <button
-              onClick={() => { setShowSeverityModal(true); setNewSeverity(d.severity); setSeverityReason(""); }}
-              className="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-sm font-semibold hover:bg-purple-200 flex items-center gap-1.5"
-            >
-              <Flag className="h-3.5 w-3.5" /> Change Severity
-            </button>}
-            {!isClosed && canUpdate && <button
-              onClick={() => { setShowReassignModal(true); setNewAssigneeModal({ id: "", name: "" }); }}
-              className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-semibold hover:bg-blue-200 flex items-center gap-1.5"
-            >
-              <Users className="h-3.5 w-3.5" /> Reassign
-            </button>}
+            <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 block mb-1.5">Priority</span>
+              <Badge variant="secondary">{priorityLabel(d.priority)}</Badge>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 min-w-0">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 block mb-1.5">Project</span>
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-gray-800 min-w-0">
+                <Folder className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+                <span className="truncate">{d.projectName || "General"}</span>
+              </div>
+            </div>
           </div>
-        </div>
+
+          {!isClosed && canUpdate && (
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 border-t border-gray-200 pt-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 sm:mr-1">Actions</span>
+              <div className="flex items-center gap-2 flex-wrap">
+            {canMarkResolved && canUpdate && (
+              <Button
+                size="sm"
+                onClick={() => setPendingStatus("Resolved")}
+                className="bg-green-600 text-white hover:bg-green-700"
+              >
+                <CheckCircle2 /> Mark Resolved
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setPendingStatus("Won't Fix")}
+              className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800"
+            >
+              <BugOff /> {"Won't Fix"}
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { setShowSeverityModal(true); setNewSeverity(d.severity); setSeverityReason(""); }}
+              className="border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 hover:text-purple-800"
+            >
+              <Flag /> Change Severity
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { setShowReassignModal(true); setNewAssigneeModal({ id: "", name: "" }); }}
+              className="border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 hover:text-blue-800"
+            >
+              <Users /> Reassign
+            </Button>
+              </div>
+            </div>
+          )}
+          </div>
 
         {/* Severity Change Modal */}
         {showSeverityModal && (
@@ -2079,11 +2307,24 @@ function DefectDetailScreen({
               <button
                 onClick={async () => {
                   if (!severityReason.trim()) { toast.error("Reason is required"); return; }
-                  await updateDefect(d.id, { severity: newSeverity as DefectSeverity, _oldSeverity: d.severity, severityChangeReason: severityReason });
+                  const updated = await updateDefect(
+                    d.id,
+                    { severity: newSeverity as DefectSeverity, _oldSeverity: d.severity, severityChangeReason: severityReason },
+                    user?.id,
+                    user?.name,
+                  );
+                  if (!updated) return;
+                  const severityComment = await addComment(
+                    d.id,
+                    `Severity changed from ${d.severity} to ${newSeverity}: ${severityReason.trim()}`,
+                    user?.id ?? "",
+                    user?.name ?? "You",
+                  );
+                  if (!severityComment) {
+                    toast.error("Severity was updated, but the reason could not be added to Comments");
+                  }
                   if (newSeverity === "Very High") {
                     toast.warning("Severity escalation to Very High submitted — manager approval required");
-                  } else {
-                    toast.success("Severity updated");
                   }
                   setShowSeverityModal(false);
                 }}
@@ -2255,10 +2496,7 @@ function DefectDetailScreen({
           ].map((sla) => (
             <div key={sla.label}>
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold text-gray-600 flex items-center gap-1">
-                  {sla.label}
-                  <HelpCircle className="h-3.5 w-3.5 text-gray-400 cursor-help" aria-label={`${sla.label} information`} title={sla.help} />
-                </span>
+                <SLAHelp label={sla.label} help={sla.help} />
                 <span className="text-xs text-gray-500">{sla.text}</span>
               </div>
               <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
@@ -2307,9 +2545,13 @@ function DefectDetailScreen({
             <div className="flex items-center justify-between gap-3 mb-3">
               <h3 className="font-semibold text-gray-800">Environment Details</h3>
               {!isClosed && canUpdate && (
-                <button onClick={() => setEditingEnvironment((value) => !value)} className="text-xs text-red-600 hover:underline">
-                  {editingEnvironment ? "Cancel" : "Edit"}
-                </button>
+                editingEnvironment ? (
+                  <Button variant="ghost" size="sm" onClick={cancelEnvironmentEditing}>Cancel</Button>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => setEditingEnvironment(true)}>
+                    <Edit2 /> Edit
+                  </Button>
+                )
               )}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-y-3 gap-x-4 text-sm">
@@ -2327,7 +2569,7 @@ function DefectDetailScreen({
               ].map((row) => (
                 <div key={row.key}>
                   <label className="text-xs font-semibold text-gray-500 block mb-1">{row.label}</label>
-                  {(editingEnvironment || ["systemName", "clientName", "externalTicketNo", "transportRequest"].includes(row.key)) && !isClosed && canUpdate ? (
+                  {editingEnvironment && !isClosed && canUpdate ? (
                     <input
                       value={environmentDraft[row.key] ?? ""}
                       onChange={(e) => setEnvironmentDraft((current) => ({ ...current, [row.key]: e.target.value }))}
@@ -2345,17 +2587,13 @@ function DefectDetailScreen({
                   : <span className="text-gray-400">No</span>}
               </div>
             </div>
-            {!isClosed && canUpdate && (
+            {editingEnvironment && !isClosed && canUpdate && (
               <div className="flex justify-end gap-2 mt-4">
-                {editingEnvironment && (
-                  <button
-                    onClick={() => setEditingEnvironment(false)}
-                    className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600"
-                  >
-                    Cancel
-                  </button>
-                )}
-                <button
+                <Button variant="outline" size="sm" onClick={cancelEnvironmentEditing}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
                   onClick={async () => {
                     const changedDetails = Object.fromEntries(
                       Object.entries(environmentDraft).filter(([key, value]) => value !== String((d as any)[key] ?? "")),
@@ -2367,10 +2605,10 @@ function DefectDetailScreen({
                     const updated = await updateDefect(d.id, changedDetails, user?.id, user?.name);
                     if (updated) setEditingEnvironment(false);
                   }}
-                  className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700"
+                  className="bg-blue-600 text-white hover:bg-blue-700"
                 >
                   Save Details
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -2550,7 +2788,15 @@ function DefectDetailScreen({
                               : part
                           )}
                         </p>
-                        <p className="text-xs mt-0.5 opacity-50">{timeAgo(c.createdAt)}</p>
+                        <time dateTime={c.createdAt} className="mt-1 block text-xs opacity-50">
+                          {new Date(c.createdAt).toLocaleString(undefined, {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })} · {timeAgo(c.createdAt)}
+                        </time>
                       </div>
                     </div>
                   );
@@ -2650,10 +2896,7 @@ function DefectDetailScreen({
             ].map((row) => (
               <div key={row.label} className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="text-xs font-semibold text-gray-600 flex items-center gap-1">
-                    {row.label}
-                    <HelpCircle className="h-3 w-3 text-gray-400 cursor-help" aria-label={`${row.label} information`} title={row.help} />
-                  </p>
+                  <SLAHelp label={row.label} help={row.help} align="right" />
                   {row.due && <p className="text-xs text-gray-400">{new Date(row.due).toLocaleString()}</p>}
                 </div>
                 <div className="text-right">
@@ -3655,6 +3898,7 @@ function SettingsScreen() {
 // ── Main Export ───────────────────────────────────────────────────────────────
 
 export function DefectTrackerApp({ accessToken, onLogout }: Props) {
+  const { currentUser } = useUser();
   const secViewDefects = useSectionPermission("defect-tracker", "view_defects");
   const secLogDefect = useSectionPermission("defect-tracker", "log_defect");
   const secUpdateDefects = useSectionPermission("defect-tracker", "update_defects");
@@ -3668,6 +3912,7 @@ export function DefectTrackerApp({ accessToken, onLogout }: Props) {
   const [screenExtra, setScreenExtra] = useState<any>(null);
   const [detailDefectId, setDetailDefectId] = useState<string | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const hasAdminAccess = currentUser?.roles?.includes("admin") || currentUser?.primaryRole === "admin";
 
   const handleNavigate = (s: Screen, extra?: any) => {
     setScreen(s);
@@ -3706,6 +3951,16 @@ export function DefectTrackerApp({ accessToken, onLogout }: Props) {
       </div>
 
       <main className="md:ml-[220px] min-h-[calc(100vh-3rem)]">
+        {!hasAdminAccess && (
+          <div className="px-3 pt-3 sm:px-6 sm:pt-5">
+            <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              <Shield className="h-4 w-4 shrink-0" />
+              <span>
+                <strong>Project-scoped access:</strong> Defects and reporting include only projects where you are an assigned team member.
+              </span>
+            </div>
+          </div>
+        )}
         {screen === "dashboard" && (
           <DashboardScreen onNavigate={handleNavigate} />
         )}
@@ -3714,6 +3969,7 @@ export function DefectTrackerApp({ accessToken, onLogout }: Props) {
             initialFilters={screen === "my-defects" ? { ...screenExtra, myDefects: true } : screenExtra}
             onNavigateDetail={handleNavigateDetail}
             canLog={secLogDefect}
+            canUpdate={secUpdateDefects}
             canDelete={secDeleteDefects}
             canExport={secExport}
           />

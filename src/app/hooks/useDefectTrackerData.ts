@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { API_BASE, apiHeaders, safeJson, supabase } from '../utils/constants';
 import { t } from '../../i18n/index';
 import { computeDefectSLA } from '../utils/defectSla';
+import { useUser } from '../context/UserContext';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -302,7 +303,8 @@ function toDbBody(body: Partial<Defect> & Record<string, any>) {
     const dbKey = map[k] ?? k;
     if (!k.startsWith('_') && !['id','createdAt','updatedAt','ageInDays','slaStatus','slaFixRemainingMins',
           'slaVerifyRemainingMins','slaFirstResponseRemainingMins','slaFirstResponseDueAt','slaFixDueAt','slaVerifyDueAt','slaFirstResponseMet',
-          'slaFirstResponseBreached','slaFixBreached','slaVerifyBreached','slaPolicyName','comments','activityLog','linkedItems'].includes(k)) {
+          'slaFirstResponseBreached','slaFixBreached','slaVerifyBreached','slaPolicyName','severityChangeReason',
+          'comments','activityLog','linkedItems'].includes(k)) {
       if (dbKey === 'priority' && typeof v === 'string') result[dbKey] = PRIORITY_TO_DB[v] ?? v;
       else if (dbKey === 'project_id') result[dbKey] = v || null;
       else result[dbKey] = v;
@@ -314,6 +316,7 @@ function toDbBody(body: Partial<Defect> & Record<string, any>) {
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useDefectTrackerData() {
+  const { currentUser } = useUser();
   const [defects, setDefects] = useState<Defect[]>([]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [slaData, setSLAData] = useState<SLAData | null>(null);
@@ -323,6 +326,42 @@ export function useDefectTrackerData() {
   const [masterData, setMasterData] = useState<any>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const isAdmin = currentUser?.roles?.includes('admin') || currentUser?.primaryRole === 'admin';
+
+  const getAccessibleProjectIds = useCallback(async (): Promise<string[] | null> => {
+    if (isAdmin) return null;
+    if (!currentUser?.employeeId) return [];
+    const { data, error: membershipError } = await supabase
+      .from('project_members')
+      .select('project_id')
+      .eq('employee_id', currentUser.employeeId);
+    if (membershipError) {
+      setError('Unable to verify project access');
+      return [];
+    }
+    return [...new Set((data ?? []).map((membership: any) => membership.project_id).filter(Boolean))];
+  }, [currentUser?.employeeId, isAdmin]);
+
+  const canAccessProject = useCallback(async (projectId: string | null | undefined) => {
+    if (isAdmin) return true;
+    if (!projectId) return false;
+    const projectIds = await getAccessibleProjectIds();
+    return projectIds?.includes(projectId) ?? false;
+  }, [getAccessibleProjectIds, isAdmin]);
+
+  const canAccessDefect = useCallback(async (defectId: string) => {
+    if (isAdmin) return true;
+    const projectIds = await getAccessibleProjectIds();
+    if (!projectIds?.length) return false;
+    if (selectedDefect?.id === defectId) return projectIds.includes(selectedDefect.projectId);
+    const { data } = await supabase
+      .from('project_defects')
+      .select('project_id')
+      .eq('id', defectId)
+      .in('project_id', projectIds)
+      .maybeSingle();
+    return Boolean(data);
+  }, [getAccessibleProjectIds, isAdmin, selectedDefect]);
 
   const buildQuery = (filters: DefectFilters) => {
     const params = new URLSearchParams();
@@ -345,9 +384,15 @@ export function useDefectTrackerData() {
     setLoading(true);
     setError(null);
     try {
+      const accessibleProjectIds = await getAccessibleProjectIds();
+      if (accessibleProjectIds?.length === 0) {
+        setDefects([]);
+        return;
+      }
       const [{ data: rows, error: dbErr }, { data: policies }] = await Promise.all([
         (() => {
           let query = supabase.from('project_defects').select('*').order('created_at', { ascending: false });
+          if (accessibleProjectIds) query = query.in('project_id', accessibleProjectIds);
           if (filters.projectId) query = query.eq('project_id', filters.projectId);
           if (filters.severity) query = query.in('severity', filters.severity.split(','));
           if (filters.status) query = query.in('status', filters.status.split(','));
@@ -395,17 +440,32 @@ export function useDefectTrackerData() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [getAccessibleProjectIds]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
-      const [{ data: all }, { data: policies }, { data: actData }, { data: trendD }] = await Promise.all([
-        supabase.from('project_defects').select('*'),
+      const accessibleProjectIds = await getAccessibleProjectIds();
+      if (accessibleProjectIds?.length === 0) {
+        setDashboard({
+          totalOpen: 0, s1Count: 0, slaBreached: 0, fixedToday: 0, pendingVerify: 0,
+          s1Defects: [], recentActivity: [], severityBreakdown: [], projectBreakdown: [],
+          slaCompliance: [], trendData: [],
+        });
+        return;
+      }
+      let defectsQuery = supabase.from('project_defects').select('*');
+      if (accessibleProjectIds) defectsQuery = defectsQuery.in('project_id', accessibleProjectIds);
+      const [{ data: all }, { data: policies }] = await Promise.all([
+        defectsQuery,
         supabase.from('defect_sla_policies').select('*'),
-        supabase.from('defect_activity_log').select('*,project_defects(defect_id,title,project_name)').order('occurred_at', { ascending: false }).limit(10),
-        supabase.from('project_defects').select('created_at,status,fixed_date').gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString()),
       ]);
+      const defectRows = all ?? [];
+      const defectIds = defectRows.map((defect: any) => defect.id);
+      const { data: actData } = defectIds.length
+        ? await supabase.from('defect_activity_log').select('*').in('defect_id', defectIds).order('occurred_at', { ascending: false }).limit(10)
+        : { data: [] };
+      const defectById = new Map(defectRows.map((defect: any) => [defect.id, defect]));
       const withSLA = (all ?? []).map(d => ({ ...d, ...computeSLA(d, policies ?? []) }));
       const open = withSLA.filter(d => !['Closed','Verified',"Won't Fix",'Duplicate'].includes(d.status));
       const s1 = open.filter(d => d.severity === 'Very High');
@@ -435,15 +495,17 @@ export function useDefectTrackerData() {
       });
       const recentActivity = (actData ?? []).map((a: any) => ({
         id: a.id, actorName: a.actor_name, action: a.action,
-        defectId: a.project_defects?.defect_id ?? '', defectTitle: a.project_defects?.title ?? '',
-        projectName: a.project_defects?.project_name ?? '', occurredAt: a.occurred_at,
+        defectId: (defectById.get(a.defect_id) as any)?.defect_id ?? '',
+        defectTitle: (defectById.get(a.defect_id) as any)?.title ?? '',
+        projectName: (defectById.get(a.defect_id) as any)?.project_name ?? '',
+        occurredAt: a.occurred_at,
       }));
       const trendDays: Record<string, { opened: number; closed: number }> = {};
       for (let i = 29; i >= 0; i--) {
         const key = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
         trendDays[key] = { opened: 0, closed: 0 };
       }
-      for (const d of trendD ?? []) {
+      for (const d of defectRows.filter((defect: any) => defect.created_at >= new Date(Date.now() - 30 * 86400000).toISOString())) {
         const k = d.created_at?.slice(0, 10);
         if (k && trendDays[k]) trendDays[k].opened++;
         if (d.fixed_date) { const fk = d.fixed_date.slice(0, 10); if (trendDays[fk]) trendDays[fk].closed++; }
@@ -458,13 +520,20 @@ export function useDefectTrackerData() {
     } catch {} finally {
       setLoading(false);
     }
-  }, []);
+  }, [getAccessibleProjectIds]);
 
   const loadSLAData = useCallback(async () => {
     setLoading(true);
     try {
+      const accessibleProjectIds = await getAccessibleProjectIds();
+      if (accessibleProjectIds?.length === 0) {
+        setSLAData({ bySeverity: [], atRisk: [], breached: [], byProject: [] });
+        return;
+      }
+      let defectsQuery = supabase.from('project_defects').select('*');
+      if (accessibleProjectIds) defectsQuery = defectsQuery.in('project_id', accessibleProjectIds);
       const [{ data: all }, { data: policies }] = await Promise.all([
-        supabase.from('project_defects').select('*'),
+        defectsQuery,
         supabase.from('defect_sla_policies').select('*'),
       ]);
       const withSLA = (all ?? []).map(d => normalizeRow(d, computeSLA(d, policies ?? [])));
@@ -499,12 +568,21 @@ export function useDefectTrackerData() {
     } catch {} finally {
       setLoading(false);
     }
-  }, []);
+  }, [getAccessibleProjectIds]);
 
   const loadAnalytics = useCallback(async (filters: Partial<DefectFilters> = {}) => {
     setLoading(true);
     try {
+      const accessibleProjectIds = await getAccessibleProjectIds();
+      if (accessibleProjectIds?.length === 0) {
+        setAnalyticsData({
+          rootCause: [], regressionRate: 0, aging: [], avgFixTime: [],
+          topReporters: [], topAssignees: [], velocity: [],
+        });
+        return;
+      }
       let query = supabase.from('project_defects').select('*');
+      if (accessibleProjectIds) query = query.in('project_id', accessibleProjectIds);
       if (filters.projectId) query = query.eq('project_id', filters.projectId);
       if (filters.severity) query = query.in('severity', filters.severity.split(','));
       if (filters.dateFrom) query = query.gte('created_at', filters.dateFrom);
@@ -553,13 +631,20 @@ export function useDefectTrackerData() {
     } catch {} finally {
       setLoading(false);
     }
-  }, []);
+  }, [getAccessibleProjectIds]);
 
   const loadByProject = useCallback(async () => {
     setLoading(true);
     try {
+      const accessibleProjectIds = await getAccessibleProjectIds();
+      if (accessibleProjectIds?.length === 0) {
+        setByProjectData([]);
+        return;
+      }
+      let defectsQuery = supabase.from('project_defects').select('*');
+      if (accessibleProjectIds) defectsQuery = defectsQuery.in('project_id', accessibleProjectIds);
       const [{ data: all }, { data: policies }] = await Promise.all([
-        supabase.from('project_defects').select('*'),
+        defectsQuery,
         supabase.from('defect_sla_policies').select('*'),
       ]);
       const withSLA = (all ?? []).map(d => ({ ...normalizeRow(d, computeSLA(d, policies ?? [])), _raw: d }));
@@ -597,19 +682,32 @@ export function useDefectTrackerData() {
     } catch {} finally {
       setLoading(false);
     }
-  }, []);
+  }, [getAccessibleProjectIds]);
 
   const loadDefectDetail = useCallback(async (id: string) => {
     setLoading(true);
+    setError(null);
     try {
-      const [defectRes, commentsRes, activityRes, linksRes, policiesRes] = await Promise.all([
-        supabase.from('project_defects').select('*').eq('id', id).single(),
+      const accessibleProjectIds = await getAccessibleProjectIds();
+      if (accessibleProjectIds?.length === 0) {
+        setSelectedDefect(null);
+        setError('You do not have access to this defect');
+        return null;
+      }
+      let defectQuery = supabase.from('project_defects').select('*').eq('id', id);
+      if (accessibleProjectIds) defectQuery = defectQuery.in('project_id', accessibleProjectIds);
+      const defectRes = await defectQuery.maybeSingle();
+      if (defectRes.error || !defectRes.data) {
+        setSelectedDefect(null);
+        setError('Defect not found or you do not have project access');
+        return null;
+      }
+      const [commentsRes, activityRes, linksRes, policiesRes] = await Promise.all([
         supabase.from('defect_comments').select('*').eq('defect_id', id).order('created_at'),
         supabase.from('defect_activity_log').select('*').eq('defect_id', id).order('occurred_at', { ascending: false }).limit(50),
         supabase.from('defect_linked_items').select('*').eq('defect_id', id),
         supabase.from('defect_sla_policies').select('*'),
       ]);
-      if (defectRes.error) return null;
       const defect = normalizeRow(defectRes.data, computeSLA(defectRes.data, policiesRes.data ?? []));
       const comments: DefectComment[] = (commentsRes.data ?? []).map((c: any) => ({
         id: c.id, authorId: c.author_id, authorName: c.author_name,
@@ -639,7 +737,7 @@ export function useDefectTrackerData() {
       setLoading(false);
     }
     return null;
-  }, []);
+  }, [getAccessibleProjectIds]);
 
   const loadMasterData = useCallback(async () => {
     try {
@@ -668,40 +766,88 @@ export function useDefectTrackerData() {
 
   const createDefect = useCallback(async (body: Partial<Defect>): Promise<Defect | null> => {
     try {
-      const { data: lastDef } = await supabase.from('project_defects').select('defect_id').like('defect_id', 'DEF%').order('defect_id', { ascending: false }).limit(1);
+      if (!await canAccessProject(body.projectId)) {
+        toast.error('You can only log defects for projects where you are a team member');
+        return null;
+      }
+      let lastDefectQuery = supabase
+        .from('project_defects')
+        .select('defect_id')
+        .like('defect_id', 'DEF%')
+        .order('defect_id', { ascending: false })
+        .limit(1);
+      if (!isAdmin && body.projectId) lastDefectQuery = lastDefectQuery.eq('project_id', body.projectId);
+      const { data: lastDef } = await lastDefectQuery;
       let defNext = 1;
       if (lastDef?.length) { const m = String(lastDef[0].defect_id).match(/DEF(\d+)/); if (m) defNext = parseInt(m[1]) + 1; }
       const defectId = `DEF${String(defNext).padStart(4, '0')}`;
-      const dbBody = { ...toDbBody(body), defect_id: defectId, status: 'Open', created_by: body.reporterName ?? '' };
-      const { data, error: dbErr } = await supabase.from('project_defects').insert([dbBody]).select().single();
+      let compatibilityDetails: Record<string, any> = {};
+      let dbBody = { ...toDbBody(body), defect_id: defectId, status: 'Open', created_by: body.reporterName ?? '' };
+      let { data, error: dbErr } = await supabase.from('project_defects').insert([dbBody]).select().single();
+      if (dbErr && isMissingDetailColumn(dbErr)) {
+        compatibilityDetails = Object.fromEntries(
+          Object.entries(body).filter(([field]) => field in COMPATIBILITY_DETAIL_FIELDS),
+        );
+        dbBody = Object.fromEntries(
+          Object.entries(dbBody).filter(([column]) => !Object.values(COMPATIBILITY_DETAIL_FIELDS).includes(column)),
+        );
+        const retry = await supabase.from('project_defects').insert([dbBody]).select().single();
+        data = retry.data;
+        dbErr = retry.error;
+      }
       if (dbErr) {
         toast.error(dbErr.message);
         return null;
       }
       const { data: policies } = await supabase.from('defect_sla_policies').select('*');
-      const created = normalizeRow(data, computeSLA(data, policies ?? []));
+      const created = {
+        ...normalizeRow(data, computeSLA(data, policies ?? [])),
+        ...compatibilityDetails,
+      };
       setDefects(prev => [created, ...prev]);
       // Log activity (fire-and-forget)
       void supabase.from('defect_activity_log').insert([{
         defect_id: data.id, actor_id: body.reporterId ?? '', actor_name: body.reporterName ?? 'System',
         action: 'created', new_value: 'Open',
       }]);
+      if (created.assigneeId) {
+        const { error: notificationError } = await supabase.from('notifications').insert({
+          user_id: created.assigneeId,
+          type: 'defect_assigned',
+          title: `${created.defectId} assigned to you`,
+          body: `You have been assigned defect "${created.title}".`,
+          message: `You have been assigned defect "${created.title}".`,
+          link: '/defect-tracker',
+          read: false,
+        });
+        if (notificationError) toast.warning('Defect created, but the assignee notification could not be sent');
+      }
       toast.success(t('defectTracker.defectCreated'));
       return created;
     } catch (err: any) {
       toast.error(err?.message ?? t('defectTracker.createFailed'));
     }
     return null;
-  }, []);
+  }, [canAccessProject, isAdmin]);
 
-  const updateDefect = useCallback(async (id: string, body: Partial<Defect> & Record<string, any>, actorId?: string, actorName?: string): Promise<Defect | null> => {
+  const updateDefect = useCallback(async (
+    id: string,
+    body: Partial<Defect> & Record<string, any>,
+    actorId?: string,
+    actorName?: string,
+    silent = false,
+  ): Promise<Defect | null> => {
     try {
+      if (!await canAccessDefect(id)) {
+        if (!silent) toast.error('You do not have access to this defect');
+        return null;
+      }
       if (selectedDefect?.id === id && selectedDefect.status === 'Closed') {
-        toast.error('Closed defects are read-only');
+        if (!silent) toast.error('Closed defects are read-only');
         return null;
       }
       if (body.status === 'Resolved' && (!body.rootCause?.trim() || !body.resolutionCode?.trim())) {
-        toast.error('Root Cause and Resolution Code are required before resolving a defect');
+        if (!silent) toast.error('Root Cause and Resolution Code are required before resolving a defect');
         return null;
       }
       const updateBody = { ...body };
@@ -726,7 +872,10 @@ export function useDefectTrackerData() {
           dbErr = current.error;
         }
       }
-      if (dbErr) { toast.error(dbErr.message); return null; }
+      if (dbErr) {
+        if (!silent) toast.error(dbErr.message);
+        return null;
+      }
       const { data: policies } = await supabase.from('defect_sla_policies').select('*');
       const updated = {
         ...normalizeRow(data, computeSLA(data, policies ?? [])),
@@ -744,7 +893,8 @@ export function useDefectTrackerData() {
       const changedFields = Object.keys(updateBody)
         .filter(k => !k.startsWith('_') && !['id','createdAt','updatedAt','ageInDays','slaStatus','slaFixRemainingMins',
                         'slaVerifyRemainingMins','slaFirstResponseDueAt','slaFixDueAt','slaVerifyDueAt','slaFirstResponseMet',
-                        'slaFixBreached','slaVerifyBreached','slaPolicyName','comments','activityLog','linkedItems'].includes(k));
+                        'slaFixBreached','slaVerifyBreached','slaPolicyName','severityChangeReason',
+                        'comments','activityLog','linkedItems'].includes(k));
       if (changedFields.length > 0) {
         const activityRows = changedFields.map((field) => ({
           defect_id: id,
@@ -754,6 +904,7 @@ export function useDefectTrackerData() {
           field_changed: field,
           old_value: selectedDefect?.id === id ? String((selectedDefect as any)[field] ?? '') : '',
           new_value: String(updateBody[field] ?? ''),
+          comment: field === 'severity' ? String(updateBody.severityChangeReason ?? '') : '',
         }));
         const { data: activities } = await supabase.from('defect_activity_log').insert(activityRows).select();
         if (activities?.length && selectedDefect?.id === id) {
@@ -773,16 +924,84 @@ export function useDefectTrackerData() {
             : prev);
         }
       }
-      toast.success(t('defectTracker.defectUpdated'));
+      const previousDefect = selectedDefect?.id === id
+        ? selectedDefect
+        : defects.find((defect) => defect.id === id);
+      const notificationRows: Record<string, any>[] = [];
+      if (body.assigneeId && body.assigneeId !== previousDefect?.assigneeId) {
+        notificationRows.push({
+          user_id: body.assigneeId,
+          type: 'defect_assigned',
+          title: `${updated.defectId} assigned to you`,
+          body: `You have been assigned defect "${updated.title}".`,
+          message: `You have been assigned defect "${updated.title}".`,
+          link: '/defect-tracker',
+          read: false,
+        });
+      }
+      if (body.status === 'Awaiting Info' && updated.reporterId) {
+        notificationRows.push({
+          user_id: updated.reporterId,
+          type: 'defect_awaiting_info',
+          title: `${updated.defectId} needs your information`,
+          body: `More information is required for "${updated.title}".`,
+          message: `More information is required for "${updated.title}".`,
+          link: '/defect-tracker',
+          read: false,
+        });
+      }
+      if (body.status === 'Resolved' && updated.reporterId) {
+        notificationRows.push({
+          user_id: updated.reporterId,
+          type: 'defect_resolved',
+          title: `${updated.defectId} has been resolved`,
+          body: `Please verify whether "${updated.title}" is resolved.`,
+          message: `Please verify whether "${updated.title}" is resolved.`,
+          link: '/defect-tracker',
+          read: false,
+        });
+      }
+      if (notificationRows.length > 0) {
+        const { error: notificationError } = await supabase.from('notifications').insert(notificationRows);
+        if (notificationError && !silent) {
+          toast.warning('Defect updated, but one or more user notifications could not be sent');
+        }
+      }
+      if (!silent) toast.success(t('defectTracker.defectUpdated'));
       return updated;
     } catch {
-      toast.error(t('defectTracker.updateFailed'));
+      if (!silent) toast.error(t('defectTracker.updateFailed'));
     }
     return null;
-  }, [selectedDefect]);
+  }, [canAccessDefect, defects, selectedDefect]);
+
+  const bulkUpdateDefects = useCallback(async (
+    ids: string[],
+    body: Partial<Defect> & Record<string, any>,
+    actorId?: string,
+    actorName?: string,
+  ) => {
+    const editableIds = ids.filter((id) => defects.find((defect) => defect.id === id)?.status !== 'Closed');
+    const skippedIds = ids.filter((id) => !editableIds.includes(id));
+    const results = await Promise.all(
+      editableIds.map(async (id) => ({
+        id,
+        updated: await updateDefect(id, body, actorId, actorName, true),
+      })),
+    );
+    return {
+      updatedIds: results.filter((result) => result.updated).map((result) => result.id),
+      failedIds: results.filter((result) => !result.updated).map((result) => result.id),
+      skippedIds,
+    };
+  }, [defects, updateDefect]);
 
   const deleteDefect = useCallback(async (id: string) => {
     try {
+      if (!await canAccessDefect(id)) {
+        toast.error('You do not have access to this defect');
+        return false;
+      }
       const { error: dbErr } = await supabase.from('project_defects').delete().eq('id', id);
       if (!dbErr) {
         setDefects(prev => prev.filter(d => d.id !== id));
@@ -791,10 +1010,14 @@ export function useDefectTrackerData() {
       }
     } catch {}
     return false;
-  }, []);
+  }, [canAccessDefect]);
 
   const addComment = useCallback(async (defectId: string, content: string, authorId: string, authorName: string): Promise<DefectComment | null> => {
     try {
+      if (!await canAccessDefect(defectId)) {
+        toast.error('You do not have access to this defect');
+        return null;
+      }
       if (selectedDefect?.id === defectId && selectedDefect.status === 'Closed') {
         toast.error('Closed defects are read-only');
         return null;
@@ -856,10 +1079,14 @@ export function useDefectTrackerData() {
       return comment;
     } catch {}
     return null;
-  }, [selectedDefect]);
+  }, [canAccessDefect, selectedDefect]);
 
   const addLink = useCallback(async (defectId: string, link: Omit<LinkedItem, 'id'>) => {
     try {
+      if (!await canAccessDefect(defectId)) {
+        toast.error('You do not have access to this defect');
+        return null;
+      }
       if (selectedDefect?.id === defectId && selectedDefect.status === 'Closed') {
         toast.error('Closed defects are read-only');
         return null;
@@ -876,7 +1103,7 @@ export function useDefectTrackerData() {
       return newLink;
     } catch {}
     return null;
-  }, [selectedDefect]);
+  }, [canAccessDefect, selectedDefect]);
 
   return {
     defects, dashboard, slaData, analyticsData, byProjectData,
@@ -884,7 +1111,7 @@ export function useDefectTrackerData() {
     loading, error,
     loadDefects, loadDashboard, loadSLAData, loadAnalytics,
     loadByProject, loadDefectDetail, loadMasterData,
-    createDefect, updateDefect, deleteDefect, addComment, addLink,
+    createDefect, updateDefect, bulkUpdateDefects, deleteDefect, addComment, addLink,
   };
 }
 
