@@ -2235,7 +2235,7 @@ interface Defect {
   severity: "Very High" | "High" | "Medium" | "Low";
   title: string;
   description?: string;
-  status: "Open" | "In Progress" | "Fixed" | "Verified" | "Closed" | "Deferred" | "Won't Fix" | "Blocked";
+  status: "Open" | "In Progress" | "Awaiting Info" | "Resolved" | "Verified" | "Closed" | "Deferred" | "Won't Fix" | "Blocked";
   priority: "P1" | "P2" | "P3" | "P4";
   assigneeId?: string;
   assigneeName?: string;
@@ -5157,7 +5157,7 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
               <div>
                 <label className="block text-sm font-medium text-foreground mb-1">Status</label>
                 <select className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" value={status} onChange={(e) => setStatus(e.target.value as Defect["status"])}>
-                  {["Open","In Progress","Fixed","Verified","Closed","Deferred","Won't Fix","Blocked"].map((s) => <option key={s} value={s}>{s}</option>)}
+                  {["Open","In Progress","Awaiting Info","Resolved","Verified","Closed","Deferred","Won't Fix","Blocked"].map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
@@ -5356,7 +5356,8 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
   const DEFECT_STATUS_BADGE: Record<string, string> = {
     "Open": "bg-muted text-muted-foreground",
     "In Progress": "bg-blue-100 text-blue-700",
-    "Fixed": "bg-green-100 text-green-700",
+    "Resolved": "bg-emerald-100 text-emerald-700",
+    "Awaiting Info": "bg-amber-100 text-amber-700",
     "Verified": "bg-teal-100 text-teal-700",
     "Closed": "bg-muted text-muted-foreground",
     "Deferred": "bg-amber-100 text-amber-700",
@@ -5364,7 +5365,7 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
     "Blocked": "bg-red-100 text-red-700",
   };
 
-  const KANBAN_COLS = ["Open", "In Progress", "Fixed", "Verified"] as const;
+  const KANBAN_COLS = ["Open", "In Progress", "Awaiting Info", "Resolved", "Verified"] as const;
 
   return (
     <div className="space-y-4">
@@ -5384,7 +5385,7 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
         </select>
         <select className="bg-input-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
           <option value="All">All Statuses</option>
-          {["Open","In Progress","Fixed","Verified","Closed","Deferred","Won't Fix","Blocked"].map((s) => <option key={s} value={s}>{s}</option>)}
+          {["Open","In Progress","Awaiting Info","Resolved","Verified","Closed","Deferred","Won't Fix","Blocked"].map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
         <select className="bg-input-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)}>
           <option value="All">All Assignees</option>
@@ -5830,8 +5831,8 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
   const budgetMaxVal = Math.max(1, ...budgetItems.map((b: any) => Math.max(b.budgeted ?? 0, b.actual ?? 0)));
 
   // ── Defect calculations ──
-  const openDefects = defects.filter((d: any) => !["Fixed", "Closed", "Resolved"].includes(d.status));
-  const fixedDefects = defects.filter((d: any) => ["Fixed", "Closed", "Resolved"].includes(d.status));
+  const openDefects = defects.filter((d: any) => !["Closed", "Resolved", "Verified"].includes(d.status));
+  const fixedDefects = defects.filter((d: any) => ["Closed", "Resolved", "Verified"].includes(d.status));
   const regressionDefects = defects.filter((d: any) => d.priority === "Critical" || d.priority === "Blocker");
 
   // 30-day window opened vs closed
@@ -5840,7 +5841,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
     const d = new Date(thirtyDaysAgo.getTime() + i * 86400000);
     const dStr = d.toISOString().slice(0, 10);
     const opened = defects.filter((df: any) => df.created_at?.slice(0, 10) === dStr).length;
-    const closed = defects.filter((df: any) => df.updated_at?.slice(0, 10) === dStr && ["Fixed", "Closed", "Resolved"].includes(df.status)).length;
+    const closed = defects.filter((df: any) => df.updated_at?.slice(0, 10) === dStr && ["Closed", "Resolved", "Verified"].includes(df.status)).length;
     return { dStr, opened, closed };
   });
   const maxDefects = Math.max(1, ...defectDays.map(d => Math.max(d.opened, d.closed)));
@@ -6342,7 +6343,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
             {[
               { label: "Total", value: defects.length, color: "text-foreground" },
               { label: "Open", value: openDefects.length, color: "text-red-600" },
-              { label: "Fixed", value: fixedDefects.length, color: "text-green-600" },
+              { label: "Resolved", value: fixedDefects.length, color: "text-green-600" },
               { label: "Critical/Blocker", value: regressionDefects.length, color: "text-orange-600" },
             ].map(k => (
               <div key={k.label} className="bg-card border rounded-xl p-4 text-center">

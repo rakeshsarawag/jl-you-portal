@@ -10,6 +10,7 @@ import {
   FolderOpen, MessageSquare, Linkedin, BarChart3, GitBranch, ShieldCheck,
   Cog, UserCog, Lock, ChevronLeft, ChevronRight, Home, CalendarCheck, Pin, PinOff,
 } from 'lucide-react';
+import { useIsMobile } from './ui/use-mobile';
 
 const ICON_MAP: Record<string, React.ComponentType<{ className?: string; strokeWidth?: number }>> = {
   LayoutDashboard, Users, UserPlus, ClipboardList, TrendingUp, BookOpen,
@@ -50,6 +51,7 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
   const location = useLocation();
   const sidebarRef = useRef<HTMLElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
   const [pinned, setPinned] = useState(() => localStorage.getItem('jl-sidebar-pinned') === 'true');
   const [hoverExpanded, setHoverExpanded] = useState(false);
@@ -67,9 +69,9 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
 
   // Update the global sidebar width CSS variable
   useLayoutEffect(() => {
-    const w = isLaunchpad ? 0 : isExpanded ? 220 : 56;
+    const w = isLaunchpad || isMobile ? 0 : isExpanded ? 220 : 56;
     document.documentElement.style.setProperty('--global-sidebar-w', `${w}px`);
-  }, [isExpanded, isLaunchpad]);
+  }, [isExpanded, isLaunchpad, isMobile]);
 
   // Close user menu on outside click
   useEffect(() => {
@@ -118,7 +120,7 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
   return (
     <>
       {/* User menu dropdown — rendered outside aside so it can overflow */}
-      {userMenuOpen && currentUser && (
+      {!isMobile && userMenuOpen && currentUser && (
         <div
           ref={userMenuRef}
           className="fixed bottom-16 left-2 z-[60] bg-card border border-border rounded-xl shadow-2xl overflow-hidden"
@@ -137,7 +139,7 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
           width: isExpanded ? '220px' : '56px',
           transition: 'width 180ms ease-in-out',
         }}
-        className="fixed top-12 left-0 bottom-0 z-40 flex flex-col overflow-hidden border-r border-white/5"
+        className="fixed top-12 left-0 bottom-0 z-40 hidden md:flex flex-col overflow-hidden border-r border-white/5"
       >
         {/* Header row: Navigation label + pin button */}
         <div

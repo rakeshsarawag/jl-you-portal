@@ -34,43 +34,61 @@ function isMissing(error: unknown): boolean {
 // Compute SLA status for a defect
 function computeSLA(defect: any, policies: any[]) {
   const policy = policies.find(p => p.severity === defect.severity);
-  if (!policy) return { slaStatus: 'on_track', slaFixRemainingMins: null, slaVerifyRemainingMins: null, slaFixDueAt: null, slaVerifyDueAt: null };
+  if (!policy) return {
+    slaStatus: 'on_track', slaFirstResponseRemainingMins: null,
+    slaFixRemainingMins: null, slaVerifyRemainingMins: null,
+    slaFirstResponseDueAt: null, slaFixDueAt: null, slaVerifyDueAt: null,
+    slaFirstResponseMet: false, slaFirstResponseBreached: false,
+    slaFixBreached: false, slaVerifyBreached: false, slaPolicyName: '',
+  };
 
   const createdAt = new Date(defect.created_at).getTime();
   const now = Date.now();
-
-  const fixDueAt = new Date(createdAt + policy.fix_mins * 60000);
+  const status = defect.status === 'Fixed' ? 'Resolved' : defect.status;
+  const pausedAt = defect.sla_paused_at ? new Date(defect.sla_paused_at).getTime() : null;
+  const isPaused = defect.sla_paused || status === 'Awaiting Info';
+  const currentPauseMins = isPaused && pausedAt
+    ? Math.max(0, Math.round((now - pausedAt) / 60000))
+    : 0;
+  const totalPauseMins = Math.max(0, Number(defect.sla_total_paused_mins ?? 0)) + currentPauseMins;
+  const pauseMs = totalPauseMins * 60000;
+  const firstResponseDueAt = new Date(createdAt + policy.first_response_mins * 60000);
+  const fixDueAt = new Date(createdAt + policy.fix_mins * 60000 + pauseMs);
   const verifyDueAt = defect.fixed_date
     ? new Date(new Date(defect.fixed_date).getTime() + policy.verification_mins * 60000)
     : null;
-
-  const fixRemainingMins = Math.round((fixDueAt.getTime() - now) / 60000);
-  const verifyRemainingMins = verifyDueAt ? Math.round((verifyDueAt.getTime() - now) / 60000) : null;
-
-  const status = defect.status;
-  const isPaused = defect.sla_paused || ['Deferred', "Won't Fix", 'Waiting for Info'].includes(status);
+  const firstResponseAt = defect.first_response_at ? new Date(defect.first_response_at).getTime() : null;
+  const fixedAt = defect.fixed_date ? new Date(defect.fixed_date).getTime() : null;
+  const verifiedAt = defect.verified_date ? new Date(defect.verified_date).getTime() : null;
+  const firstResponseRemainingMins = Math.round((firstResponseDueAt.getTime() - (firstResponseAt ?? now)) / 60000);
+  const fixRemainingMins = Math.round((fixDueAt.getTime() - (fixedAt ?? now)) / 60000);
+  const verifyRemainingMins = verifyDueAt ? Math.round((verifyDueAt.getTime() - (verifiedAt ?? now)) / 60000) : null;
+  const firstResponseBreached = (firstResponseAt ?? now) > firstResponseDueAt.getTime();
+  const fixBreached = (fixedAt ?? now) > fixDueAt.getTime();
+  const verifyBreached = verifyDueAt ? (verifiedAt ?? now) > verifyDueAt.getTime() : false;
+  const atRiskThreshold = policy.fix_mins * (1 - Math.min(100, Math.max(0, policy.escalate_at_percent ?? 80)) / 100);
 
   let slaStatus = 'on_track';
-  if (status === 'Verified' || status === 'Closed') {
+  if (isPaused) {
+    slaStatus = 'paused';
+  } else if (status === 'Verified' || status === 'Closed') {
     slaStatus = 'all_met';
-  } else if (status === 'Fixed') {
-    if (verifyDueAt && now > verifyDueAt.getTime()) slaStatus = 'verify_breached';
-    else if (verifyDueAt && verifyRemainingMins! < 60) slaStatus = 'at_risk';
-    else slaStatus = 'on_track';
-  } else if (!isPaused) {
-    if (now > fixDueAt.getTime()) slaStatus = 'fix_breached';
-    else if (fixRemainingMins < 60 * (policy.escalate_at_percent / 100)) slaStatus = 'at_risk';
-  }
+  } else if (status === 'Resolved' && verifyBreached) slaStatus = 'verify_breached';
+  else if (!['Resolved','Verified','Closed'].includes(status) && fixBreached) slaStatus = 'fix_breached';
+  else if (fixRemainingMins <= atRiskThreshold) slaStatus = 'at_risk';
 
   return {
     slaStatus,
+    slaFirstResponseRemainingMins,
     slaFixRemainingMins: fixRemainingMins,
     slaVerifyRemainingMins: verifyRemainingMins,
+    slaFirstResponseDueAt: firstResponseDueAt.toISOString(),
     slaFixDueAt: fixDueAt.toISOString(),
     slaVerifyDueAt: verifyDueAt?.toISOString() ?? null,
-    slaFirstResponseMet: !!defect.first_response_at,
-    slaFixBreached: !isPaused && now > fixDueAt.getTime() && !['Fixed','Verified','Closed'].includes(status),
-    slaVerifyBreached: status === 'Fixed' && verifyDueAt ? now > verifyDueAt.getTime() : false,
+    slaFirstResponseMet: firstResponseAt !== null && !firstResponseBreached,
+    slaFirstResponseBreached: firstResponseBreached,
+    slaFixBreached: fixBreached,
+    slaVerifyBreached: verifyBreached,
     slaPolicyName: policy.name,
   };
 }
@@ -84,12 +102,16 @@ function normalizeDefect(d: any, sla: any = {}) {
     title: d.title ?? '',
     severity: d.severity ?? 'Medium',
     priority: d.priority ?? 'P3',
-    status: d.status ?? 'Open',
+    status: d.status === 'Fixed' ? 'Resolved' : (d.status ?? 'Open'),
     description: d.description ?? '',
     stepsToReproduce: d.steps_to_reproduce ?? [],
     expectedResult: d.expected_result ?? '',
     actualResult: d.actual_result ?? '',
     environment: d.environment ?? '',
+    systemName: d.system_name ?? '',
+    clientName: d.client_name ?? '',
+    externalTicketNo: d.external_ticket_no ?? '',
+    transportRequest: d.transport_request ?? '',
     buildVersion: d.build_version ?? '',
     foundInVersion: d.found_in_version ?? '',
     fixVersion: d.fix_version ?? '',
@@ -115,6 +137,8 @@ function normalizeDefect(d: any, sla: any = {}) {
     testEvidence: d.test_evidence ?? '',
     watchers: d.watchers ?? [],
     slaPaused: d.sla_paused ?? false,
+    slaPausedAt: d.sla_paused_at ?? null,
+    slaTotalPausedMins: d.sla_total_paused_mins ?? 0,
     firstResponseAt: d.first_response_at ?? null,
     introducedInSprint: d.introduced_in_sprint ?? '',
     os: d.os ?? '',
@@ -231,6 +255,10 @@ app.post('/defects', async (c) => {
       expected_result: body.expectedResult ?? '',
       actual_result: body.actualResult ?? '',
       environment: body.environment ?? '',
+      system_name: body.systemName ?? '',
+      client_name: body.clientName ?? '',
+      external_ticket_no: body.externalTicketNo ?? '',
+      transport_request: body.transportRequest ?? '',
       build_version: body.buildVersion ?? '',
       found_in_version: body.foundInVersion ?? '',
       sprint_id: body.sprintId ?? '',
@@ -302,6 +330,8 @@ app.put('/defects/:id', async (c) => {
       description: 'description', stepsToReproduce: 'steps_to_reproduce',
       expectedResult: 'expected_result', actualResult: 'actual_result',
       environment: 'environment', buildVersion: 'build_version',
+      systemName: 'system_name', clientName: 'client_name',
+      externalTicketNo: 'external_ticket_no', transportRequest: 'transport_request',
       foundInVersion: 'found_in_version', fixVersion: 'fix_version',
       fixedInVersion: 'fixed_in_version', sprintId: 'sprint_id', sprintName: 'sprint_name',
       assigneeId: 'assignee_id', assigneeName: 'assignee_name',
@@ -320,7 +350,7 @@ app.put('/defects/:id', async (c) => {
     }
 
     // Handle status-specific timestamp fields
-    if (body.status === 'Fixed' && !body.fixedDate) updates.fixed_date = new Date().toISOString();
+    if (body.status === 'Resolved' && !body.fixedDate) updates.fixed_date = new Date().toISOString();
     if (body.fixedDate) updates.fixed_date = body.fixedDate;
     if (body.status === 'Verified' && !body.verifiedDate) updates.verified_date = new Date().toISOString();
 
@@ -334,7 +364,16 @@ app.put('/defects/:id', async (c) => {
     }
 
     // Fetch existing defect for notification context
-    const { data: existing } = await supabase.from('project_defects').select('defect_id, title, severity, reporter_id, assignee_id, watchers, status').eq('id', id).single().catch(() => ({ data: null }));
+    const { data: existing } = await supabase.from('project_defects').select('defect_id, title, severity, reporter_id, assignee_id, watchers, status, root_cause, resolution_code').eq('id', id).single().catch(() => ({ data: null }));
+    if (existing?.status === 'Closed' && body.status && body.status !== 'Closed') {
+      return c.json({ success: false, error: 'Closed defects cannot be reopened' }, 409);
+    }
+    if (body.status === 'Resolved' && !(body.rootCause ?? existing?.root_cause)?.trim()) {
+      return c.json({ success: false, error: 'Root Cause is required before resolving a defect' }, 400);
+    }
+    if (body.status === 'Resolved' && !(body.resolutionCode ?? existing?.resolution_code)?.trim()) {
+      return c.json({ success: false, error: 'Resolution Code is required before resolving a defect' }, 400);
+    }
 
     const { data, error } = await supabase.from('project_defects').update(updates).eq('id', id).select().single();
     if (error) return c.json({ success: false, error: error.message }, 500);
@@ -356,12 +395,20 @@ app.put('/defects/:id', async (c) => {
       const notifDefectId = existing.defect_id ?? id;
       const notifTitle = existing.title ?? '';
       const notifSeverity = existing.severity ?? 'Medium';
-      if (body.status === 'Fixed' && existing.reporter_id) {
+      if (body.status === 'Resolved' && existing.reporter_id) {
         await sendDefectNotification(supabase, {
           defectId: notifDefectId, defectTitle: notifTitle, severity: notifSeverity,
           recipientIds: [existing.reporter_id],
-          type: 'defect_fixed',
-          message: `Defect ${notifDefectId} has been marked as fixed`,
+          type: 'defect_resolved',
+          message: `Defect ${notifDefectId} has been resolved and needs your verification`,
+        });
+      }
+      if (body.status === 'Awaiting Info' && existing.reporter_id) {
+        await sendDefectNotification(supabase, {
+          defectId: notifDefectId, defectTitle: notifTitle, severity: notifSeverity,
+          recipientIds: [existing.reporter_id],
+          type: 'defect_awaiting_info',
+          message: `Defect ${notifDefectId} needs more information from you`,
         });
       }
       if (body.status === 'Verified' && existing.assignee_id) {
@@ -479,14 +526,23 @@ app.post('/defects/:id/comments', async (c) => {
       return c.json({ success: false, error: error.message }, 500);
     }
 
-    // Log activity + set first_response if not set
+    const { data: defectContext } = await supabase.from('project_defects')
+      .select('defect_id, title, severity, watchers, reporter_id')
+      .eq('id', defectId).single().catch(() => ({ data: null }));
+
+    // A reporter comment is not the support team's first response.
+    const firstResponseUpdate = defectContext
+      && body.authorId
+      && body.authorId !== defectContext.reporter_id
+      ? supabase.from('project_defects').update({ first_response_at: new Date().toISOString() })
+          .eq('id', defectId).is('first_response_at', null)
+      : Promise.resolve();
     await Promise.all([
       supabase.from('defect_activity_log').insert([{
         defect_id: defectId, actor_id: body.authorId ?? '', actor_name: body.authorName ?? '',
         action: 'commented', comment: body.content.slice(0, 100),
       }]),
-      supabase.from('project_defects').update({ first_response_at: new Date().toISOString() })
-        .eq('id', defectId).is('first_response_at', null),
+      firstResponseUpdate,
     ]).catch(() => {});
 
     // @mentions
@@ -496,7 +552,7 @@ app.post('/defects/:id/comments', async (c) => {
     }
 
     // Notify watchers
-    const { data: existing } = await supabase.from('project_defects').select('defect_id, title, severity, watchers').eq('id', defectId).single().catch(() => ({ data: null }));
+    const existing = defectContext;
     if (existing && (existing.watchers ?? []).length > 0) {
       await sendDefectNotification(supabase, {
         defectId: existing.defect_id ?? defectId,
@@ -557,7 +613,7 @@ app.get('/dashboard', async (c) => {
     const supabase = getSupabase();
 
     const [allRes, policiesRes] = await Promise.all([
-      supabase.from('project_defects').select('*').not('status', 'in', '(Closed,Verified)'),
+      supabase.from('project_defects').select('*'),
       supabase.from('defect_sla_policies').select('*'),
     ]);
 
@@ -571,7 +627,9 @@ app.get('/dashboard', async (c) => {
     const all = (allRes.data ?? []);
     const policies = policiesRes.data ?? [];
 
-    const withSLA = all.map(d => ({ ...d, ...computeSLA(d, policies) }));
+    const withSLA = all
+      .filter(d => !['Closed','Verified',"Won't Fix",'Duplicate'].includes(d.status))
+      .map(d => ({ ...d, ...computeSLA(d, policies) }));
     const s1 = withSLA.filter(d => d.severity === 'Very High');
     const breached = withSLA.filter(d => d.slaFixBreached || d.slaVerifyBreached);
 
@@ -579,18 +637,16 @@ app.get('/dashboard', async (c) => {
     const todayStart = new Date(); todayStart.setHours(0,0,0,0);
     const { count: fixedToday } = await supabase.from('project_defects')
       .select('id', { count: 'exact', head: true })
-      .eq('status', 'Fixed').gte('fixed_date', todayStart.toISOString());
+      .gte('fixed_date', todayStart.toISOString());
 
-    const pendingVerify = withSLA.filter(d => d.status === 'Fixed').length;
+    const pendingVerify = withSLA.filter(d => d.status === 'Resolved').length;
 
     // Week-over-week delta
     const oneWeekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
-    const { count: openLastWeek } = await supabase
-      .from('project_defects')
-      .select('id', { count: 'exact', head: true })
-      .not('status', 'in', '(Closed,Verified)')
-      .lte('created_at', oneWeekAgo)
-      .catch(() => ({ count: 0 }));
+    const openLastWeek = all.filter(d =>
+      !['Closed','Verified',"Won't Fix",'Duplicate'].includes(d.status)
+      && d.created_at <= oneWeekAgo
+    ).length;
 
     // Severity breakdown
     const severityBreakdown = ['Very High','High','Medium','Low'].map(sev => ({
@@ -660,7 +716,7 @@ app.get('/dashboard', async (c) => {
     const totalOpen = withSLA.filter(d => !['Closed','Verified'].includes(d.status)).length;
     return c.json({ success: true, data: {
       totalOpen,
-      openDelta: totalOpen - (openLastWeek ?? 0),
+      openDelta: totalOpen - openLastWeek,
       s1Count: s1.length,
       slaBreached: breached.length,
       fixedToday: fixedToday ?? 0,
@@ -709,7 +765,7 @@ app.get('/sla', async (c) => {
     const now = Date.now();
     const twoHours = 2 * 3600000;
     const atRisk = withSLA
-      .filter(d => !['Closed','Verified','Fixed'].includes(d.status) && d.slaFixRemainingMins !== null && d.slaFixRemainingMins > 0 && d.slaFixRemainingMins * 60000 < twoHours)
+      .filter(d => !['Closed','Verified','Resolved'].includes(d.status) && !d.sla_paused && d.slaStatus === 'at_risk' && d.slaFixRemainingMins !== null && d.slaFixRemainingMins > 0 && d.slaFixRemainingMins * 60000 < twoHours)
       .sort((a, b) => (a.slaFixRemainingMins ?? 999) - (b.slaFixRemainingMins ?? 999));
 
     const breached = withSLA.filter(d => d.slaFixBreached || d.slaVerifyBreached);
@@ -802,7 +858,7 @@ app.get('/analytics', async (c) => {
     for (const d of defects) {
       const a = d.assignee_name || 'Unassigned';
       if (!assigneeMap[a]) assigneeMap[a] = { resolved: 0, totalFix: 0 };
-      if (['Fixed','Verified','Closed'].includes(d.status)) assigneeMap[a].resolved++;
+      if (['Resolved','Verified','Closed'].includes(d.status)) assigneeMap[a].resolved++;
       if (d.fixed_date) assigneeMap[a].totalFix += (new Date(d.fixed_date).getTime() - new Date(d.created_at).getTime()) / 3600000;
     }
     const topAssignees = Object.entries(assigneeMap)
@@ -815,7 +871,7 @@ app.get('/analytics', async (c) => {
       const sprint = d.sprint_name || d.sprint_id || 'No Sprint';
       if (!sprintMap[sprint]) sprintMap[sprint] = { opened: 0, closed: 0 };
       sprintMap[sprint].opened++;
-      if (['Fixed','Verified','Closed'].includes(d.status)) sprintMap[sprint].closed++;
+      if (['Resolved','Verified','Closed'].includes(d.status)) sprintMap[sprint].closed++;
     }
     const velocity = Object.entries(sprintMap).map(([sprint, v]) => ({ sprint, ...v }));
 
@@ -893,13 +949,13 @@ app.get('/by-project', async (c) => {
       if (d.severity === 'High')      projMap[pId].s2++;
       if (d.severity === 'Medium')    projMap[pId].s3++;
       if (d.severity === 'Low')       projMap[pId].s4++;
-      if (['Fixed','Verified','Closed'].includes(d.status)) projMap[pId].resolved++;
+      if (['Resolved','Verified','Closed'].includes(d.status)) projMap[pId].resolved++;
       if (d.slaFixBreached || d.slaVerifyBreached) projMap[pId].breached++;
     }
 
     const result = Object.values(projMap).map((p: any) => {
       const critical = p.defects
-        .filter((d: any) => !['Fixed','Verified','Closed'].includes(d.status))
+        .filter((d: any) => !['Resolved','Verified','Closed'].includes(d.status))
         .sort((a: any, b: any) => {
           const order: Record<string, number> = { 'Very High': 0, 'High': 1, 'Medium': 2, 'Low': 3 };
           return (order[a.severity] ?? 4) - (order[b.severity] ?? 4);

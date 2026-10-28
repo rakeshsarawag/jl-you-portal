@@ -2,13 +2,14 @@ import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
 import { API_BASE, apiHeaders, safeJson, supabase } from '../utils/constants';
 import { t } from '../../i18n/index';
+import { computeDefectSLA } from '../utils/defectSla';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type DefectSeverity = 'Very High' | 'High' | 'Medium' | 'Low';
 export type DefectPriority = 'P1' | 'P2' | 'P3' | 'P4';
-export type DefectStatus = 'Open' | 'In Progress' | 'Blocked' | 'Fixed' | 'Verified' | 'Closed' | 'Deferred' | "Won't Fix" | 'Duplicate';
-export type SLAStatus = 'on_track' | 'at_risk' | 'fix_breached' | 'verify_breached' | 'all_met';
+export type DefectStatus = 'Open' | 'In Progress' | 'Awaiting Info' | 'Blocked' | 'Resolved' | 'Verified' | 'Closed' | 'Deferred' | "Won't Fix" | 'Duplicate';
+export type SLAStatus = 'on_track' | 'at_risk' | 'fix_breached' | 'verify_breached' | 'all_met' | 'paused';
 
 export interface DefectComment {
   id: string;
@@ -53,6 +54,10 @@ export interface Defect {
   expectedResult: string;
   actualResult: string;
   environment: string;
+  systemName: string;
+  clientName: string;
+  externalTicketNo: string;
+  transportRequest: string;
   buildVersion: string;
   foundInVersion: string;
   fixVersion: string;
@@ -78,6 +83,8 @@ export interface Defect {
   testEvidence: string;
   watchers: string[];
   slaPaused: boolean;
+  slaPausedAt: string | null;
+  slaTotalPausedMins: number;
   firstResponseAt: string | null;
   introducedInSprint: string;
   os: string;
@@ -89,11 +96,13 @@ export interface Defect {
   ageInDays: number;
   // SLA computed
   slaStatus: SLAStatus;
+  slaFirstResponseRemainingMins: number | null;
   slaFixRemainingMins: number | null;
   slaVerifyRemainingMins: number | null;
   slaFixDueAt: string | null;
   slaVerifyDueAt: string | null;
   slaFirstResponseMet: boolean;
+  slaFirstResponseBreached: boolean;
   slaFixBreached: boolean;
   slaVerifyBreached: boolean;
   slaPolicyName: string;
@@ -166,37 +175,7 @@ export interface DefectFilters {
 
 // ── SLA computation (mirrors server-side logic) ────────────────────────────────
 
-function computeSLA(defect: any, policies: any[]) {
-  const policy = policies.find((p: any) => p.severity === defect.severity);
-  if (!policy) return {
-    slaStatus: 'on_track' as const, slaFixRemainingMins: null, slaVerifyRemainingMins: null,
-    slaFixDueAt: null, slaVerifyDueAt: null, slaFirstResponseMet: false,
-    slaFixBreached: false, slaVerifyBreached: false, slaPolicyName: '',
-  };
-  const createdAt = new Date(defect.created_at ?? defect.createdAt).getTime();
-  const now = Date.now();
-  const fixDueAt = new Date(createdAt + policy.fix_mins * 60000);
-  const verifyDueAt = (defect.fixed_date ?? defect.fixedDate)
-    ? new Date(new Date(defect.fixed_date ?? defect.fixedDate).getTime() + policy.verification_mins * 60000)
-    : null;
-  const fixRemainingMins = Math.round((fixDueAt.getTime() - now) / 60000);
-  const verifyRemainingMins = verifyDueAt ? Math.round((verifyDueAt.getTime() - now) / 60000) : null;
-  const status = defect.status;
-  const slaFixBreached = !['Fixed','Verified','Closed'].includes(status) && fixRemainingMins < 0;
-  const slaVerifyBreached = verifyDueAt !== null && verifyRemainingMins !== null && verifyRemainingMins < 0 && !['Verified','Closed'].includes(status);
-  const slaFirstResponseMet = !!(defect.first_response_at ?? defect.firstResponseAt);
-  let slaStatus: SLAStatus;
-  if (slaFixBreached) slaStatus = 'fix_breached';
-  else if (slaVerifyBreached) slaStatus = 'verify_breached';
-  else if (['Fixed','Verified','Closed'].includes(status)) slaStatus = 'all_met';
-  else if (fixRemainingMins < 120) slaStatus = 'at_risk';
-  else slaStatus = 'on_track';
-  return {
-    slaStatus, slaFixRemainingMins: fixRemainingMins, slaVerifyRemainingMins: verifyRemainingMins,
-    slaFixDueAt: fixDueAt.toISOString(), slaVerifyDueAt: verifyDueAt?.toISOString() ?? null,
-    slaFirstResponseMet, slaFixBreached, slaVerifyBreached, slaPolicyName: policy.name ?? '',
-  };
-}
+const computeSLA = computeDefectSLA;
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -209,12 +188,16 @@ function normalizeRow(d: any, sla?: ReturnType<typeof computeSLA>): Defect {
     title: d.title ?? '',
     severity: d.severity ?? 'Medium',
     priority: PRIORITY_FROM_DB[d.priority] ?? d.priority ?? 'P3',
-    status: d.status ?? 'Open',
+    status: d.status === 'Fixed' ? 'Resolved' : (d.status ?? 'Open'),
     description: d.description ?? '',
     stepsToReproduce: d.steps_to_reproduce ?? [],
     expectedResult: d.expected_result ?? '',
     actualResult: d.actual_result ?? '',
     environment: d.environment ?? '',
+    systemName: d.system_name ?? '',
+    clientName: d.client_name ?? '',
+    externalTicketNo: d.external_ticket_no ?? '',
+    transportRequest: d.transport_request ?? '',
     buildVersion: d.build_version ?? '',
     foundInVersion: d.found_in_version ?? '',
     fixVersion: d.fix_version ?? '',
@@ -240,6 +223,8 @@ function normalizeRow(d: any, sla?: ReturnType<typeof computeSLA>): Defect {
     testEvidence: d.test_evidence ?? '',
     watchers: d.watchers ?? [],
     slaPaused: d.sla_paused ?? false,
+    slaPausedAt: d.sla_paused_at ?? null,
+    slaTotalPausedMins: d.sla_total_paused_mins ?? 0,
     firstResponseAt: d.first_response_at ?? null,
     introducedInSprint: d.introduced_in_sprint ?? '',
     os: d.os ?? '',
@@ -250,26 +235,19 @@ function normalizeRow(d: any, sla?: ReturnType<typeof computeSLA>): Defect {
     updatedAt: d.updated_at ?? '',
     ageInDays: d.created_at ? Math.floor((Date.now() - new Date(d.created_at).getTime()) / 86400000) : 0,
     slaStatus: sla?.slaStatus ?? 'on_track',
+    slaFirstResponseRemainingMins: sla?.slaFirstResponseRemainingMins ?? null,
     slaFixRemainingMins: sla?.slaFixRemainingMins ?? null,
     slaVerifyRemainingMins: sla?.slaVerifyRemainingMins ?? null,
     slaFixDueAt: sla?.slaFixDueAt ?? null,
     slaVerifyDueAt: sla?.slaVerifyDueAt ?? null,
     slaFirstResponseMet: sla?.slaFirstResponseMet ?? false,
+    slaFirstResponseBreached: sla?.slaFirstResponseBreached ?? false,
     slaFixBreached: sla?.slaFixBreached ?? false,
     slaVerifyBreached: sla?.slaVerifyBreached ?? false,
     slaPolicyName: sla?.slaPolicyName ?? '',
   };
 }
 
-const ENV_MAP: Record<string, string> = {
-  'production': 'production', 'Production': 'production',
-  'staging': 'staging', 'Staging': 'staging',
-  'uat': 'uat', 'UAT': 'uat',
-  'dev': 'dev', 'Development': 'dev', 'development': 'dev',
-  'QA': 'uat', 'qa': 'uat',
-  'Performance': 'production', 'performance': 'production',
-  'DR': 'production', 'dr': 'production',
-};
 // DB stores legacy values ('Critical','High','Medium','Low') due to old constraint.
 // Map UI P-codes → DB legacy values for writes.
 const PRIORITY_TO_DB: Record<string, string> = {
@@ -287,6 +265,8 @@ function toDbBody(body: Partial<Defect> & Record<string, any>) {
     projectId: 'project_id', projectName: 'project_name', defectId: 'defect_id',
     stepsToReproduce: 'steps_to_reproduce', expectedResult: 'expected_result',
     actualResult: 'actual_result', buildVersion: 'build_version',
+    systemName: 'system_name', clientName: 'client_name',
+    externalTicketNo: 'external_ticket_no', transportRequest: 'transport_request',
     foundInVersion: 'found_in_version', fixVersion: 'fix_version',
     fixedInVersion: 'fixed_in_version', sprintId: 'sprint_id', sprintName: 'sprint_name',
     assigneeId: 'assignee_id', assigneeName: 'assignee_name',
@@ -296,18 +276,18 @@ function toDbBody(body: Partial<Defect> & Record<string, any>) {
     resolutionCode: 'resolution_code', rejectionReason: 'rejection_reason',
     fixDescription: 'fix_description', fixedBy: 'fixed_by', fixedDate: 'fixed_date',
     verifiedBy: 'verified_by', verifiedDate: 'verified_date', testEvidence: 'test_evidence',
-    slaPaused: 'sla_paused', firstResponseAt: 'first_response_at',
+    slaPaused: 'sla_paused', slaPauseReason: 'sla_pause_reason', slaPausedAt: 'sla_paused_at',
+    slaTotalPausedMins: 'sla_total_paused_mins', firstResponseAt: 'first_response_at',
     introducedInSprint: 'introduced_in_sprint', duplicateCount: 'duplicate_count',
     reopenCount: 'reopen_count', createdBy: 'created_by', updatedBy: 'updated_by',
   };
   const result: Record<string, any> = {};
   for (const [k, v] of Object.entries(body)) {
     const dbKey = map[k] ?? k;
-    if (!['id','createdAt','updatedAt','ageInDays','slaStatus','slaFixRemainingMins',
-          'slaVerifyRemainingMins','slaFixDueAt','slaVerifyDueAt','slaFirstResponseMet',
-          'slaFixBreached','slaVerifyBreached','slaPolicyName','comments','activityLog','linkedItems'].includes(k)) {
-      if (dbKey === 'environment' && typeof v === 'string') result[dbKey] = ENV_MAP[v] ?? v.toLowerCase();
-      else if (dbKey === 'priority' && typeof v === 'string') result[dbKey] = PRIORITY_TO_DB[v] ?? v;
+    if (!k.startsWith('_') && !['id','createdAt','updatedAt','ageInDays','slaStatus','slaFixRemainingMins',
+          'slaVerifyRemainingMins','slaFirstResponseRemainingMins','slaFixDueAt','slaVerifyDueAt','slaFirstResponseMet',
+          'slaFirstResponseBreached','slaFixBreached','slaVerifyBreached','slaPolicyName','comments','activityLog','linkedItems'].includes(k)) {
+      if (dbKey === 'priority' && typeof v === 'string') result[dbKey] = PRIORITY_TO_DB[v] ?? v;
       else if (dbKey === 'project_id') result[dbKey] = v || null;
       else result[dbKey] = v;
     }
@@ -411,14 +391,14 @@ export function useDefectTrackerData() {
         supabase.from('project_defects').select('created_at,status,fixed_date').gte('created_at', new Date(Date.now() - 30 * 86400000).toISOString()),
       ]);
       const withSLA = (all ?? []).map(d => ({ ...d, ...computeSLA(d, policies ?? []) }));
-      const open = withSLA.filter(d => !['Closed','Verified'].includes(d.status));
-      const s1 = withSLA.filter(d => d.severity === 'Very High');
-      const breached = withSLA.filter(d => d.slaFixBreached || d.slaVerifyBreached);
+      const open = withSLA.filter(d => !['Closed','Verified',"Won't Fix",'Duplicate'].includes(d.status));
+      const s1 = open.filter(d => d.severity === 'Very High');
+      const breached = open.filter(d => !d.sla_paused && (d.slaFixBreached || d.slaVerifyBreached));
       const todayStr = new Date().toISOString().slice(0, 10);
-      const fixedToday = withSLA.filter(d => d.status === 'Fixed' && d.fixed_date?.startsWith(todayStr)).length;
-      const pendingVerify = withSLA.filter(d => d.status === 'Fixed').length;
+      const fixedToday = withSLA.filter(d => d.fixed_date?.startsWith(todayStr)).length;
+      const pendingVerify = withSLA.filter(d => d.status === 'Resolved').length;
       const oneWeekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-      const openLastWeek = (all ?? []).filter(d => !['Closed','Verified'].includes(d.status) && d.created_at <= oneWeekAgo).length;
+      const openLastWeek = (all ?? []).filter(d => !['Closed','Verified',"Won't Fix",'Duplicate'].includes(d.status) && d.created_at <= oneWeekAgo).length;
       const severityBreakdown = ['Very High','High','Medium','Low'].map(sev => ({ severity: sev, count: open.filter(d => d.severity === sev).length }));
       const projectMap: Record<string, Record<string, number>> = {};
       for (const d of open) {
@@ -475,7 +455,7 @@ export function useDefectTrackerData() {
       const bySeverity = ['Very High','High','Medium','Low'].map(sev => {
         const sd = withSLA.filter(d => d.severity === sev);
         const total = sd.length;
-        const open = sd.filter(d => !['Closed','Verified'].includes(d.status)).length;
+        const open = sd.filter(d => !['Closed','Verified',"Won't Fix",'Duplicate'].includes(d.status)).length;
         const fixTimes = sd.filter(d => d.fixedDate).map(d => (new Date(d.fixedDate!).getTime() - new Date(d.createdAt).getTime()) / 3600000);
         return {
           severity: sev, open, total,
@@ -487,7 +467,7 @@ export function useDefectTrackerData() {
         };
       });
       const twoHours = 2 * 60;
-      const atRisk = withSLA.filter(d => !['Closed','Verified','Fixed'].includes(d.status) && d.slaFixRemainingMins !== null && d.slaFixRemainingMins > 0 && d.slaFixRemainingMins < twoHours).sort((a, b) => (a.slaFixRemainingMins ?? 999) - (b.slaFixRemainingMins ?? 999));
+      const atRisk = withSLA.filter(d => !['Closed','Verified','Resolved'].includes(d.status) && !d.slaPaused && d.slaStatus === 'at_risk' && d.slaFixRemainingMins !== null && d.slaFixRemainingMins > 0 && d.slaFixRemainingMins < twoHours).sort((a, b) => (a.slaFixRemainingMins ?? 999) - (b.slaFixRemainingMins ?? 999));
       const breachedList = withSLA.filter(d => d.slaFixBreached || d.slaVerifyBreached);
       const projMap: Record<string, any> = {};
       for (const d of withSLA) {
@@ -541,7 +521,7 @@ export function useDefectTrackerData() {
       for (const d of defects) {
         const a = d.assignee_name || 'Unassigned';
         if (!assigneeMap[a]) assigneeMap[a] = { resolved: 0, totalFix: 0 };
-        if (['Fixed','Verified','Closed'].includes(d.status)) assigneeMap[a].resolved++;
+        if (['Resolved','Verified','Closed'].includes(d.status)) assigneeMap[a].resolved++;
         if (d.fixed_date) assigneeMap[a].totalFix += (new Date(d.fixed_date).getTime() - new Date(d.created_at).getTime()) / 3600000;
       }
       const topAssignees = Object.entries(assigneeMap).sort(([,a],[,b]) => b.resolved - a.resolved).slice(0, 10).map(([name, v]) => ({ name, resolved: v.resolved, avgFixTime: v.resolved ? Math.round(v.totalFix / v.resolved * 10) / 10 : 0 }));
@@ -550,7 +530,7 @@ export function useDefectTrackerData() {
         const sprint = d.sprint_name || d.sprint_id || 'No Sprint';
         if (!sprintMap[sprint]) sprintMap[sprint] = { opened: 0, closed: 0 };
         sprintMap[sprint].opened++;
-        if (['Fixed','Verified','Closed'].includes(d.status)) sprintMap[sprint].closed++;
+        if (['Resolved','Verified','Closed'].includes(d.status)) sprintMap[sprint].closed++;
       }
       const velocity = Object.entries(sprintMap).map(([sprint, v]) => ({ sprint, ...v }));
       setAnalyticsData({ rootCause, regressionRate, aging, avgFixTime, topReporters, topAssignees, velocity });
@@ -590,7 +570,7 @@ export function useDefectTrackerData() {
         if (d.severity === 'High') projMap[pId].s2++;
         if (d.severity === 'Medium') projMap[pId].s3++;
         if (d.severity === 'Low') projMap[pId].s4++;
-        if (['Fixed','Verified','Closed'].includes(d.status)) projMap[pId].resolved++;
+        if (['Resolved','Verified','Closed'].includes(d.status)) projMap[pId].resolved++;
         if (d.slaFixBreached || d.slaVerifyBreached) projMap[pId].breached++;
       }
       setByProjectData(Object.values(projMap).map((p: any) => ({
@@ -606,14 +586,15 @@ export function useDefectTrackerData() {
   const loadDefectDetail = useCallback(async (id: string) => {
     setLoading(true);
     try {
-      const [defectRes, commentsRes, activityRes, linksRes] = await Promise.all([
+      const [defectRes, commentsRes, activityRes, linksRes, policiesRes] = await Promise.all([
         supabase.from('project_defects').select('*').eq('id', id).single(),
         supabase.from('defect_comments').select('*').eq('defect_id', id).order('created_at'),
         supabase.from('defect_activity_log').select('*').eq('defect_id', id).order('occurred_at', { ascending: false }).limit(50),
         supabase.from('defect_linked_items').select('*').eq('defect_id', id),
+        supabase.from('defect_sla_policies').select('*'),
       ]);
       if (defectRes.error) return null;
-      const defect = normalizeRow(defectRes.data);
+      const defect = normalizeRow(defectRes.data, computeSLA(defectRes.data, policiesRes.data ?? []));
       const comments: DefectComment[] = (commentsRes.data ?? []).map((c: any) => ({
         id: c.id, authorId: c.author_id, authorName: c.author_name,
         content: c.content, isInternal: c.is_internal, createdAt: c.created_at,
@@ -673,7 +654,8 @@ export function useDefectTrackerData() {
         toast.error(dbErr.message);
         return null;
       }
-      const created = normalizeRow(data);
+      const { data: policies } = await supabase.from('defect_sla_policies').select('*');
+      const created = normalizeRow(data, computeSLA(data, policies ?? []));
       setDefects(prev => [created, ...prev]);
       // Log activity (fire-and-forget)
       void supabase.from('defect_activity_log').insert([{
@@ -690,13 +672,32 @@ export function useDefectTrackerData() {
 
   const updateDefect = useCallback(async (id: string, body: Partial<Defect> & Record<string, any>, actorId?: string, actorName?: string): Promise<Defect | null> => {
     try {
-      const { data, error: dbErr } = await supabase.from('project_defects').update(toDbBody(body)).eq('id', id).select().single();
+      if (selectedDefect?.status === 'Closed' && body.status && body.status !== 'Closed') {
+        toast.error('Closed defects cannot be reopened');
+        return null;
+      }
+      if (body.status === 'Resolved' && (!body.rootCause?.trim() || !body.resolutionCode?.trim())) {
+        toast.error('Root Cause and Resolution Code are required before resolving a defect');
+        return null;
+      }
+      const updateBody = { ...body };
+      if (body.status === 'Resolved' && !body.fixedDate) updateBody.fixedDate = new Date().toISOString();
+      if (body.status === 'Verified' && !body.verifiedDate) updateBody.verifiedDate = new Date().toISOString();
+      const { data, error: dbErr } = await supabase.from('project_defects').update(toDbBody(updateBody)).eq('id', id).select().single();
       if (dbErr) { toast.error(dbErr.message); return null; }
-      const updated = normalizeRow(data);
+      const { data: policies } = await supabase.from('defect_sla_policies').select('*');
+      const updated = normalizeRow(data, computeSLA(data, policies ?? []));
       setDefects(prev => prev.map(d => d.id === id ? updated : d));
-      if (selectedDefect?.id === id) setSelectedDefect(updated);
+      if (selectedDefect?.id === id) {
+        setSelectedDefect(prev => prev ? {
+          ...updated,
+          comments: prev.comments,
+          activityLog: prev.activityLog,
+          linkedItems: prev.linkedItems,
+        } : updated);
+      }
       // Audit log (fire-and-forget)
-      const changedFields = Object.keys(body)
+      const changedFields = Object.keys(updateBody)
         .filter(k => !['id','createdAt','updatedAt','ageInDays','slaStatus','slaFixRemainingMins',
                         'slaVerifyRemainingMins','slaFixDueAt','slaVerifyDueAt','slaFirstResponseMet',
                         'slaFixBreached','slaVerifyBreached','slaPolicyName','comments','activityLog','linkedItems'].includes(k));
@@ -707,7 +708,7 @@ export function useDefectTrackerData() {
           actor_name: actorName ?? 'System',
           action: 'updated',
           field_changed: changedFields.join(', '),
-          new_value: changedFields.length === 1 ? String(body[changedFields[0]] ?? '') : '',
+          new_value: changedFields.length === 1 ? String(updateBody[changedFields[0]] ?? '') : '',
         }]);
       }
       toast.success(t('defectTracker.defectUpdated'));
@@ -742,6 +743,11 @@ export function useDefectTrackerData() {
       };
       if (selectedDefect?.id === defectId) {
         setSelectedDefect(prev => prev ? { ...prev, comments: [...(prev.comments ?? []), comment] } : prev);
+      }
+      if (selectedDefect?.id === defectId && !selectedDefect.firstResponseAt && authorId !== selectedDefect.reporterId) {
+        const firstResponseAt = new Date().toISOString();
+        await supabase.from('project_defects').update({ first_response_at: firstResponseAt }).eq('id', defectId).is('first_response_at', null);
+        setSelectedDefect(prev => prev ? { ...prev, firstResponseAt } : prev);
       }
       toast.success(t('defectTracker.commentAdded'));
       return comment;
@@ -787,25 +793,27 @@ export const SEVERITY_CONFIG: Record<DefectSeverity, { label: string; color: str
 export const STATUS_CONFIG: Record<DefectStatus, { color: string; bg: string }> = {
   'Open':        { color: 'text-blue-700',   bg: 'bg-blue-100' },
   'In Progress': { color: 'text-yellow-700', bg: 'bg-yellow-100' },
+  'Awaiting Info': { color: 'text-amber-700', bg: 'bg-amber-100' },
   'Blocked':     { color: 'text-red-700',    bg: 'bg-red-100' },
-  'Fixed':       { color: 'text-green-700',  bg: 'bg-green-100' },
+  'Resolved':    { color: 'text-emerald-700', bg: 'bg-emerald-100' },
   'Verified':    { color: 'text-teal-700',   bg: 'bg-teal-100' },
-  'Closed':      { color: 'text-gray-700',   bg: 'bg-gray-100' },
+  'Closed':      { color: 'text-green-800',  bg: 'bg-green-100' },
   'Deferred':    { color: 'text-purple-700', bg: 'bg-purple-100' },
   "Won't Fix":   { color: 'text-orange-700', bg: 'bg-orange-100' },
   'Duplicate':   { color: 'text-pink-700',   bg: 'bg-pink-100' },
 };
 
 export const VALID_TRANSITIONS: Record<DefectStatus, DefectStatus[]> = {
-  'Open':        ['In Progress', 'Deferred', "Won't Fix", 'Duplicate'],
-  'In Progress': ['Fixed', 'Blocked', 'Open'],
+  'Open':        ['In Progress', 'Awaiting Info', 'Deferred', "Won't Fix", 'Duplicate'],
+  'In Progress': ['Resolved', 'Awaiting Info', 'Blocked', 'Open'],
+  'Awaiting Info': ['In Progress'],
   'Blocked':     ['In Progress', "Won't Fix"],
-  'Fixed':       ['Verified', 'In Progress'],
+  'Resolved':    ['Verified', 'In Progress'],
   'Verified':    ['Closed'],
   'Deferred':    ['Open'],
   "Won't Fix":   ['Open'],
   'Duplicate':   [],
-  'Closed':      ['Open'],
+  'Closed':      [],
 };
 
 export const SLA_STATUS_CONFIG = {
@@ -814,6 +822,7 @@ export const SLA_STATUS_CONFIG = {
   fix_breached:   { label: 'Fix Breached', dot: 'bg-red-500',    text: 'text-red-700' },
   verify_breached:{ label: 'Verify SLA',   dot: 'bg-orange-500', text: 'text-orange-700' },
   all_met:        { label: 'All Met',      dot: 'bg-green-500',  text: 'text-green-700' },
+  paused:         { label: 'Paused',       dot: 'bg-amber-500',  text: 'text-amber-700' },
 };
 
 export const DEFECT_SEVERITIES: DefectSeverity[] = ['Very High', 'High', 'Medium', 'Low'];

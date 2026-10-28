@@ -14,7 +14,7 @@ import {
   ChevronDown, ChevronUp, Plus, X, Filter, Search, Eye, Edit2, Trash2,
   ExternalLink, RefreshCw, Download, AlertCircle, CheckSquare,
   Square, MoreHorizontal, Link2, MessageSquare, Activity, User, Users,
-  Calendar, Tag, ArrowRight, Pause, Play, Flag, Shield, AtSign,
+  Calendar, Tag, ArrowRight, Pause, Flag, Shield, AtSign,
 } from "lucide-react";
 import {
   useDefectTrackerData, Defect, DefectFilters, SEVERITY_CONFIG, STATUS_CONFIG,
@@ -26,6 +26,7 @@ import { useUser } from "../../context/UserContext";
 import EmployeeSearchDropdown from "../ui/EmployeeSearchDropdown";
 import { useEmployeeOptions } from "../../hooks/useSharedData";
 import { useSectionPermission } from "../SectionGuard";
+import { formatDefectAge } from "../../utils/defectSla";
 
 // ── Utility functions ─────────────────────────────────────────────────────────
 
@@ -320,7 +321,7 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen, extra?: any) 
     { label: "Total Open", value: dashboard.totalOpen, color: "text-blue-700", bg: "bg-blue-50", icon: <Bug className="h-5 w-5 text-blue-400" />, pulse: false },
     { label: "Very High", value: dashboard.s1Count, color: "text-red-700", bg: "bg-red-50", icon: <AlertTriangle className="h-5 w-5 text-red-400" />, pulse: dashboard.s1Count > 0 },
     { label: "SLA Breached", value: dashboard.slaBreached, color: "text-red-600", bg: "bg-red-50", icon: <Clock className="h-5 w-5 text-red-400" />, pulse: false },
-    { label: "Fixed Today", value: dashboard.fixedToday, color: "text-green-700", bg: "bg-green-50", icon: <CheckCircle2 className="h-5 w-5 text-green-400" />, pulse: false },
+    { label: "Resolved Today", value: dashboard.fixedToday, color: "text-green-700", bg: "bg-green-50", icon: <CheckCircle2 className="h-5 w-5 text-green-400" />, pulse: false },
     { label: "Pending Verify", value: dashboard.pendingVerify, color: "text-orange-700", bg: "bg-orange-50", icon: <CheckSquare className="h-5 w-5 text-orange-400" />, pulse: false },
   ];
 
@@ -331,8 +332,8 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen, extra?: any) 
   }));
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-3 sm:p-6 space-y-6 min-w-0 overflow-hidden">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold text-gray-900">{t("defectTracker.dashboard")}</h1>
           <p className="text-sm text-gray-500 mt-0.5">Live defect health overview</p>
@@ -397,7 +398,7 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen, extra?: any) 
                     <td className="py-1.5 pr-3 max-w-[200px] truncate text-gray-800">{d.title}</td>
                     <td className="py-1.5 pr-3 text-gray-700">{d.projectName}</td>
                     <td className="py-1.5 pr-3 text-gray-700">{d.assigneeName}</td>
-                    <td className="py-1.5 pr-3 text-gray-700">{d.ageInDays}d</td>
+                    <td className="py-1.5 pr-3 text-gray-700">{formatDefectAge(d.createdAt)}</td>
                     <td className="py-1.5"><SLADot slaStatus={d.slaStatus} /></td>
                   </tr>
                 ))}
@@ -558,7 +559,9 @@ function LogDefectModal({
   const [form, setForm] = useState<any>({
     projectId: "", projectName: "General", title: "", severity: "Medium", priority: "P3", status: "Open",
     description: "", stepsToReproduce: [""], expectedResult: "", actualResult: "",
-    environment: "Development", buildVersion: "", sprintId: "", sprintName: "", assigneeId: "", assigneeName: "",
+    environment: "Development", systemName: "", clientName: "", externalTicketNo: "", transportRequest: "",
+    os: "", browser: "", buildVersion: "", foundInVersion: "", introducedInSprint: "",
+    sprintId: "", sprintName: "", assigneeId: "", assigneeName: "",
     reporterId: "", reporterName: "", labels: [] as string[], isRegression: false,
   });
 
@@ -666,7 +669,7 @@ function LogDefectModal({
         </div>
 
         <div className="p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">{t("defectTracker.project")} (Optional)</label>
               <select
@@ -756,7 +759,7 @@ function LogDefectModal({
             ))}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">{t("defectTracker.expectedResult")}</label>
               <textarea
@@ -818,7 +821,30 @@ function LogDefectModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {[
+              { key: "systemName", label: "System", placeholder: "Application or system name" },
+              { key: "clientName", label: "Client", placeholder: "Client or business unit" },
+              { key: "externalTicketNo", label: "Ticket No.", placeholder: "External ticket reference" },
+              { key: "transportRequest", label: "Transport Request", placeholder: "TR / deployment reference" },
+              { key: "os", label: "Operating System", placeholder: "e.g. Windows 11, iOS 18" },
+              { key: "browser", label: "Browser / Device", placeholder: "e.g. Chrome 130, iPhone 16" },
+              { key: "foundInVersion", label: "Found In Version", placeholder: "Version where observed" },
+              { key: "introducedInSprint", label: "Introduced In Sprint", placeholder: "Sprint or release" },
+            ].map((field) => (
+              <div key={field.key}>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">{field.label}</label>
+                <input
+                  value={form[field.key] ?? ""}
+                  onChange={(e) => set(field.key, e.target.value)}
+                  placeholder={field.placeholder}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200"
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-600 mb-1">{t("defectTracker.sprint")}</label>
               <select
@@ -1019,7 +1045,7 @@ function AllDefectsScreen({
     return true;
   }).sort((a, b) => {
     if (sortBy === "severity") return (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9);
-    if (sortBy === "age") return b.ageInDays - a.ageInDays;
+    if (sortBy === "age") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     if (sortBy === "sla") return (a.slaFixRemainingMins ?? 9999) - (b.slaFixRemainingMins ?? 9999);
     return 0;
   });
@@ -1052,7 +1078,7 @@ function AllDefectsScreen({
   const exportCSV = () => {
     const rows = [
       ["ID", "Title", "Severity", "Status", "Project", "Assignee", "Age", "SLA Status"],
-      ...filtered.map((d) => [d.defectId, d.title, d.severity, d.status, d.projectName, d.assigneeName, `${d.ageInDays}d`, d.slaStatus]),
+      ...filtered.map((d) => [d.defectId, d.title, d.severity, d.status, d.projectName, d.assigneeName, formatDefectAge(d.createdAt), d.slaStatus]),
     ];
     const csv = rows.map((r) => r.join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
@@ -1155,7 +1181,6 @@ function AllDefectsScreen({
           <span className="text-sm text-gray-800 font-medium line-clamp-1">{d.title}</span>
         </td>
         <td className="py-3 pr-3 text-xs text-gray-500">{d.projectName}</td>
-        <td className="py-3 pr-3 text-xs text-gray-400 max-w-[80px] truncate">{d.sprintName || <span className="text-gray-200">—</span>}</td>
         <td className="py-3 pr-3"><StatusBadge status={d.status} /></td>
         <td className="py-3 pr-3">
           {d.assigneeName ? (
@@ -1168,7 +1193,7 @@ function AllDefectsScreen({
         <td className="py-3 pr-3 text-xs text-gray-500">{d.reporterName || <span className="text-gray-300">—</span>}</td>
         <td className="py-3 pr-3 text-xs text-gray-400 font-mono">{d.foundInVersion || <span className="text-gray-200">—</span>}</td>
         <td className="py-3 pr-3"><SLADot slaStatus={d.slaStatus} /></td>
-        <td className="py-3 pr-3 text-xs text-gray-500">{d.ageInDays}d</td>
+        <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">{formatDefectAge(d.createdAt)}</td>
         <td className="py-3 pr-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
             <button
@@ -1194,9 +1219,9 @@ function AllDefectsScreen({
   };
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-3 sm:p-6 space-y-4 min-w-0 overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <h1 className="text-xl font-bold text-gray-900">
           {isMyDefects ? t("defectTracker.myDefects") : t("defectTracker.allDefects")}
         </h1>
@@ -1365,9 +1390,9 @@ function AllDefectsScreen({
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
         <span className="text-sm text-gray-600 font-medium">{filtered.length} defects</span>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-gray-500">Sort:</span>
             <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none">
@@ -1460,7 +1485,7 @@ function AllDefectsScreen({
 
       {!loading && filtered.length > 0 && view === "table" && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-          <table className="w-full text-sm min-w-[900px]">
+          <table className="w-full text-sm min-w-[820px]">
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
                 <th className="pl-4 py-3 w-8">
@@ -1470,7 +1495,7 @@ function AllDefectsScreen({
                       : <Square className="h-4 w-4" />}
                   </button>
                 </th>
-                {["ID", "Sev", "Title", "Project", "Sprint", "Status", "Assignee", "Reporter", "Found In", "SLA", "Age", ""].map((h) => (
+                {["ID", "Sev", "Title", "Project", "Status", "Assignee", "Reporter", "Found In", "SLA", "Age", ""].map((h) => (
                   <th key={h} className="text-left py-3 pr-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -1481,7 +1506,7 @@ function AllDefectsScreen({
                 : groupedRows().map((group) => (
                     <React.Fragment key={group.key}>
                       <tr>
-                        <td colSpan={13} className="bg-gray-50 px-4 py-2 border-b border-gray-200">
+                        <td colSpan={12} className="bg-gray-50 px-4 py-2 border-b border-gray-200">
                           <button
                             onClick={() => toggleGroup(group.key)}
                             className="flex items-center gap-2 text-sm font-semibold text-gray-700"
@@ -1578,7 +1603,7 @@ function AllDefectsScreen({
                   <div className="flex items-center gap-3 text-xs text-gray-500">
                     <span>{d.projectName}</span>
                     {d.assigneeName && <span>→ {d.assigneeName}</span>}
-                    <span className="ml-auto">{d.ageInDays}d ago</span>
+                    <span className="ml-auto">{formatDefectAge(d.createdAt)} ago</span>
                     <SLADot slaStatus={d.slaStatus} />
                   </div>
                 </div>
@@ -1687,6 +1712,9 @@ function DefectDetailScreen({
   const [pendingStatus, setPendingStatus] = useState<DefectStatus | null>(null);
   const [fixDesc, setFixDesc] = useState("");
   const [fixVersion, setFixVersion] = useState("");
+  const [rootCause, setRootCause] = useState("");
+  const [resolutionCode, setResolutionCode] = useState("");
+  const [statusComment, setStatusComment] = useState("");
   const [verifiedBy, setVerifiedBy] = useState("");
   const [testEvidence, setTestEvidence] = useState("");
   const [evidenceUrl, setEvidenceUrl] = useState("");
@@ -1697,6 +1725,8 @@ function DefectDetailScreen({
   const [duplicateOf, setDuplicateOf] = useState("");
   const [rejectionReason, setRejectionReason] = useState("");
   const [statusErrors, setStatusErrors] = useState<string[]>([]);
+  const [editingEnvironment, setEditingEnvironment] = useState(false);
+  const [environmentDraft, setEnvironmentDraft] = useState<Record<string, string>>({});
 
   useEffect(() => {
     loadDefectDetail(defectId);
@@ -1708,6 +1738,20 @@ function DefectDetailScreen({
       setTitleValue(selectedDefect.title);
       setCodeRef((selectedDefect as any).codeRef ?? "");
       setEvidenceUrl((selectedDefect as any).evidenceUrl ?? "");
+      setRootCause(selectedDefect.rootCause ?? "");
+      setResolutionCode(selectedDefect.resolutionCode ?? "");
+      setEnvironmentDraft({
+        environment: selectedDefect.environment ?? "",
+        systemName: selectedDefect.systemName ?? "",
+        clientName: selectedDefect.clientName ?? "",
+        externalTicketNo: selectedDefect.externalTicketNo ?? "",
+        transportRequest: selectedDefect.transportRequest ?? "",
+        buildVersion: selectedDefect.buildVersion ?? "",
+        os: selectedDefect.os ?? "",
+        browser: selectedDefect.browser ?? "",
+        foundInVersion: selectedDefect.foundInVersion ?? "",
+        introducedInSprint: selectedDefect.introducedInSprint ?? "",
+      });
     }
   }, [selectedDefect]);
 
@@ -1716,12 +1760,18 @@ function DefectDetailScreen({
   if (loading && !d) return <InlineLoader color="text-red-500" />;
   if (!d) return <EmptyState msg="Defect not found" />;
 
-  const canMarkFixed = d.status === "In Progress" || d.status === "Open";
-  const isFixed = ["Fixed", "Verified", "Closed"].includes(d.status);
+  const canMarkResolved = d.status === "In Progress";
+  const isResolved = ["Resolved", "Verified", "Closed"].includes(d.status);
   const isVerified = d.status === "Verified" || d.status === "Closed";
+  const isClosed = d.status === "Closed";
+  const userIds = [user?.id, user?.appUserId, user?.employeeId].filter(Boolean);
+  const isReporter = userIds.includes(d.reporterId) || user?.name === d.reporterName || user?.email === d.reporterName;
 
-  const fixPct = d.slaFixRemainingMins !== null && d.slaFixDueAt
-    ? Math.max(0, Math.min(100, 100 - (d.slaFixRemainingMins / (d.ageInDays * 24 * 60 + d.slaFixRemainingMins)) * 100))
+  const fixWindowMins = d.slaFixDueAt
+    ? Math.max(1, (new Date(d.slaFixDueAt).getTime() - new Date(d.createdAt).getTime()) / 60_000)
+    : 0;
+  const fixPct = d.slaFixRemainingMins !== null && fixWindowMins
+    ? Math.max(0, Math.min(100, 100 - (d.slaFixRemainingMins / fixWindowMins) * 100))
     : 0;
 
   const slaBannerBg = d.slaStatus === "fix_breached" || d.slaStatus === "verify_breached"
@@ -1733,9 +1783,11 @@ function DefectDetailScreen({
   const applyStatusChange = async () => {
     if (!pendingStatus) return;
     const errs: string[] = [];
-    if (pendingStatus === "Fixed") {
+    if (pendingStatus === "Resolved") {
       if (!fixDesc || fixDesc.length < 30) errs.push("Fix description must be at least 30 characters");
       if (!fixVersion) errs.push("Fix version is required");
+      if (!rootCause) errs.push("Root Cause is required");
+      if (!resolutionCode) errs.push("Resolution Code is required");
     }
     if (pendingStatus === "Verified") {
       if (!verifiedBy) errs.push("Verified By is required");
@@ -1747,14 +1799,37 @@ function DefectDetailScreen({
     if (pendingStatus === "Won't Fix") {
       if (!rejectionReason) errs.push("Rejection reason is required");
     }
+    if (pendingStatus === "Awaiting Info" && !statusComment.trim()) {
+      errs.push("Describe the information needed from the reporter");
+    }
+    if (["Awaiting Info", "Resolved"].includes(d.status) && pendingStatus === "In Progress") {
+      if (!isReporter) errs.push(`Only the reporter can return a ${d.status} defect to In Progress`);
+      if (!statusComment.trim()) errs.push("A reporter comment is required before work can resume");
+    }
     if (errs.length) { setStatusErrors(errs); return; }
 
     const payload: any = { status: pendingStatus };
-    if (pendingStatus === "Fixed") { payload.fixDescription = fixDesc; payload.fixVersion = fixVersion; }
-    if (pendingStatus === "Verified") { payload.verifiedBy; payload.testEvidence; }
+    if (pendingStatus === "Resolved") {
+      payload.fixDescription = fixDesc;
+      payload.fixVersion = fixVersion;
+      payload.rootCause = rootCause;
+      payload.resolutionCode = resolutionCode;
+      payload.fixedBy = user?.name ?? "";
+    }
+    if (pendingStatus === "Verified") { payload.verifiedBy = verifiedBy; payload.testEvidence = testEvidence; }
     if (pendingStatus === "Duplicate") { payload.duplicateOfId = duplicateOf; }
-    if (pendingStatus === "Won't Fix") { payload.rejectionReason; }
-    await updateDefect(d.id, payload, user?.id, user?.name);
+    if (pendingStatus === "Won't Fix") { payload.rejectionReason = rejectionReason; }
+    if (pendingStatus === "Awaiting Info") payload.slaPauseReason = statusComment.trim();
+
+    if (statusComment.trim()) {
+      const added = await addComment(d.id, statusComment.trim(), user?.id ?? "", user?.name ?? "You");
+      if (!added) {
+        setStatusErrors(["The required comment could not be saved. Status was not changed."]);
+        return;
+      }
+    }
+    const updated = await updateDefect(d.id, payload, user?.id, user?.name);
+    if (!updated) return;
 
     // Notify all watchers of status change
     const watcherIds: string[] = (d.watchers ?? []).filter((w: string) => w !== user?.name && w !== user?.id);
@@ -1770,8 +1845,31 @@ function DefectDetailScreen({
         }))
       );
     }
+    if (["Resolved", "Awaiting Info"].includes(pendingStatus) && d.reporterId) {
+      void supabase.from("notifications").insert({
+        user_id: d.reporterId,
+        type: pendingStatus === "Resolved" ? "defect_resolved" : "defect_awaiting_info",
+        title: `${d.defectId} needs your attention`,
+        message: pendingStatus === "Resolved"
+          ? `Please verify whether "${d.title}" is resolved.`
+          : `More information is required for "${d.title}".`,
+        link: "/defect-tracker",
+        is_read: false,
+      });
+    }
+    if (pendingStatus === "In Progress" && ["Resolved", "Awaiting Info"].includes(d.status) && d.assigneeId) {
+      void supabase.from("notifications").insert({
+        user_id: d.assigneeId,
+        type: "defect_reporter_response",
+        title: `${d.defectId} returned to In Progress`,
+        message: `The reporter responded on "${d.title}".`,
+        link: "/defect-tracker",
+        is_read: false,
+      });
+    }
 
     setPendingStatus(null);
+    setStatusComment("");
     setStatusErrors([]);
   };
 
@@ -1808,10 +1906,12 @@ function DefectDetailScreen({
     setEditingTitle(false);
   };
 
-  const validTransitions = VALID_TRANSITIONS[d.status] ?? [];
+  const validTransitions = (VALID_TRANSITIONS[d.status] ?? []).filter(
+    (status) => !["Awaiting Info", "Resolved"].includes(d.status) || status !== "In Progress" || isReporter,
+  );
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-3 sm:p-6 space-y-4 min-w-0 overflow-hidden">
       {/* Breadcrumb */}
       <div className="flex items-center gap-1.5 text-sm text-gray-500">
         <button onClick={onBack} className="hover:text-red-600 font-medium">All Defects</button>
@@ -1858,7 +1958,7 @@ function DefectDetailScreen({
             ) : (
               <h2
                 className="text-xl font-bold text-gray-900 cursor-pointer hover:text-red-700"
-                onClick={() => setEditingTitle(true)}
+                onClick={() => { if (!isClosed && canUpdate) setEditingTitle(true); }}
               >
                 {d.title}
               </h2>
@@ -1871,6 +1971,7 @@ function DefectDetailScreen({
               <select
                 value={pendingStatus ?? d.status}
                 onChange={(e) => setPendingStatus(e.target.value as DefectStatus)}
+                disabled={isClosed || !canUpdate}
                 className="border border-gray-200 rounded-lg px-2 py-1 text-sm font-medium focus:outline-none"
               >
                 <option value={d.status}>{d.status}</option>
@@ -1881,32 +1982,32 @@ function DefectDetailScreen({
             <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded font-medium">{priorityLabel(d.priority)}</span>
             <span className="text-xs bg-blue-50 text-blue-700 px-2 py-1 rounded font-medium">{d.projectName}</span>
 
-            {canMarkFixed && (
+            {canMarkResolved && canUpdate && (
               <button
-                onClick={() => setPendingStatus("Fixed")}
+                onClick={() => setPendingStatus("Resolved")}
                 className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-semibold hover:bg-green-700"
               >
-                Mark Fixed
+                Mark Resolved
               </button>
             )}
-            <button
+            {!isClosed && canUpdate && <button
               onClick={() => setPendingStatus("Won't Fix")}
               className="px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-sm font-semibold hover:bg-red-200"
             >
               {"Won't Fix"}
-            </button>
-            <button
+            </button>}
+            {!isClosed && canUpdate && <button
               onClick={() => { setShowSeverityModal(true); setNewSeverity(d.severity); setSeverityReason(""); }}
               className="px-3 py-1.5 bg-purple-100 text-purple-700 rounded-lg text-sm font-semibold hover:bg-purple-200 flex items-center gap-1.5"
             >
               <Flag className="h-3.5 w-3.5" /> Change Severity
-            </button>
-            <button
+            </button>}
+            {!isClosed && canUpdate && <button
               onClick={() => { setShowReassignModal(true); setNewAssigneeModal({ id: "", name: "" }); }}
               className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-sm font-semibold hover:bg-blue-200 flex items-center gap-1.5"
             >
               <Users className="h-3.5 w-3.5" /> Reassign
-            </button>
+            </button>}
           </div>
         </div>
 
@@ -1968,8 +2069,8 @@ function DefectDetailScreen({
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-3">
             <p className="text-sm font-semibold text-yellow-800">Changing status to: {pendingStatus}</p>
 
-            {pendingStatus === "Fixed" && (
-              <div className="grid grid-cols-2 gap-3">
+            {pendingStatus === "Resolved" && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-gray-600 mb-1 block">Fix Description (min 30 chars) *</label>
                   <textarea
@@ -1982,6 +2083,24 @@ function DefectDetailScreen({
                 <div>
                   <label className="text-xs font-semibold text-gray-600 mb-1 block">Fix Version *</label>
                   <input value={fixVersion} onChange={(e) => setFixVersion(e.target.value)} className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none" />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Root Cause *</label>
+                  <select value={rootCause} onChange={(e) => setRootCause(e.target.value)} className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none">
+                    <option value="">Select root cause</option>
+                    {(masterData?.rootCauseCategories ?? []).map((rc: any) => (
+                      <option key={rc.id ?? rc.code} value={rc.label ?? rc.code}>{rc.label ?? rc.code}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-gray-600 mb-1 block">Resolution Code *</label>
+                  <select value={resolutionCode} onChange={(e) => setResolutionCode(e.target.value)} className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none">
+                    <option value="">Select resolution code</option>
+                    {(masterData?.resolutionCodes ?? []).map((rc: any) => (
+                      <option key={rc.id ?? rc.code} value={rc.label ?? rc.code}>{rc.label ?? rc.code}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             )}
@@ -2017,6 +2136,20 @@ function DefectDetailScreen({
                 </select>
               </div>
             )}
+            {(pendingStatus === "Awaiting Info" || (["Awaiting Info", "Resolved"].includes(d.status) && pendingStatus === "In Progress")) && (
+              <div>
+                <label className="text-xs font-semibold text-gray-600 mb-1 block">
+                  {pendingStatus === "Awaiting Info" ? "Information required from reporter *" : "Reporter update / answer *"}
+                </label>
+                <textarea
+                  value={statusComment}
+                  onChange={(e) => setStatusComment(e.target.value)}
+                  rows={3}
+                  className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none resize-none"
+                  placeholder={pendingStatus === "Awaiting Info" ? "Explain what information is needed..." : "Provide the requested information before resuming work..."}
+                />
+              </div>
+            )}
 
             {statusErrors.length > 0 && (
               <div className="space-y-1">
@@ -2034,14 +2167,13 @@ function DefectDetailScreen({
 
       {/* SLA Banner */}
       <div className={`rounded-xl border p-4 ${slaBannerBg}`}>
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
           <span className="text-sm font-semibold text-gray-700">SLA Status: {d.slaPolicyName}</span>
-          <button
-            onClick={() => updateDefect(d.id, { slaPaused: !d.slaPaused })}
-            className="flex items-center gap-1.5 px-3 py-1 border border-gray-300 rounded-lg text-xs font-medium bg-white hover:bg-gray-50"
-          >
-            {d.slaPaused ? <><Play className="h-3.5 w-3.5" /> Resume SLA</> : <><Pause className="h-3.5 w-3.5" /> Pause SLA</>}
-          </button>
+          {d.slaPaused && (
+            <span className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-medium bg-amber-100 text-amber-800">
+              <Pause className="h-3.5 w-3.5" /> Paused while awaiting reporter information
+            </span>
+          )}
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
@@ -2050,7 +2182,7 @@ function DefectDetailScreen({
               met: d.slaFirstResponseMet,
               pct: d.slaFirstResponseMet ? 100 : 50,
               color: d.slaFirstResponseMet ? "bg-green-500" : "bg-gray-300",
-              text: d.slaFirstResponseMet ? "Met" : "Pending",
+              text: d.slaFirstResponseMet ? "Met" : d.slaFirstResponseBreached ? "Breached" : formatRemaining(d.slaFirstResponseRemainingMins),
             },
             {
               label: "Fix SLA",
@@ -2062,9 +2194,9 @@ function DefectDetailScreen({
             {
               label: "Verify SLA",
               met: !d.slaVerifyBreached,
-              pct: isFixed ? 50 : 0,
-              color: d.slaVerifyBreached ? "bg-red-500" : isFixed ? "bg-yellow-400" : "bg-gray-200",
-              text: isFixed ? formatRemaining(d.slaVerifyRemainingMins) : "Locked",
+              pct: isResolved ? 50 : 0,
+              color: d.slaVerifyBreached ? "bg-red-500" : isResolved ? "bg-yellow-400" : "bg-gray-200",
+              text: isResolved ? formatRemaining(d.slaVerifyRemainingMins) : "Locked",
             },
           ].map((sla) => (
             <div key={sla.label}>
@@ -2081,7 +2213,7 @@ function DefectDetailScreen({
       </div>
 
       {/* Main Content */}
-      <div className="flex gap-4">
+      <div className="flex flex-col xl:flex-row gap-4">
         {/* Left Panel */}
         <div className="flex-1 min-w-0 space-y-4">
 
@@ -2101,7 +2233,7 @@ function DefectDetailScreen({
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="bg-gray-50 rounded-lg p-3">
                 <p className="text-xs font-semibold text-gray-500 mb-1">{t("defectTracker.expectedResult")}</p>
                 <p className="text-sm text-gray-700">{d.expectedResult || "—"}</p>
@@ -2115,19 +2247,38 @@ function DefectDetailScreen({
 
           {/* Environment */}
           <div className="bg-white rounded-xl border border-gray-200 p-5">
-            <h3 className="font-semibold text-gray-800 mb-3">Environment Details</h3>
-            <div className="grid grid-cols-3 gap-y-3 gap-x-4 text-sm">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <h3 className="font-semibold text-gray-800">Environment Details</h3>
+              {!isClosed && canUpdate && (
+                <button onClick={() => setEditingEnvironment((value) => !value)} className="text-xs text-red-600 hover:underline">
+                  {editingEnvironment ? "Cancel" : "Edit"}
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-y-3 gap-x-4 text-sm">
               {[
-                { label: t("defectTracker.environment"), value: d.environment },
-                { label: t("defectTracker.buildVersion"), value: d.buildVersion },
-                { label: "OS", value: d.os },
-                { label: "Browser", value: d.browser },
-                { label: "Found In Version", value: d.foundInVersion },
-                { label: "Intro Sprint", value: d.introducedInSprint },
+                { key: "environment", label: t("defectTracker.environment"), value: d.environment },
+                { key: "systemName", label: "System", value: d.systemName },
+                { key: "clientName", label: "Client", value: d.clientName },
+                { key: "externalTicketNo", label: "Ticket No.", value: d.externalTicketNo },
+                { key: "transportRequest", label: "Transport Request", value: d.transportRequest },
+                { key: "buildVersion", label: t("defectTracker.buildVersion"), value: d.buildVersion },
+                { key: "os", label: "OS", value: d.os },
+                { key: "browser", label: "Browser / Device", value: d.browser },
+                { key: "foundInVersion", label: "Found In Version", value: d.foundInVersion },
+                { key: "introducedInSprint", label: "Introduced In Sprint", value: d.introducedInSprint },
               ].map((row) => (
-                <div key={row.label}>
-                  <span className="text-xs font-semibold text-gray-500 block">{row.label}</span>
-                  <span className="text-gray-800">{row.value || "—"}</span>
+                <div key={row.key}>
+                  <label className="text-xs font-semibold text-gray-500 block mb-1">{row.label}</label>
+                  {editingEnvironment ? (
+                    <input
+                      value={environmentDraft[row.key] ?? ""}
+                      onChange={(e) => setEnvironmentDraft((current) => ({ ...current, [row.key]: e.target.value }))}
+                      className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-200"
+                    />
+                  ) : (
+                    <span className="text-gray-800 break-words">{row.value || "—"}</span>
+                  )}
                 </div>
               ))}
               <div>
@@ -2137,10 +2288,29 @@ function DefectDetailScreen({
                   : <span className="text-gray-400">No</span>}
               </div>
             </div>
+            {editingEnvironment && (
+              <div className="flex justify-end gap-2 mt-4">
+                <button
+                  onClick={() => setEditingEnvironment(false)}
+                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    const updated = await updateDefect(d.id, environmentDraft, user?.id, user?.name);
+                    if (updated) setEditingEnvironment(false);
+                  }}
+                  className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-semibold hover:bg-red-700"
+                >
+                  Save Details
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Fix Details */}
-          {isFixed && (
+          {isResolved && (
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <h3 className="font-semibold text-gray-800 mb-3">Fix Details</h3>
               <div className="space-y-3">
@@ -2175,7 +2345,7 @@ function DefectDetailScreen({
                     <button onClick={() => setEditingCodeRef(true)} className="text-xs text-red-600 underline hover:text-red-800">+ Add code reference</button>
                   )}
                 </div>
-                <div className="grid grid-cols-3 gap-3 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
                   <div><p className="text-xs font-semibold text-gray-500">{t("defectTracker.fixVersion")}</p><p>{d.fixVersion || "—"}</p></div>
                   <div><p className="text-xs font-semibold text-gray-500">{t("defectTracker.fixedBy")}</p><p>{d.fixedBy || "—"}</p></div>
                   <div><p className="text-xs font-semibold text-gray-500">{t("defectTracker.fixedDate")}</p><p>{d.fixedDate ? new Date(d.fixedDate).toLocaleDateString() : "—"}</p></div>
@@ -2185,7 +2355,7 @@ function DefectDetailScreen({
           )}
 
           {/* Verification */}
-          {isFixed && (
+          {isResolved && (
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-semibold text-gray-800">Verification</h3>
@@ -2193,7 +2363,7 @@ function DefectDetailScreen({
                   {editingVerify ? "Cancel" : "Edit"}
                 </button>
               </div>
-              <div className="grid grid-cols-2 gap-3 text-sm mb-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm mb-3">
                 <div><p className="text-xs font-semibold text-gray-500">{t("defectTracker.verifiedBy")}</p><p>{d.verifiedBy || "—"}</p></div>
                 <div>
                   <p className="text-xs font-semibold text-gray-500">{t("defectTracker.testEvidence")}</p>
@@ -2343,7 +2513,7 @@ function DefectDetailScreen({
         </div>
 
         {/* Right Panel */}
-        <div className="w-[340px] flex-shrink-0 space-y-4">
+        <div className="w-full xl:w-[340px] flex-shrink-0 space-y-4">
 
           {/* Defect Info */}
           <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-2.5">
@@ -2473,7 +2643,7 @@ function DefectDetailScreen({
             {[
               { label: "Found In", value: d.foundInVersion },
               { label: "Target Fix", value: d.fixVersion },
-              { label: "Fixed In", value: d.fixedInVersion },
+              { label: "Resolved In", value: d.fixedInVersion },
             ].map((row) => (
               <div key={row.label} className="flex items-center justify-between text-sm">
                 <span className="text-gray-500">{row.label}</span>
@@ -2613,7 +2783,7 @@ function SLATrackerScreen({ onNavigateDetail, canEscalate = true, canExport = tr
   };
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-3 sm:p-6 space-y-6 min-w-0 overflow-hidden">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-xl font-bold text-gray-900">{t("defectTracker.slaTracker")}</h1>
         <div className="flex items-center gap-3 flex-wrap">
@@ -2831,7 +3001,7 @@ function ByProjectScreen({ onNavigate }: { onNavigate: (s: Screen, extra?: any) 
   };
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="p-3 sm:p-6 space-y-4 min-w-0 overflow-hidden">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-xl font-bold text-gray-900">{t("defectTracker.byProject")}</h1>
         <div className="flex items-center gap-2">
@@ -2981,7 +3151,7 @@ function AnalyticsScreen({ canExport = true }: { canExport?: boolean }) {
   const TARGET_REGRESSION = 10;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-3 sm:p-6 space-y-6 min-w-0 overflow-hidden">
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-gray-900">{t("defectTracker.analytics")}</h1>
         <div className="flex items-center gap-3">

@@ -2319,33 +2319,48 @@ INSERT INTO defect_priorities (code, label, description, sort_order) VALUES
   ('P3', 'Medium',   'Fix in upcoming sprint — moderate business impact',       3),
   ('P4', 'Low',      'Fix when convenient — minor inconvenience or cosmetic',   4)
 ON CONFLICT (code) DO NOTHING;
+UPDATE project_defects
+SET status = 'Resolved',
+    root_cause = COALESCE(NULLIF(BTRIM(root_cause), ''), 'Legacy / Unspecified'),
+    resolution_code = COALESCE(NULLIF(BTRIM(resolution_code), ''), 'Legacy / Unspecified')
+WHERE status = 'Fixed';
+DELETE FROM defect_status_transitions
+WHERE from_status IN ('Open','In Progress','Awaiting Info','Blocked','Fixed','Resolved','Verified','Deferred','Won''t Fix','Duplicate','Closed')
+   OR to_status IN ('Open','In Progress','Awaiting Info','Blocked','Fixed','Resolved','Verified','Deferred','Won''t Fix','Duplicate','Closed');
+DELETE FROM defect_statuses WHERE name = 'Fixed';
 INSERT INTO defect_statuses (name, label, description, is_terminal, sort_order) VALUES
   ('Open',        'Open',        'Newly filed, not yet triaged',                      false, 1),
   ('In Progress', 'In Progress', 'Being actively worked on by assignee',              false, 2),
-  ('Blocked',     'Blocked',     'Work stopped due to dependency or external block',   false, 3),
-  ('Fixed',       'Fixed',       'Fix implemented, awaiting verification',             false, 4),
-  ('Verified',    'Verified',    'Fix confirmed by QA team',                          false, 5),
-  ('Closed',      'Closed',      'Defect is closed — verified or resolved',            true,  6),
-  ('Deferred',    'Deferred',    'Intentionally deferred to a future sprint/release',  false, 7),
-  ('Won''t Fix',  'Won''t Fix',  'Will not be fixed — by design, out of scope, etc.',  true,  8),
-  ('Duplicate',   'Duplicate',   'A duplicate of an existing defect',                  true,  9)
-ON CONFLICT (name) DO NOTHING;
+  ('Awaiting Info','Awaiting Info','Waiting for reporter information; SLA is paused',   false, 3),
+  ('Blocked',     'Blocked',     'Work stopped due to dependency or external block',   false, 4),
+  ('Resolved',    'Resolved',    'Resolution implemented, awaiting reporter verification', false, 5),
+  ('Verified',    'Verified',    'Resolution confirmed by the reporter or QA team',    false, 6),
+  ('Closed',      'Closed',      'Defect is permanently closed',                        true,  7),
+  ('Deferred',    'Deferred',    'Intentionally deferred to a future sprint/release',  false, 8),
+  ('Won''t Fix',  'Won''t Fix',  'Will not be fixed — by design, out of scope, etc.',  true,  9),
+  ('Duplicate',   'Duplicate',   'A duplicate of an existing defect',                  true,  10)
+ON CONFLICT (name) DO UPDATE SET
+  label = EXCLUDED.label,
+  description = EXCLUDED.description,
+  is_terminal = EXCLUDED.is_terminal,
+  sort_order = EXCLUDED.sort_order;
 INSERT INTO defect_status_transitions (from_status, to_status) VALUES
   ('Open',        'In Progress'),
+  ('Open',        'Awaiting Info'),
   ('Open',        'Deferred'),
   ('Open',        'Won''t Fix'),
   ('Open',        'Duplicate'),
   ('In Progress', 'Blocked'),
-  ('In Progress', 'Fixed'),
+  ('In Progress', 'Awaiting Info'),
+  ('In Progress', 'Resolved'),
   ('In Progress', 'Won''t Fix'),
+  ('Awaiting Info','In Progress'),
   ('Blocked',     'In Progress'),
   ('Blocked',     'Won''t Fix'),
-  ('Fixed',       'Verified'),
-  ('Fixed',       'Open'),
+  ('Resolved',    'Verified'),
+  ('Resolved',    'In Progress'),
   ('Verified',    'Closed'),
-  ('Verified',    'Open'),
   ('Deferred',    'Open'),
-  ('Closed',      'Open'),
   ('Won''t Fix',  'Open'),
   ('Duplicate',   'Open')
 ON CONFLICT (from_status, to_status) DO NOTHING;

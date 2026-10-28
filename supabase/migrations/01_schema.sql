@@ -2247,6 +2247,10 @@ ALTER TABLE project_defects
   ADD COLUMN IF NOT EXISTS description           TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS priority              TEXT        DEFAULT 'P3',
   ADD COLUMN IF NOT EXISTS project_name          TEXT        DEFAULT '',
+  ADD COLUMN IF NOT EXISTS system_name           TEXT        DEFAULT '',
+  ADD COLUMN IF NOT EXISTS client_name           TEXT        DEFAULT '',
+  ADD COLUMN IF NOT EXISTS external_ticket_no    TEXT        DEFAULT '',
+  ADD COLUMN IF NOT EXISTS transport_request     TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS sprint_id             TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS sprint_name           TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS reporter_id           TEXT        DEFAULT '',
@@ -2272,12 +2276,92 @@ ALTER TABLE project_defects
   ADD COLUMN IF NOT EXISTS watchers              TEXT[]      DEFAULT '{}',
   ADD COLUMN IF NOT EXISTS sla_paused            BOOLEAN     DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS sla_pause_reason      TEXT        DEFAULT '',
+  ADD COLUMN IF NOT EXISTS sla_paused_at         TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS sla_total_paused_mins INTEGER     DEFAULT 0,
   ADD COLUMN IF NOT EXISTS first_response_at     TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS introduced_in_sprint  TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS os                    TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS browser               TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS duplicate_count       INTEGER     DEFAULT 0,
   ADD COLUMN IF NOT EXISTS reopen_count          INTEGER     DEFAULT 0;
+
+-- Enforce the workflow for direct Supabase writes as well as API writes.
+CREATE OR REPLACE FUNCTION enforce_defect_workflow()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  allowed_transitions JSONB := '{
+    "Open":["In Progress","Awaiting Info","Deferred","Won''t Fix","Duplicate"],
+    "In Progress":["Open","Awaiting Info","Blocked","Resolved","Won''t Fix"],
+    "Awaiting Info":["In Progress"],
+    "Blocked":["In Progress","Won''t Fix"],
+    "Resolved":["Verified","In Progress"],
+    "Verified":["Closed"],
+    "Deferred":["Open"],
+    "Won''t Fix":["Open"],
+    "Duplicate":[],
+    "Closed":[]
+  }'::JSONB;
+BEGIN
+  IF NEW.status = 'Fixed' THEN
+    NEW.status := 'Resolved';
+  END IF;
+
+  IF TG_OP = 'UPDATE' AND NEW.status IS DISTINCT FROM OLD.status THEN
+    IF OLD.status = 'Closed' THEN
+      RAISE EXCEPTION 'Closed defects cannot be reopened';
+    END IF;
+    IF NOT (OLD.status = 'Fixed' AND NEW.status = 'Resolved')
+      AND NOT (COALESCE(allowed_transitions -> OLD.status, '[]'::JSONB) ? NEW.status) THEN
+      RAISE EXCEPTION 'Invalid defect status transition from % to %', OLD.status, NEW.status;
+    END IF;
+    IF OLD.status IN ('Awaiting Info', 'Resolved') AND NEW.status = 'In Progress'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM defect_comments comment
+        WHERE comment.defect_id = OLD.id
+          AND (
+            comment.author_id = OLD.reporter_id
+            OR LOWER(comment.author_name) = LOWER(OLD.reporter_name)
+          )
+          AND comment.created_at >= COALESCE(OLD.sla_paused_at, OLD.fixed_date, OLD.updated_at)
+      ) THEN
+      RAISE EXCEPTION 'A reporter comment is required before returning this defect to In Progress';
+    END IF;
+  END IF;
+
+  IF NEW.status = 'Resolved' THEN
+    IF NULLIF(BTRIM(NEW.root_cause), '') IS NULL
+      OR NULLIF(BTRIM(NEW.resolution_code), '') IS NULL THEN
+      RAISE EXCEPTION 'Root Cause and Resolution Code are required before resolving a defect';
+    END IF;
+    NEW.fixed_date := COALESCE(NEW.fixed_date, NOW());
+  END IF;
+
+  IF TG_OP = 'UPDATE' AND NEW.status = 'Awaiting Info' AND OLD.status IS DISTINCT FROM 'Awaiting Info' THEN
+    NEW.sla_paused := TRUE;
+    NEW.sla_paused_at := COALESCE(NEW.sla_paused_at, NOW());
+    NEW.sla_pause_reason := COALESCE(NULLIF(NEW.sla_pause_reason, ''), 'Awaiting reporter information');
+  ELSIF TG_OP = 'UPDATE' AND OLD.status = 'Awaiting Info' AND NEW.status IS DISTINCT FROM 'Awaiting Info' THEN
+    NEW.sla_total_paused_mins := COALESCE(OLD.sla_total_paused_mins, 0)
+      + GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (NOW() - COALESCE(OLD.sla_paused_at, NOW()))) / 60)::INTEGER);
+    NEW.sla_paused := FALSE;
+    NEW.sla_paused_at := NULL;
+    NEW.sla_pause_reason := '';
+  END IF;
+
+  IF NEW.status = 'Verified' THEN
+    NEW.verified_date := COALESCE(NEW.verified_date, NOW());
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_enforce_defect_workflow ON project_defects;
+CREATE TRIGGER trg_enforce_defect_workflow
+  BEFORE INSERT OR UPDATE ON project_defects
+  FOR EACH ROW EXECUTE FUNCTION enforce_defect_workflow();
 
 -- ── Step 3: defect_sla_policies — created with final severity names directly ──
 -- (Avoids the S1→'Very High' rename dance from migrations 06+07)
@@ -2303,8 +2387,12 @@ CREATE TABLE IF NOT EXISTS defect_sla_events (
                 'created','first_response','fix_breached','verify_breached',
                 'paused','resumed','escalated')),
   occurred_at TIMESTAMPTZ DEFAULT NOW(),
+  actor_id    TEXT,
+  notes       TEXT,
   metadata    JSONB DEFAULT '{}'
 );
+ALTER TABLE defect_sla_events ADD COLUMN IF NOT EXISTS actor_id TEXT;
+ALTER TABLE defect_sla_events ADD COLUMN IF NOT EXISTS notes TEXT;
 CREATE INDEX IF NOT EXISTS idx_sla_events_defect ON defect_sla_events(defect_id);
 
 -- ── Step 5: defect_activity_log ───────────────────────────────────────────────

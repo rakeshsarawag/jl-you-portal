@@ -223,7 +223,7 @@ export async function apiFetch(input: RequestInfo, init?: RequestInit): Promise<
 export type DefectSeverityConst = 'Very High' | 'High' | 'Medium' | 'Low';
 export type DefectPriorityConst = 'P1' | 'P2' | 'P3' | 'P4';
 export type DefectStatusConst =
-  | 'Open' | 'In Progress' | 'Blocked' | 'Fixed'
+  | 'Open' | 'In Progress' | 'Awaiting Info' | 'Blocked' | 'Resolved'
   | 'Verified' | 'Closed' | 'Deferred' | "Won't Fix" | 'Duplicate';
 
 export const DEFECT_SEVERITY_LIST: DefectSeverityConst[] = ['Very High', 'High', 'Medium', 'Low'];
@@ -240,7 +240,7 @@ export const DEFECT_ENVIRONMENT_LIST: string[] = [
 ];
 
 export const DEFECT_STATUS_LIST: DefectStatusConst[] = [
-  'Open', 'In Progress', 'Blocked', 'Fixed', 'Verified', 'Closed', 'Deferred', "Won't Fix", 'Duplicate',
+  'Open', 'In Progress', 'Awaiting Info', 'Blocked', 'Resolved', 'Verified', 'Closed', 'Deferred', "Won't Fix", 'Duplicate',
 ];
 
 export const SEVERITY_COLOR_MAP: Record<DefectSeverityConst, string> = {
