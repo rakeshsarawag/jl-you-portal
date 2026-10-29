@@ -141,7 +141,7 @@ export function UserProvider({ children, accessToken }: UserProviderProps) {
       if (authError || !authUser) throw new Error('Could not verify user session');
 
       // 2. Fetch authoritative profile + roles from app_users (DB)
-      const VALID_ROLES: UserRole[] = ['admin', 'hr', 'manager', 'finance', 'employee', 'it', 'marketing'];
+      const VALID_ROLES: UserRole[] = ['admin', 'hr', 'manager', 'finance', 'employee', 'it', 'marketing', 'client'];
       let dbRoles: UserRole[] | null = null;
       let dbName: string | null = null;
       let dbDept: string | null = null;

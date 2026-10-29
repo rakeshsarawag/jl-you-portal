@@ -2091,7 +2091,7 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
     <div className="min-h-screen bg-muted">
       {/* Header */}
       <header className="bg-card border-b sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
+        <div className="w-full px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-blue-100 rounded-lg">
               <Laptop className="h-5 w-5 text-blue-600" />
@@ -2123,7 +2123,7 @@ export function ITServicesDB({ accessToken: _accessToken, onLogout }: { accessTo
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main className="w-full px-4 sm:px-6 py-6 space-y-6">
         {/* Error */}
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm flex items-center gap-2">

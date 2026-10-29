@@ -149,6 +149,14 @@ INSERT INTO role_permissions (role, permissions) VALUES
   "users": ["read"],
   "settings": [],
   "reports": []
+}'::jsonb),
+('client', '{
+  "apps": ["defect-tracker"],
+  "actions": ["create","read","update","export"],
+  "payroll": [],
+  "users": [],
+  "settings": [],
+  "reports": []
 }'::jsonb)
 -- Never overwrite permissions edited through the Permission Manager.
 ON CONFLICT (role) DO NOTHING;
@@ -2152,6 +2160,7 @@ INSERT INTO master_value_helps (entity, field, label, value, sort_order, is_acti
 ('user','role','Finance','finance',5,TRUE),
 ('user','role','IT','it',6,TRUE),
 ('user','role','Marketing','marketing',7,TRUE),
+('user','role','Client','client',8,TRUE),
 
 -- ── Invoice: currency ─────────────────────────────────────────────────────────
 ('invoice','currency','Indian Rupee (INR)','INR',1,TRUE),

@@ -890,7 +890,7 @@ export function MasterDataManagement({ accessToken, onLogout }: MasterDataManage
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-gradient-to-r from-purple-600 to-blue-600 text-white p-6 shadow-lg">
-        <div className="max-w-7xl mx-auto">
+        <div className="w-full">
           <Button
             variant="ghost"
             size="sm"
@@ -935,7 +935,7 @@ export function MasterDataManagement({ accessToken, onLogout }: MasterDataManage
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto p-6 space-y-6">
+      <div className="w-full p-6 space-y-6">
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>

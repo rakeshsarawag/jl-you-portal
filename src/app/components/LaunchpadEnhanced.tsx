@@ -19,7 +19,7 @@ import { useUser } from '../context/UserContext';
 import { useEmployeeDashboard } from '../hooks/useEmployeeDashboard';
 import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../utils/constants';
 import { APP_VERSION } from '../../constants/global';
-import { APP_BY_PATH } from '../../constants/appRegistry';
+import { APP_BY_PATH, clientCanBeGrantedApp } from '../../constants/appRegistry';
 import { usePermissions } from '../hooks/usePermissions';
 import { useProjectMembership } from '../hooks/useProjectMembership';
 import { t } from '../../i18n/index';
@@ -504,7 +504,8 @@ export function Launchpad({ accessToken, onLogout }: LaunchpadProps) {
     if (!app) return false;
     if (userRoles.includes('admin')) return true;
     if (!matrixLoaded || !membershipLoaded) return false;
-    if (app.appId === 'defect-tracker' && hasProjectMembership) return true;
+    if (userRoles.includes('client') && !clientCanBeGrantedApp(app.appId)) return false;
+    if (app.appId === 'defect-tracker' && hasProjectMembership && !userRoles.includes('client')) return true;
     return canSeeApp(app.appId);
   }), [ALL_TILES, userRoles, canSeeApp, hasProjectMembership, matrixLoaded, membershipLoaded]);
 

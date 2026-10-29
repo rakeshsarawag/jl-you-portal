@@ -10,20 +10,20 @@ interface AppLayoutProps {
 
 export function AppLayout({ children, title, description, icon }: AppLayoutProps) {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen min-w-0 max-w-full bg-background">
       {/* Title bar — sits below the global AppHeader */}
-      <div className="border-b bg-card px-4 sm:px-6 lg:px-8 py-4">
-        <div className="max-w-7xl mx-auto flex items-center gap-3">
+      <div className="border-b bg-card px-3 py-4 sm:px-6 lg:px-8">
+        <div className="flex min-w-0 w-full items-start gap-3 sm:items-center">
           {icon && <div className="shrink-0">{icon}</div>}
-          <div>
-            <h1 className="text-xl font-semibold text-foreground">{title}</h1>
-            {description && <p className="text-sm text-muted-foreground">{description}</p>}
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold text-foreground sm:text-xl">{title}</h1>
+            {description && <p className="text-sm text-muted-foreground text-pretty">{description}</p>}
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="min-w-0 w-full max-w-full px-3 py-5 sm:px-6 sm:py-8 lg:px-8">
         {children}
       </main>
     </div>

@@ -2927,7 +2927,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
     <div className="min-h-screen bg-muted">
       {/* Header */}
       <div className="bg-card border-b border-border sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+        <div className="w-full px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className="bg-blue-600 text-white rounded-lg p-1.5 shrink-0"><Users size={18} /></div>
             <div className="min-w-0">
@@ -2956,7 +2956,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <div className="w-full px-4 sm:px-6 py-6 space-y-6">
         {/* Stat cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard icon={Users} label={t("totalCandidates")} value={derivedStats.total} color="bg-blue-50 text-blue-600" />

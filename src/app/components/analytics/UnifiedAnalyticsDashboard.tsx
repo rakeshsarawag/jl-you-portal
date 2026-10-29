@@ -5763,7 +5763,7 @@ function UnifiedAnalyticsDashboard({ onLogout }: UnifiedAnalyticsDashboardProps)
 
   return (
     <div className="min-h-screen bg-muted">
-      <div ref={dashboardRef} className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <div ref={dashboardRef} className="w-full px-4 sm:px-6 py-6 space-y-6">
         {/* ── Header + toolbar ── */}
         <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4 no-print">
           <div>

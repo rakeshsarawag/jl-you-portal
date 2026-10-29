@@ -3526,7 +3526,7 @@ export function OKRManagementEnhanced({
     <div className="min-h-screen bg-muted">
       {/* Header */}
       <div className="bg-card border-b border-border px-4 sm:px-6 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4 flex-wrap">
+        <div className="w-full flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center">
               <Target size={18} className="text-white" />
@@ -3586,7 +3586,7 @@ export function OKRManagementEnhanced({
         </div>
         {/* Cycle status badge */}
         {selectedCycle && (
-          <div className="max-w-6xl mx-auto mt-2 flex items-center gap-2">
+          <div className="w-full mt-2 flex items-center gap-2">
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${CYCLE_STATUS_COLOR[selectedCycle.status]}`}>{selectedCycle.status}</span>
             <span className="text-xs text-muted-foreground">{selectedCycle.start_date} – {selectedCycle.end_date}</span>
             {selectedCycle.description && <span className="text-xs text-muted-foreground">· {selectedCycle.description}</span>}
@@ -3594,7 +3594,7 @@ export function OKRManagementEnhanced({
         )}
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <div className="w-full px-4 sm:px-6 py-6 space-y-6">
         {/* Stat Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <StatCard icon={<Target size={18} className="text-blue-500" />} label="Total OKRs" value={stats.total} color="blue" />

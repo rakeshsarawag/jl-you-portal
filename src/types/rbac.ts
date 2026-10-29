@@ -12,6 +12,7 @@ export type UserRole =
   | 'employee'        // Basic employee access
   | 'it'              // IT operations
   | 'marketing'       // Marketing operations
+  | 'client'          // External client access
   | 'developer'       // Software development
   | 'guest';          // Read-only access
 
@@ -33,6 +34,7 @@ export type ApplicationId =
   | 'assets'
   | 'okr'
   | 'directory'
+  | 'defect-tracker'
   | 'knowledge-base';
 
 // Permission Types

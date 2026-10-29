@@ -469,6 +469,11 @@ export const DEFAULT_PERMISSION_MATRIX: RolePermissionMatrix = {
       'comments': ['create', 'read', 'update', 'delete'],
     },
   },
+  'client': {
+    'defect-tracker': {
+      'defects': ['create', 'read', 'update', 'export'],
+    },
+  },
   'guest': {
     'documentation': {
       'articles': ['read'],

@@ -179,6 +179,7 @@ export function getPrimaryRole(userRoles: UserRole[]): UserRole {
   if (userRoles.includes('manager')) return 'manager';
   if (userRoles.includes('it')) return 'it';
   if (userRoles.includes('marketing')) return 'marketing';
+  if (userRoles.includes('client')) return 'client';
   if (userRoles.includes('employee')) return 'employee';
   return 'guest';
 }

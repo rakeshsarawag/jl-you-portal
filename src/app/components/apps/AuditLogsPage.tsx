@@ -133,7 +133,7 @@ export function AuditLogsPage({ accessToken }: { accessToken: string }) {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="max-w-7xl mx-auto px-4 py-6 space-y-6">
+      <div className="w-full px-4 py-6 space-y-6">
 
         {/* Header */}
         <div className="flex items-center justify-between">

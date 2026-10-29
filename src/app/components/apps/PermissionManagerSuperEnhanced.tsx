@@ -17,7 +17,7 @@ import {
   SECTION_CONFIG, ALL_ROLES, DEFAULT_APP_VISIBILITY, DEFAULT_SECTION_VISIBILITY,
   buildDefaultPermissions, UserRole,
 } from '../../../constants/permissionSections';
-import { APP_REGISTRY } from '../../../constants/appRegistry';
+import { APP_REGISTRY, clientCanBeGrantedApp } from '../../../constants/appRegistry';
 import { invalidatePermissionsCache } from '../../hooks/usePermissions';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -32,6 +32,7 @@ const ROLE_META: Record<UserRole, { label: string; color: string; bg: string }> 
   employee:  { label: 'Employee',  color: 'text-gray-600 dark:text-gray-400',   bg: 'bg-gray-50 dark:bg-gray-950/30 border-gray-200 dark:border-gray-800' },
   it:        { label: 'IT',        color: 'text-cyan-600 dark:text-cyan-400',   bg: 'bg-cyan-50 dark:bg-cyan-950/30 border-cyan-200 dark:border-cyan-800' },
   marketing: { label: 'Marketing', color: 'text-orange-600 dark:text-orange-400', bg: 'bg-orange-50 dark:bg-orange-950/30 border-orange-200 dark:border-orange-800' },
+  client:    { label: 'Client',    color: 'text-violet-600 dark:text-violet-400', bg: 'bg-violet-50 dark:bg-violet-950/30 border-violet-200 dark:border-violet-800' },
 };
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -161,13 +162,21 @@ function AppVisibilityPanel({ matrix, onChange }: {
   const setAllForRole = (role: UserRole, val: boolean) => {
     const vis: Record<string, boolean> = {};
     APP_REGISTRY.forEach(a => {
-      vis[a.appId] = val && (role === 'admin' || a.requiredRoles.includes(role));
+      vis[a.appId] = val && (
+        role === 'admin'
+        || (role === 'client' && clientCanBeGrantedApp(a.appId))
+        || a.requiredRoles.includes(role)
+      );
     });
     onChange({ ...matrix, [role]: { ...matrix[role], app_visibility: vis } });
   };
 
   const roleState = (role: UserRole): 'all' | 'none' | 'mixed' => {
-    const eligibleApps = APP_REGISTRY.filter(a => role === 'admin' || a.requiredRoles.includes(role));
+    const eligibleApps = APP_REGISTRY.filter(a =>
+      role === 'admin'
+      || (role === 'client' && clientCanBeGrantedApp(a.appId))
+      || a.requiredRoles.includes(role)
+    );
     const vals = eligibleApps.map(a => matrix[role].app_visibility[a.appId] ?? false);
     if (vals.every(Boolean)) return 'all';
     if (vals.every(v => !v)) return 'none';
@@ -175,7 +184,7 @@ function AppVisibilityPanel({ matrix, onChange }: {
   };
 
   return (
-    <div className="flex flex-col min-h-0">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="px-4 py-3 border-b border-border">
         <div className="relative">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -185,7 +194,7 @@ function AppVisibilityPanel({ matrix, onChange }: {
         </div>
       </div>
 
-      <div className="overflow-x-auto overflow-y-auto flex-1">
+      <div className="min-h-0 flex-1 overflow-auto overscroll-contain">
         <table className="w-full text-sm border-collapse">
           <thead className="sticky top-0 bg-muted/60 backdrop-blur z-10">
             <tr>
@@ -209,7 +218,9 @@ function AppVisibilityPanel({ matrix, onChange }: {
                 </td>
                 {ALL_ROLES.map(role => {
                   const isAdmin = role === 'admin';
-                  const eligible = isAdmin || app.requiredRoles.includes(role);
+                  const eligible = isAdmin
+                    || (role === 'client' && clientCanBeGrantedApp(app.appId))
+                    || app.requiredRoles.includes(role);
                   const val = isAdmin ? true : eligible && (matrix[role].app_visibility[app.appId] ?? false);
                   return (
                     <td key={role} className="px-3 py-2.5 text-center">
@@ -324,7 +335,9 @@ function SectionPermissionsPanel({ matrix, onChange }: {
           {filteredApps.map(app => {
             const expanded = expandedApps.has(app.appId) || !!search;
             const registryApp = APP_REGISTRY.find(item => item.appId === app.appId);
-            const roleEligible = selectedRole === 'admin' || Boolean(registryApp?.requiredRoles.includes(selectedRole));
+            const roleEligible = selectedRole === 'admin'
+              || (selectedRole === 'client' && clientCanBeGrantedApp(app.appId))
+              || Boolean(registryApp?.requiredRoles.includes(selectedRole));
             const appVisible = roleEligible && (
               selectedRole === 'admin' ? true : (blob.app_visibility[app.appId] ?? false)
             );
@@ -769,7 +782,7 @@ export default function PermissionManagerSuperEnhanced() {
 
   return (
     <div className="flex flex-col h-screen bg-background overflow-hidden">
-    <div className="flex flex-col flex-1 max-w-7xl w-full mx-auto min-h-0">
+    <div className="flex min-h-0 w-full flex-1 flex-col">
       {/* Header */}
       <div className="shrink-0 px-6 py-4 border-b border-border bg-card">
         <div className="flex items-center justify-between gap-4">

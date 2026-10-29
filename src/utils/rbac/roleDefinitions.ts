@@ -206,6 +206,18 @@ export const ROLE_DEFINITIONS: Record<string, RoleDefinition> = {
     ],
   },
 
+  client: {
+    id: 'client',
+    name: 'Client',
+    description: 'External client access to assigned projects and defects',
+    color: 'bg-violet-500',
+    icon: 'Building2',
+    permissions: [
+      { app: 'employee-dashboard', actions: [] },
+      { app: 'defect-tracker', actions: ['create', 'read', 'update', 'export'] },
+    ],
+  },
+
   guest: {
     id: 'guest',
     name: 'Guest',

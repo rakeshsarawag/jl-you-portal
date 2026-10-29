@@ -22,6 +22,101 @@ html {
   font-size: calc(16px * var(--app-font-scale));
 }
 
+html,
+body,
+#root {
+  min-width: 0;
+  max-width: 100%;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+/*
+ * Route-level responsive safety net.
+ *
+ * Apps retain their desktop layouts, while shared flex/grid children are
+ * allowed to shrink beside the global sidebar. App-specific overflow regions
+ * can still opt into their own scrolling behavior.
+ */
+.route-viewport,
+.route-viewport > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.route-viewport :where(.flex, .grid) > * {
+  min-width: 0;
+}
+
+.route-viewport :where(img, svg, canvas, video, iframe) {
+  max-width: 100%;
+}
+
+@media (max-width: 767px) {
+  /*
+   * Dense app toolbars should form additional rows rather than allowing
+   * search, filters, and actions to overlap.
+   */
+  .route-viewport :where(.flex.items-center.justify-between) {
+    flex-wrap: wrap;
+    row-gap: 0.75rem;
+  }
+
+  /*
+   * Tabs with five or more destinations are more legible as a horizontal
+   * rail than as compressed equal-width columns.
+   */
+  .route-viewport [role='tablist'] {
+    display: flex;
+    max-width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+    scroll-snap-type: x proximity;
+  }
+
+  .route-viewport [role='tablist'] > [role='tab'] {
+    flex: 0 0 auto;
+    min-width: max-content;
+    scroll-snap-align: start;
+  }
+
+  /*
+   * A few legacy data views render tables without a dedicated overflow
+   * wrapper. Keep the data usable without widening the whole route.
+   */
+  .route-viewport table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .route-viewport :where(input, select, textarea) {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 479px) {
+  /*
+   * Base three-plus-column grids are the remaining legacy pattern not covered
+   * by responsive Tailwind variants. Collapse only those dense grids; two-up
+   * KPI tiles remain compact and balanced on common phone widths.
+   */
+  .route-viewport :where(.grid-cols-3, .grid-cols-4, .grid-cols-5, .grid-cols-6, .grid-cols-7) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .route-viewport :where(button, [role='button']) {
+    max-width: 100%;
+  }
+}
+
 /* Density — shrink/expand padding and gap utilities via a multiplier on the root */
 .density-compact * {
   --density-pad: 0.75;

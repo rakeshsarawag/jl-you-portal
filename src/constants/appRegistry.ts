@@ -137,7 +137,7 @@ export const APP_REGISTRY: AppEntry[] = [
     label: 'Defect Tracker',
     description: 'Track and resolve defects with SLA monitoring',
     icon: 'BugOff',
-    requiredRoles: ['employee', 'admin', 'hr', 'manager', 'finance', 'it', 'marketing'],
+    requiredRoles: ['employee', 'admin', 'hr', 'manager', 'finance', 'it', 'marketing', 'client'],
     category: 'core',
     color: 'from-red-500 to-rose-600',
   },
@@ -302,6 +302,22 @@ export const APP_BY_PATH: Record<string, AppEntry> = Object.fromEntries(
 export const APP_BY_ID: Record<string, AppEntry> = Object.fromEntries(
   APP_REGISTRY.map(a => [a.appId, a])
 );
+
+/**
+ * Apps that may be granted to external Client users. This is a security
+ * boundary, not a default: only Defect Tracker is enabled by default.
+ */
+export const CLIENT_GRANTABLE_APP_IDS = new Set([
+  'defect-tracker',
+  'projects',
+  'documentation',
+  'communications',
+  'training',
+]);
+
+export function clientCanBeGrantedApp(appId: string): boolean {
+  return CLIENT_GRANTABLE_APP_IDS.has(appId);
+}
 
 /**
  * Returns true if the user has at least one of the app's required roles.

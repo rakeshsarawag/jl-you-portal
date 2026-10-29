@@ -5444,6 +5444,14 @@ INSERT INTO role_permissions (role, permissions) VALUES
   "users": ["read"],
   "settings": [],
   "reports": []
+}'::jsonb),
+('client', '{
+  "apps": ["defect-tracker"],
+  "actions": ["create","read","update","export"],
+  "payroll": [],
+  "users": [],
+  "settings": [],
+  "reports": []
 }'::jsonb)
 -- Never overwrite permissions edited through the Permission Manager.
 ON CONFLICT (role) DO NOTHING;
@@ -7447,6 +7455,7 @@ INSERT INTO master_value_helps (entity, field, label, value, sort_order, is_acti
 ('user','role','Finance','finance',5,TRUE),
 ('user','role','IT','it',6,TRUE),
 ('user','role','Marketing','marketing',7,TRUE),
+('user','role','Client','client',8,TRUE),
 
 -- ── Invoice: currency ─────────────────────────────────────────────────────────
 ('invoice','currency','Indian Rupee (INR)','INR',1,TRUE),
@@ -10425,9 +10434,10 @@ SET primary_role = CASE
       WHEN roles ? 'manager' THEN 'manager'
       WHEN roles ? 'it' THEN 'it'
       WHEN roles ? 'marketing' THEN 'marketing'
+      WHEN roles ? 'client' THEN 'client'
       WHEN roles ? 'employee' THEN 'employee'
       WHEN primary_role IN (
-        'admin', 'hr', 'finance', 'manager', 'it', 'marketing', 'employee'
+        'admin', 'hr', 'finance', 'manager', 'it', 'marketing', 'client', 'employee'
       ) THEN primary_role
       ELSE 'employee'
     END,
@@ -10466,9 +10476,10 @@ BEGIN
         WHEN roles ? 'manager' THEN 'manager'
         WHEN roles ? 'it' THEN 'it'
         WHEN roles ? 'marketing' THEN 'marketing'
+        WHEN roles ? 'client' THEN 'client'
         WHEN roles ? 'employee' THEN 'employee'
         WHEN primary_role IN (
-          'admin', 'hr', 'finance', 'manager', 'it', 'marketing', 'employee'
+          'admin', 'hr', 'finance', 'manager', 'it', 'marketing', 'client', 'employee'
         ) THEN primary_role
         ELSE 'employee'
       END,

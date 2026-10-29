@@ -1907,7 +1907,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <div className="bg-card border-b border-border sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6">
+        <div className="w-full px-4 sm:px-6">
           <div className="flex items-center justify-between h-14">
             <div>
               <h1 className="font-semibold text-foreground text-sm">{t('dashboard.title')}</h1>
@@ -1978,7 +1978,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+      <div className="w-full px-4 sm:px-6 py-6">
 
         {/* Employee record not linked warning */}
         {!currentUser?.employeeId && !currentUser?.notProvisioned && (

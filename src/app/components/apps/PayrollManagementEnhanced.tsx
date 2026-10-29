@@ -1796,7 +1796,7 @@ export function PayrollManagementEnhanced(_props: Props) {
   );
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+    <div className="w-full px-4 sm:px-6 py-6 space-y-6">
       {/* Header */}
       <div className="bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-2xl p-6 flex items-center justify-between">
         <div>

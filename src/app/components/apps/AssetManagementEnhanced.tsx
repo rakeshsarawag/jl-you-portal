@@ -656,7 +656,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
     <div className="min-h-screen bg-muted">
       {/* Header */}
       <div className="bg-card border-b border-border px-4 py-3">
-        <div className="max-w-6xl mx-auto flex items-center justify-between">
+        <div className="w-full flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Package className="h-6 w-6 text-orange-600" />
             <h1 className="text-xl font-bold text-foreground">{t('Asset Management')}</h1>
@@ -678,7 +678,7 @@ export function AssetManagementEnhanced({ accessToken: _accessToken, onLogout }:
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 py-6 space-y-6">
+      <div className="w-full px-4 py-6 space-y-6">
         {/* Error banner */}
         {error && (
           <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>

@@ -3163,7 +3163,7 @@ export function TrainingTrackerEnhanced({
     <div className="min-h-screen bg-muted">
       {/* Header */}
       <header className="bg-card border-b border-border sticky top-0 z-40">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+        <div className="w-full px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <GraduationCap className="h-6 w-6 text-indigo-600" />
             <span className="font-semibold text-foreground">{t('training.title')}</span>
@@ -3192,7 +3192,7 @@ export function TrainingTrackerEnhanced({
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main className="w-full px-4 sm:px-6 py-6 space-y-6">
         {/* Error banner */}
         {error && (
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">

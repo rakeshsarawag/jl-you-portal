@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect, useLayoutEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router';
 import { useUser } from '../context/UserContext';
-import { APP_REGISTRY } from '../../constants/appRegistry';
+import { APP_REGISTRY, clientCanBeGrantedApp } from '../../constants/appRegistry';
 import { usePermissions } from '../hooks/usePermissions';
 import { UserMenu } from './AppHeader';
 import {
@@ -19,8 +19,10 @@ const ICON_MAP: Record<string, React.ComponentType<{ className?: string; strokeW
   Cog, UserCog, Lock, Home, CalendarCheck,
 };
 
-const PANEL_BG = 'rgb(14,23,42)';
-const ACTIVE_BG = 'rgb(30,78,216)';
+const PANEL_BG = 'var(--app-sidebar-bg)';
+const ACTIVE_BG = 'var(--app-sidebar-active)';
+const EXPANDED_WIDTH = 220;
+const COLLAPSED_WIDTH = 44;
 
 const CATEGORY_ORDER = ['core', 'hr', 'finance', 'analytics', 'collaboration', 'admin'];
 const CATEGORY_LABELS: Record<string, string> = {
@@ -69,7 +71,7 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
 
   // Update the global sidebar width CSS variable
   useLayoutEffect(() => {
-    const w = isLaunchpad || isMobile ? 0 : isExpanded ? 220 : 56;
+    const w = isLaunchpad || isMobile ? 0 : isExpanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH;
     document.documentElement.style.setProperty('--global-sidebar-w', `${w}px`);
   }, [isExpanded, isLaunchpad, isMobile]);
 
@@ -87,11 +89,13 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
 
   const userRoles = currentUser?.roles ?? (currentUser?.primaryRole ? [currentUser.primaryRole] : []);
   const isAdmin = userRoles.includes('admin');
+  const isClient = userRoles.includes('client');
   const { canSeeApp, matrixLoaded } = usePermissions(userRoles, currentUser?.permissionOverrides ?? []);
 
   const accessibleApps = APP_REGISTRY.filter(app => {
     if (isAdmin) return true;
     if (!matrixLoaded) return false;
+    if (isClient && !clientCanBeGrantedApp(app.appId)) return false;
     return canSeeApp(app.appId);
   });
 
@@ -136,7 +140,7 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
         onMouseLeave={() => { if (!pinned) setHoverExpanded(false); }}
         style={{
           backgroundColor: PANEL_BG,
-          width: isExpanded ? '220px' : '56px',
+          width: isExpanded ? `${EXPANDED_WIDTH}px` : `${COLLAPSED_WIDTH}px`,
           transition: 'width 180ms ease-in-out',
         }}
         className="fixed top-12 left-0 bottom-0 z-40 hidden md:flex flex-col overflow-hidden border-r border-white/5"
@@ -165,7 +169,7 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
         {/* App list */}
         <nav className="app-sidebar-scrollbar flex-1 overflow-y-auto overflow-x-hidden py-2">
           {/* Home */}
-          <div className="px-2 mb-1">
+          <div className={isExpanded ? 'px-2 mb-1' : 'px-1 mb-1'}>
             <SidebarItem
               icon={<Home className="h-[18px] w-[18px] shrink-0" strokeWidth={1.5} />}
               label="Home"
@@ -185,7 +189,7 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
               {!isExpanded && (
                 <div className="mx-3 my-2 h-px" style={{ backgroundColor: 'rgba(255,255,255,0.08)' }} />
               )}
-              <div className="px-2 space-y-0.5">
+              <div className={`${isExpanded ? 'px-2' : 'px-1'} space-y-0.5`}>
                 {apps.map(app => {
                   const Icon = ICON_MAP[app.icon] ?? Monitor;
                   const isActive = location.pathname === app.path ||
@@ -207,7 +211,7 @@ export function AppSidebar({ onLogout }: AppSidebarProps) {
         </nav>
 
         {/* Bottom: user avatar */}
-        <div className="px-2 pb-3 pt-2 shrink-0 border-t border-white/5">
+        <div className={`${isExpanded ? 'px-2' : 'px-1'} pb-3 pt-2 shrink-0 border-t border-white/5`}>
           <button
             onClick={() => setUserMenuOpen(o => !o)}
             title={!isExpanded ? (currentUser?.name ?? 'User') : undefined}

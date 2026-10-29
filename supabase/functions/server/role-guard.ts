@@ -10,15 +10,52 @@ export type AppRole =
   | "finance"
   | "employee"
   | "it"
-  | "marketing";
+  | "marketing"
+  | "client";
 
 const ALL_ROLES: AppRole[] = [
+  "admin", "hr", "manager", "finance", "employee", "it", "marketing", "client",
+];
+
+const INTERNAL_ROLES: AppRole[] = [
   "admin", "hr", "manager", "finance", "employee", "it", "marketing",
 ];
 
 const ROLE_PRIORITY: AppRole[] = [
-  "admin", "hr", "finance", "manager", "it", "marketing", "employee",
+  "admin", "hr", "finance", "manager", "it", "marketing", "client", "employee",
 ];
+
+const ROUTE_APP_IDS: Record<string, string> = {
+  "/users": "user-management",
+  "/payroll": "payroll",
+  "/invoices": "invoices",
+  "/scheduled-reports": "advanced-analytics",
+  "/recruitment": "recruitment",
+  "/onboarding": "onboarding",
+  "/master-data": "master-data",
+  "/audit-logs": "audit-logs",
+  "/assets": "assets",
+  "/linkedin": "linkedin",
+  "/directory": "directory",
+  "/employee-dashboard": "employee-dashboard",
+  "/performance": "performance",
+  "/training": "training",
+  "/it-services": "it-services",
+  "/projects": "projects",
+  "/okr": "okr",
+  "/knowledge": "documentation",
+  "/communications": "communications",
+  "/workflow": "workflow-dashboard",
+  "/defect-tracker": "defect-tracker",
+};
+
+const CLIENT_GRANTABLE_APP_IDS = new Set([
+  "defect-tracker",
+  "projects",
+  "documentation",
+  "communications",
+  "training",
+]);
 
 function resolvePrimaryRole(roles: unknown, primaryRole: unknown): AppRole {
   const assigned = Array.isArray(roles)
@@ -76,19 +113,19 @@ const ROUTE_RULES: Record<string, RouteRule> = {
   "/linkedin": { read: ["admin", "hr", "marketing"], write: ["admin", "hr", "marketing"] },
 
   // ── All roles (employees see own data — enforced by RLS) ──
-  "/directory":         { read: ALL_ROLES, write: ["admin", "hr"] },
-  "/employee-dashboard":{ read: ALL_ROLES, write: ALL_ROLES },
-  "/performance":       { read: ALL_ROLES, write: ["admin", "hr", "manager"] },
-  "/training":          { read: ALL_ROLES, write: ["admin", "hr", "manager"] },
-  "/it-services":       { read: ALL_ROLES, write: ALL_ROLES },
-  "/projects":          { read: ALL_ROLES, write: ["admin", "manager", "hr"] },
-  "/okr":               { read: ALL_ROLES, write: ALL_ROLES },
-  "/knowledge":         { read: ALL_ROLES, write: ["admin", "hr", "manager"] },
-  "/communications":    { read: ALL_ROLES, write: ALL_ROLES },
-  "/notifications":     { read: ALL_ROLES, write: ALL_ROLES },
-  "/push":              { read: ALL_ROLES, write: ALL_ROLES },
-  "/workflow":          { read: ALL_ROLES, write: ["admin", "hr", "manager"] },
-  "/defect-tracker":    { read: ALL_ROLES, write: ALL_ROLES },
+  "/directory":         { read: INTERNAL_ROLES, write: ["admin", "hr"] },
+  "/employee-dashboard":{ read: INTERNAL_ROLES, write: INTERNAL_ROLES },
+  "/performance":       { read: INTERNAL_ROLES, write: ["admin", "hr", "manager"] },
+  "/training":          { read: INTERNAL_ROLES, write: ["admin", "hr", "manager"] },
+  "/it-services":       { read: INTERNAL_ROLES, write: INTERNAL_ROLES },
+  "/projects":          { read: INTERNAL_ROLES, write: ["admin", "manager", "hr"] },
+  "/okr":               { read: INTERNAL_ROLES, write: INTERNAL_ROLES },
+  "/knowledge":         { read: INTERNAL_ROLES, write: ["admin", "hr", "manager"] },
+  "/communications":    { read: INTERNAL_ROLES, write: INTERNAL_ROLES },
+  "/notifications":     { read: INTERNAL_ROLES, write: INTERNAL_ROLES },
+  "/push":              { read: INTERNAL_ROLES, write: INTERNAL_ROLES },
+  "/workflow":          { read: INTERNAL_ROLES, write: ["admin", "hr", "manager"] },
+  "/defect-tracker":    { read: INTERNAL_ROLES, write: INTERNAL_ROLES },
 };
 
 // ── Role lookup ───────────────────────────────────────────────────────────────
@@ -195,6 +232,24 @@ async function lookupUserRole(
   return { role, employeeId };
 }
 
+async function clientCanAccessApp(appId: string): Promise<boolean> {
+  if (!CLIENT_GRANTABLE_APP_IDS.has(appId)) return false;
+  const supabase = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+  );
+  const { data } = await supabase
+    .from("role_permissions")
+    .select("permissions")
+    .eq("role", "client")
+    .maybeSingle();
+  const permissions = data?.permissions;
+  if (!permissions || typeof permissions !== "object") return false;
+  if (permissions.app_visibility?.["*"] === true) return true;
+  if (permissions.app_visibility?.[appId] === true) return true;
+  return Array.isArray(permissions.apps) && permissions.apps.includes(appId);
+}
+
 // ── Middleware factory ────────────────────────────────────────────────────────
 
 /**
@@ -279,6 +334,9 @@ export function roleGuard(base: string) {
       c.req.method === "POST" &&
       /\/training\/enrollments\/?$/.test(path)
     ) {
+      if (role === "client" && !await clientCanAccessApp("training")) {
+        return c.json({ error: "Forbidden: client does not have access to Training" }, 403);
+      }
       await next();
       return;
     }
@@ -289,6 +347,9 @@ export function roleGuard(base: string) {
       c.req.method === "POST" &&
       /^\/training\/enrollments\/[^/]+\/assessment$/.test(path)
     ) {
+      if (role === "client" && !await clientCanAccessApp("training")) {
+        return c.json({ error: "Forbidden: client does not have access to Training" }, 403);
+      }
       await next();
       return;
     }
@@ -296,6 +357,9 @@ export function roleGuard(base: string) {
       c.req.method === "PUT" &&
       /^\/training\/enrollments\/[^/]+\/progress$/.test(path)
     ) {
+      if (role === "client" && !await clientCanAccessApp("training")) {
+        return c.json({ error: "Forbidden: client does not have access to Training" }, 403);
+      }
       await next();
       return;
     }
@@ -320,7 +384,11 @@ export function roleGuard(base: string) {
     const isWrite = ["POST", "PUT", "PATCH", "DELETE"].includes(c.req.method);
     const allowed = isWrite ? rule.write : rule.read;
 
-    if (!allowed.includes(role)) {
+    const clientHasDynamicAccess = role === "client"
+      && Boolean(ROUTE_APP_IDS[matchedKey])
+      && await clientCanAccessApp(ROUTE_APP_IDS[matchedKey]);
+
+    if (!allowed.includes(role) && !clientHasDynamicAccess) {
       return c.json(
         {
           error: `Forbidden: '${role}' role is not permitted to ${isWrite ? "modify" : "access"} this resource`,

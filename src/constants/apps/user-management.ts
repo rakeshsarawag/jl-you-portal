@@ -15,6 +15,7 @@ export const ROLE_LABELS: Record<string, string> = {
   finance: 'Finance',
   it: 'IT Admin',
   marketing: 'Marketing',
+  client: 'Client',
 };
 
 export const ROLE_COLORS: Record<string, string> = {
@@ -25,9 +26,10 @@ export const ROLE_COLORS: Record<string, string> = {
   finance: 'bg-yellow-100 text-yellow-700',
   it: 'bg-red-100 text-red-700',
   marketing: 'bg-pink-100 text-pink-700',
+  client: 'bg-violet-100 text-violet-700',
 };
 
-export const ALL_ROLES = ['admin', 'hr', 'manager', 'employee', 'finance', 'it', 'marketing'] as const;
+export const ALL_ROLES = ['admin', 'hr', 'manager', 'employee', 'finance', 'it', 'marketing', 'client'] as const;
 export type AppRole = typeof ALL_ROLES[number];
 
 export const USER_EXPORT_FIELDS = ['id', 'name', 'email', 'department', 'primaryRole', 'status', 'createdAt'] as const;

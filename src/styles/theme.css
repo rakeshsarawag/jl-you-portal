@@ -39,6 +39,8 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --app-sidebar-bg: rgb(14, 23, 42);
+  --app-sidebar-active: rgb(30, 78, 216);
 }
 
 .dark {
@@ -76,6 +78,111 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.269 0 0);
   --sidebar-ring: oklch(0.439 0 0);
+}
+
+/*
+ * JL brand theme
+ * Derived from the portal logo: #2563eb → #3b82f6 → #7c3aed with #34d399.
+ * This is intentionally opt-in so existing light, dark, and system themes
+ * retain their current behavior.
+ */
+.theme-jl {
+  --background: #f7f9ff;
+  --foreground: #172033;
+  --card: #ffffff;
+  --card-foreground: #172033;
+  --popover: #ffffff;
+  --popover-foreground: #172033;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --secondary: #e8efff;
+  --secondary-foreground: #1e3a8a;
+  --muted: #edf2fb;
+  --muted-foreground: #5b6880;
+  --accent: #ede9fe;
+  --accent-foreground: #5b21b6;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: rgba(37, 99, 235, 0.18);
+  --input: rgba(37, 99, 235, 0.22);
+  --input-background: #f3f6fd;
+  --switch-background: #bfcbdf;
+  --ring: #7c3aed;
+  --chart-1: #2563eb;
+  --chart-2: #7c3aed;
+  --chart-3: #34d399;
+  --chart-4: #0ea5e9;
+  --chart-5: #f59e0b;
+  --radius: 0.75rem;
+  --sidebar: #172554;
+  --sidebar-foreground: #eff6ff;
+  --sidebar-primary: #3b82f6;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #312e81;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: rgba(147, 197, 253, 0.22);
+  --sidebar-ring: #a78bfa;
+  --app-sidebar-bg: #172554;
+  --app-sidebar-active: #2563eb;
+}
+
+/*
+ * Several established app screens predate semantic color tokens and use
+ * Tailwind's neutral utilities directly. Keep those screens theme-aware
+ * without changing their status, severity, or destructive colors.
+ */
+.theme-jl .bg-white {
+  background-color: var(--card);
+}
+
+.theme-jl .bg-gray-50,
+.theme-jl .bg-slate-50 {
+  background-color: var(--background);
+}
+
+.theme-jl .bg-gray-100,
+.theme-jl .bg-slate-100,
+.theme-jl .bg-gray-200 {
+  background-color: var(--muted);
+}
+
+.theme-jl .text-gray-950,
+.theme-jl .text-gray-900,
+.theme-jl .text-gray-800,
+.theme-jl .text-gray-700,
+.theme-jl .text-slate-900,
+.theme-jl .text-slate-800,
+.theme-jl .text-slate-700 {
+  color: var(--foreground);
+}
+
+.theme-jl .text-gray-600,
+.theme-jl .text-gray-500,
+.theme-jl .text-gray-400,
+.theme-jl .text-slate-600,
+.theme-jl .text-slate-500,
+.theme-jl .text-slate-400 {
+  color: var(--muted-foreground);
+}
+
+.theme-jl .border-gray-50,
+.theme-jl .border-gray-100,
+.theme-jl .border-gray-200,
+.theme-jl .border-gray-300,
+.theme-jl .border-slate-100,
+.theme-jl .border-slate-200,
+.theme-jl .border-slate-300 {
+  border-color: var(--border);
+}
+
+.theme-jl .hover\:bg-gray-50:hover,
+.theme-jl .hover\:bg-gray-100:hover,
+.theme-jl .hover\:bg-slate-50:hover {
+  background-color: var(--muted);
+}
+
+.theme-jl .disabled\:bg-gray-50:disabled {
+  background-color: var(--muted);
 }
 
 @theme inline {

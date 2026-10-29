@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useDisplaySettings } from '../context/DisplaySettingsContext';
 import { useNavigate, useLocation } from 'react-router';
-import { ArrowLeft, ChevronRight, Bell, BellDot, Sun, Moon, Monitor, LogOut, ChevronDown, CalendarOff, CheckSquare, Ticket, GitBranch, Info, HelpCircle, X } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Bell, BellDot, Sun, Moon, Monitor, Sparkles, LogOut, ChevronDown, CalendarOff, CheckSquare, Ticket, GitBranch, Info, HelpCircle, X } from 'lucide-react';
 import { useUnsavedChangesContext } from '../context/UnsavedChangesContext';
 import { useUser } from '../context/UserContext';
 import { useNotifications } from '../hooks/useNotificationsData';
@@ -85,7 +85,7 @@ const ROUTE_LABELS: Record<string, string> = {
   '/linkedin': 'LinkedIn Manager',
 };
 
-type Theme = 'light' | 'dark' | 'system';
+type Theme = 'light' | 'dark' | 'system' | 'jl';
 
 const LANGUAGES: { value: Locale; label: string; flag: string }[] = [
   { value: 'en', label: 'English', flag: '🇺🇸' },
@@ -96,6 +96,7 @@ const LANGUAGES: { value: Locale; label: string; flag: string }[] = [
 
 function applyTheme(theme: Theme) {
   const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.classList.toggle('theme-jl', theme === 'jl');
   document.documentElement.classList.toggle('dark', theme === 'dark' || (theme === 'system' && prefersDark));
   localStorage.setItem('jl-theme', theme);
 }
@@ -219,6 +220,7 @@ export function UserMenu({ currentUser, onLogout }: { currentUser: any; onLogout
             { value: 'light' as Theme, icon: Sun, label: 'Light' },
             { value: 'dark' as Theme, icon: Moon, label: 'Dark' },
             { value: 'system' as Theme, icon: Monitor, label: 'Auto' },
+            { value: 'jl' as Theme, icon: Sparkles, label: 'JL' },
           ].map(({ value, icon: Icon, label }) => (
             <button
               key={value}
@@ -363,7 +365,7 @@ export function AppHeader({ onLogout }: AppHeaderProps) {
   return (
     <>
       <header className="fixed top-0 left-0 right-0 z-50 h-12 bg-card border-b border-border shadow-sm">
-        <div className={`${isHome ? 'w-full px-6 sm:px-10' : 'max-w-7xl mx-auto px-4 sm:px-6'} h-full flex items-center gap-2`}>
+        <div className="flex h-full w-full items-center gap-2 px-6 sm:px-10">
 
           {/* Back button */}
           {!isHome && (

@@ -855,7 +855,7 @@ export function LinkedInPostManager(_props: Props) {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+      <div className="w-full px-4 sm:px-6 py-8">
         {/* Header */}
         <div className="mb-6 flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-600">

@@ -2292,7 +2292,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <div className="bg-card border-b border-border sticky top-0 z-30">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+        <div className="w-full px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Users size={18} className="text-primary" />
             <h1 className="font-semibold text-foreground text-sm">{t('directory.title')}</h1>
@@ -2361,7 +2361,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-4">
+      <div className="w-full px-4 sm:px-6 py-6 space-y-4">
         {/* Celebrations This Month */}
         {(() => {
           const now = new Date();

@@ -4,7 +4,7 @@ import { useUser } from '../context/UserContext';
 import { toast } from 'sonner';
 import { MfaEnrollmentGate } from './MfaEnrollmentGate';
 import { usePermissions } from '../hooks/usePermissions';
-import { APP_BY_PATH } from '../../constants/appRegistry';
+import { APP_BY_PATH, clientCanBeGrantedApp } from '../../constants/appRegistry';
 import { useProjectMembership } from '../hooks/useProjectMembership';
 
 interface ProtectedRouteProps {
@@ -29,6 +29,7 @@ export function ProtectedRoute({ children, requiredRoles, appName }: ProtectedRo
     currentUser?.permissionOverrides ?? [],
   );
   const { hasProjectMembership, membershipLoaded } = useProjectMembership(allowsProjectMember);
+  const allowsMembershipOverride = allowsProjectMember && !currentUser?.roles?.includes('client');
   const checkingAccess = loading || !matrixLoaded || (allowsProjectMember && !membershipLoaded);
 
   useEffect(() => {
@@ -47,9 +48,12 @@ export function ProtectedRoute({ children, requiredRoles, appName }: ProtectedRo
     // SECURITY: Check if user has required roles
     const hasRequiredRole = currentUser.roles?.some(role => 
       requiredRoles.includes(role)
-    ) ?? false;
+    ) || (
+      currentUser.roles?.includes('client')
+      && Boolean(appId && clientCanBeGrantedApp(appId) && canSeeApp(appId))
+    );
     const hasAppPermission = appId
-      ? canSeeApp(appId) || (allowsProjectMember && hasProjectMembership)
+      ? canSeeApp(appId) || (allowsMembershipOverride && hasProjectMembership)
       : false;
 
     if (!hasRequiredRole || !hasAppPermission) {
@@ -76,7 +80,7 @@ export function ProtectedRoute({ children, requiredRoles, appName }: ProtectedRo
       `\n   User role: ${currentUser.roles?.[0]}`
     );
   }, [
-    allowsProjectMember,
+    allowsMembershipOverride,
     appId,
     appName,
     canSeeApp,
@@ -102,12 +106,17 @@ export function ProtectedRoute({ children, requiredRoles, appName }: ProtectedRo
   // Only render children if user has required roles
   const hasAccess = currentUser?.roles?.some(role => 
     requiredRoles.includes(role)
-  ) && Boolean(
-    appId &&
-    (canSeeApp(appId) || (allowsProjectMember && hasProjectMembership))
+  ) || (
+    currentUser?.roles?.includes('client')
+    && Boolean(appId && clientCanBeGrantedApp(appId) && canSeeApp(appId))
   );
 
-  if (!hasAccess) {
+  const hasVisibleAppAccess = Boolean(
+    appId &&
+    (canSeeApp(appId) || (allowsMembershipOverride && hasProjectMembership))
+  );
+
+  if (!hasAccess || !hasVisibleAppAccess) {
     return null; // Will redirect in useEffect
   }
 

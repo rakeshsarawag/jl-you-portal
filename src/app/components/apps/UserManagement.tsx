@@ -614,7 +614,7 @@ function BulkCSVImportModal({ onClose, onDone }: { onClose: () => void; onDone: 
       const email = cols[emailIdx]?.trim();
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errs.push(`Row ${i + 1}: invalid email "${email}"`); continue; }
       const role = (roleIdx !== -1 ? cols[roleIdx]?.trim() : '') || 'employee';
-      const validRoles = ['admin', 'hr', 'manager', 'employee', 'finance', 'marketing', 'it'];
+      const validRoles = ['admin', 'hr', 'manager', 'employee', 'finance', 'marketing', 'it', 'client'];
       if (!validRoles.includes(role)) { errs.push(`Row ${i + 1}: invalid role "${role}" (must be one of: ${validRoles.join(', ')})`); continue; }
       rows.push({ email, name: nameIdx !== -1 ? cols[nameIdx]?.trim() || '' : '', role, department: deptIdx !== -1 ? cols[deptIdx]?.trim() || '' : '', phone: phoneIdx !== -1 ? cols[phoneIdx]?.trim() || '' : '' });
     }
@@ -2620,7 +2620,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <div className="bg-card border-b border-border sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
+        <div className="w-full px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Shield size={18} className="text-primary" />
             <h1 className="font-semibold text-foreground text-sm">{t('userMgmt.title')}</h1>
@@ -2659,7 +2659,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
           </div>
         </div>
         {/* Tabs */}
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 flex gap-1 border-t border-border overflow-x-auto">
+        <div className="w-full px-4 sm:px-6 flex gap-1 border-t border-border overflow-x-auto">
           {([
             { key: 'users' as const, label: 'Users', icon: Users },
             { key: 'sessions' as const, label: 'Sessions', icon: Activity },
@@ -2683,7 +2683,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+      <div className="w-full px-4 sm:px-6 py-6 space-y-5">
         {/* Audit Log Tab */}
         {activeTab === 'audit' && <AuditLogTab />}
 

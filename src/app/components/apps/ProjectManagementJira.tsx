@@ -6689,7 +6689,7 @@ function ProjectDetailPanel({
       </div>
 
       {/* Tabs */}
-      <div className="max-w-6xl mx-auto px-6 py-6">
+      <div className="w-full px-6 py-6">
         <div className="flex gap-1 mb-6 bg-muted rounded-lg p-1 w-fit">
           {(["overview", "backlog", "defects", "tasks", "team", "milestones", "sprints", "risks", ...(secReports ? ["reports" as const] : [])] as const).map((tab) => (
             <button
@@ -8330,7 +8330,7 @@ export function ProjectManagementJira({
     <div className="min-h-screen bg-muted">
       {/* Header */}
       <div className="sticky top-0 z-30 border-b border-border/80 bg-background/90 backdrop-blur-xl">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-4">
+        <div className="w-full px-4 sm:px-6 py-3 flex items-center gap-4">
           <div className="flex min-w-0 flex-1 items-center gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
               <BriefcaseBusiness className="size-5" />
@@ -8398,7 +8398,7 @@ export function ProjectManagementJira({
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <div className="w-full px-4 sm:px-6 py-6 space-y-6">
         {/* Dashboard View */}
         {mainView === "dashboard" && (
           <DashboardView

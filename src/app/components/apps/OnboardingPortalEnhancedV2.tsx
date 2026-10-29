@@ -2670,7 +2670,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
     <div className="min-h-screen bg-muted">
       {/* Header */}
       <header className="bg-card border-b border-border sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
+        <div className="w-full px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
               <Users size={18} className="text-white" />
@@ -2720,7 +2720,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main className="w-full px-4 sm:px-6 py-6 space-y-6">
         {/* Offboarding tab */}
         {mainTab === 'offboarding' && (
           <OffboardingTab

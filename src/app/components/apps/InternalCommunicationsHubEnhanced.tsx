@@ -1643,7 +1643,7 @@ export function InternalCommunicationsHub(_props: Props) {
     <div className="min-h-screen bg-muted">
       {/* Header */}
       <div className="bg-card border-b border-border sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6">
+        <div className="w-full px-4 sm:px-6">
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
@@ -1681,7 +1681,7 @@ export function InternalCommunicationsHub(_props: Props) {
       </div>
 
       {/* Content */}
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+      <div className="w-full px-4 sm:px-6 py-6">
         {loading ? (
           <div className="flex items-center justify-center py-20">
             <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin" />

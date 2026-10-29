@@ -8,8 +8,8 @@
  *  • SectionGuard component (to gate UI sections)
  */
 
-export type UserRole = 'admin' | 'hr' | 'manager' | 'finance' | 'employee' | 'it' | 'marketing';
-export const ALL_ROLES: UserRole[] = ['admin', 'hr', 'manager', 'finance', 'employee', 'it', 'marketing'];
+export type UserRole = 'admin' | 'hr' | 'manager' | 'finance' | 'employee' | 'it' | 'marketing' | 'client';
+export const ALL_ROLES: UserRole[] = ['admin', 'hr', 'manager', 'finance', 'employee', 'it', 'marketing', 'client'];
 
 // ── Section definition ─────────────────────────────────────────────────────
 
@@ -286,6 +286,9 @@ export const DEFAULT_APP_VISIBILITY: Record<UserRole, Record<string, boolean>> =
     'training': true, 'documentation': true,
     'defect-tracker': false,
   },
+  client: {
+    'defect-tracker': true,
+  },
 };
 
 /**
@@ -418,6 +421,18 @@ export const DEFAULT_SECTION_VISIBILITY: Record<UserRole, Record<string, Record<
     'user-management': { view_users: false, create_user: false, grant_access: false, edit_roles: false, suspend_user: false },
     'master-data':  { departments: false, locations: false, clients: false, designations: false, manage_other: false, export: false },
     'defect-tracker': { view_defects: false, log_defect: false, update_defects: false, delete_defects: false, manage_sla: false, escalate: false, analytics: false, export: false },
+  },
+  client: {
+    'defect-tracker': {
+      view_defects: true,
+      log_defect: true,
+      update_defects: true,
+      delete_defects: false,
+      manage_sla: false,
+      escalate: false,
+      analytics: true,
+      export: true,
+    },
   },
 };
 

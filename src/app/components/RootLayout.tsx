@@ -38,7 +38,7 @@ export function RootLayout({ accessToken, onLogout }: RootLayoutProps) {
           {/* margin-left driven by --global-sidebar-w CSS var; AppSidebar sets it directly */}
           <div
             key={locale}
-            className="pt-12 transition-[margin-left] duration-200 ease-in-out"
+            className="min-w-0 max-w-full overflow-x-clip pt-12 transition-[margin-left] duration-200 ease-in-out"
             style={{ marginLeft: 'var(--global-sidebar-w, 0px)' }}
           >
             <Outlet />

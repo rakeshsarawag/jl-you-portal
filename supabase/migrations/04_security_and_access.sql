@@ -1104,9 +1104,10 @@ SET primary_role = CASE
       WHEN roles ? 'manager' THEN 'manager'
       WHEN roles ? 'it' THEN 'it'
       WHEN roles ? 'marketing' THEN 'marketing'
+      WHEN roles ? 'client' THEN 'client'
       WHEN roles ? 'employee' THEN 'employee'
       WHEN primary_role IN (
-        'admin', 'hr', 'finance', 'manager', 'it', 'marketing', 'employee'
+        'admin', 'hr', 'finance', 'manager', 'it', 'marketing', 'client', 'employee'
       ) THEN primary_role
       ELSE 'employee'
     END,
@@ -1145,9 +1146,10 @@ BEGIN
         WHEN roles ? 'manager' THEN 'manager'
         WHEN roles ? 'it' THEN 'it'
         WHEN roles ? 'marketing' THEN 'marketing'
+        WHEN roles ? 'client' THEN 'client'
         WHEN roles ? 'employee' THEN 'employee'
         WHEN primary_role IN (
-          'admin', 'hr', 'finance', 'manager', 'it', 'marketing', 'employee'
+          'admin', 'hr', 'finance', 'manager', 'it', 'marketing', 'client', 'employee'
         ) THEN primary_role
         ELSE 'employee'
       END,

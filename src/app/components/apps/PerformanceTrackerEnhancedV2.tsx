@@ -2866,7 +2866,7 @@ export function PerformanceTrackerEnhancedV2({
     <div className="min-h-screen bg-muted">
       {/* Header */}
       <header className="bg-card border-b px-4 sm:px-6 py-4">
-        <div className="max-w-6xl mx-auto flex items-center justify-between gap-4 flex-wrap">
+        <div className="w-full flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
             <TrendingUp size={24} className="text-indigo-600" />
             <div>
@@ -2888,7 +2888,7 @@ export function PerformanceTrackerEnhancedV2({
         </div>
       </header>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+      <main className="w-full px-4 sm:px-6 py-6 space-y-6">
         {/* Error */}
         {error && (
           <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">

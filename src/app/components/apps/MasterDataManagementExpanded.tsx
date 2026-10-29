@@ -1609,7 +1609,7 @@ export function MasterDataManagementExpanded({ onLogout }: MasterDataManagementE
 
   return (
     <AppLayout title="Master Data Management" icon={<Building2 className="h-6 w-6" />} onLogout={onLogout ?? (() => {})}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+      <div className="w-full px-4 sm:px-6 py-6">
 
         {/* Mobile: category pills → entity pills */}
         <div className="md:hidden mb-4 space-y-2">
