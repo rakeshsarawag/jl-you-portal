@@ -106,15 +106,19 @@ export function useNotifications() {
   // Realtime subscription for instant updates
   useEffect(() => {
     if (!currentUser?.id) return;
-    const notifUserId = currentUser.appUserId ?? currentUser.id;
-    const channelName = `notif-hook-${notifUserId}-${Date.now()}`;
-    const channel = supabase
-      .channel(channelName)
-      .on('postgres_changes', {
+    const notificationUserIds = [...new Set([
+      currentUser.id,
+      currentUser.appUserId,
+      currentUser.employeeId,
+    ].filter(Boolean))] as string[];
+    const channelName = `notif-hook-${currentUser.id}-${Date.now()}`;
+    let channel = supabase.channel(channelName);
+    notificationUserIds.forEach((notificationUserId) => {
+      channel = channel.on('postgres_changes', {
         event: 'INSERT',
         schema: 'public',
         table: 'notifications',
-        filter: `user_id=eq.${notifUserId}`,
+        filter: `user_id=eq.${notificationUserId}`,
       }, (payload) => {
         const incoming = normalize(payload.new as Record<string, unknown>);
         if (!knownIds.has(incoming.id)) {
@@ -123,10 +127,11 @@ export function useNotifications() {
           setNotifications((prev) => [incoming, ...prev]);
           if (!incoming.read) setUnreadCount((c) => c + 1);
         }
-      })
-      .subscribe();
+      });
+    });
+    channel.subscribe();
     return () => { void supabase.removeChannel(channel); };
-  }, [currentUser?.id, currentUser?.appUserId]);
+  }, [currentUser?.id, currentUser?.appUserId, currentUser?.employeeId]);
 
   const markRead = useCallback(async (id: string) => {
     // Optimistic update

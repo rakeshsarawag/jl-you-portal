@@ -2742,20 +2742,6 @@ BEGIN
       target.status, 'Closed', closure_message
     );
 
-    IF NULLIF(target.reporter_id, '') IS NOT NULL THEN
-      INSERT INTO public.notifications (
-        user_id, title, body, message, type, link, read
-      ) VALUES (
-        target.reporter_id,
-        format('%s was automatically closed', COALESCE(target.defect_id, 'Defect')),
-        closure_message,
-        closure_message,
-        'defect_auto_closed',
-        '/defect-tracker',
-        FALSE
-      );
-    END IF;
-
     closed_total := closed_total + 1;
   END LOOP;
 

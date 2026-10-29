@@ -173,6 +173,7 @@ export interface DefectFilters {
   slaStatus?: string;
   environment?: string;
   sprintId?: string;
+  transportRequest?: string;
   dateFrom?: string;
   dateTo?: string;
 }
@@ -377,6 +378,7 @@ export function useDefectTrackerData() {
     if (filters.slaStatus) params.set('slaStatus', filters.slaStatus);
     if (filters.environment) params.set('environment', filters.environment);
     if (filters.sprintId) params.set('sprintId', filters.sprintId);
+    if (filters.transportRequest) params.set('transportRequest', filters.transportRequest);
     if (filters.dateFrom) params.set('dateFrom', filters.dateFrom);
     if (filters.dateTo) params.set('dateTo', filters.dateTo);
     return params.toString();
@@ -386,6 +388,7 @@ export function useDefectTrackerData() {
     setLoading(true);
     setError(null);
     try {
+      await supabase.rpc('process_defect_sla_breaches');
       const accessibleProjectIds = await getAccessibleProjectIds();
       if (accessibleProjectIds?.length === 0) {
         setDefects([]);
@@ -406,6 +409,7 @@ export function useDefectTrackerData() {
           if (filters.regression === 'false') query = query.eq('is_regression', false);
           if (filters.environment) query = query.eq('environment', filters.environment);
           if (filters.sprintId) query = query.eq('sprint_id', filters.sprintId);
+          if (filters.transportRequest) query = query.ilike('transport_request', `%${filters.transportRequest}%`);
           if (filters.dateFrom) query = query.gte('created_at', filters.dateFrom);
           if (filters.dateTo) query = query.lte('created_at', filters.dateTo);
           return query;
@@ -447,6 +451,7 @@ export function useDefectTrackerData() {
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     try {
+      await supabase.rpc('process_defect_sla_breaches');
       const accessibleProjectIds = await getAccessibleProjectIds();
       if (accessibleProjectIds?.length === 0) {
         setDashboard({
@@ -527,6 +532,7 @@ export function useDefectTrackerData() {
   const loadSLAData = useCallback(async () => {
     setLoading(true);
     try {
+      await supabase.rpc('process_defect_sla_breaches');
       const accessibleProjectIds = await getAccessibleProjectIds();
       if (accessibleProjectIds?.length === 0) {
         setSLAData({ bySeverity: [], atRisk: [], breached: [], byProject: [] });
@@ -812,18 +818,6 @@ export function useDefectTrackerData() {
         defect_id: data.id, actor_id: body.reporterId ?? '', actor_name: body.reporterName ?? 'System',
         action: 'created', new_value: 'Open',
       }]);
-      if (created.assigneeId) {
-        const { error: notificationError } = await supabase.from('notifications').insert({
-          user_id: created.assigneeId,
-          type: 'defect_assigned',
-          title: `${created.defectId} assigned to you`,
-          body: `You have been assigned defect "${created.title}".`,
-          message: `You have been assigned defect "${created.title}".`,
-          link: '/defect-tracker',
-          read: false,
-        });
-        if (notificationError) toast.warning('Defect created, but the assignee notification could not be sent');
-      }
       toast.success(t('defectTracker.defectCreated'));
       return created;
     } catch (err: any) {
@@ -925,49 +919,6 @@ export function useDefectTrackerData() {
           setSelectedDefect(prev => prev
             ? { ...prev, activityLog: [...activityEntries.reverse(), ...(prev.activityLog ?? [])] }
             : prev);
-        }
-      }
-      const previousDefect = selectedDefect?.id === id
-        ? selectedDefect
-        : defects.find((defect) => defect.id === id);
-      const notificationRows: Record<string, any>[] = [];
-      if (body.assigneeId && body.assigneeId !== previousDefect?.assigneeId) {
-        notificationRows.push({
-          user_id: body.assigneeId,
-          type: 'defect_assigned',
-          title: `${updated.defectId} assigned to you`,
-          body: `You have been assigned defect "${updated.title}".`,
-          message: `You have been assigned defect "${updated.title}".`,
-          link: '/defect-tracker',
-          read: false,
-        });
-      }
-      if (body.status === 'Awaiting Info' && updated.reporterId) {
-        notificationRows.push({
-          user_id: updated.reporterId,
-          type: 'defect_awaiting_info',
-          title: `${updated.defectId} needs your information`,
-          body: `More information is required for "${updated.title}".`,
-          message: `More information is required for "${updated.title}".`,
-          link: '/defect-tracker',
-          read: false,
-        });
-      }
-      if (body.status === 'Resolved' && updated.reporterId) {
-        notificationRows.push({
-          user_id: updated.reporterId,
-          type: 'defect_resolved',
-          title: `${updated.defectId} has been resolved`,
-          body: `Please verify whether "${updated.title}" is resolved.`,
-          message: `Please verify whether "${updated.title}" is resolved.`,
-          link: '/defect-tracker',
-          read: false,
-        });
-      }
-      if (notificationRows.length > 0) {
-        const { error: notificationError } = await supabase.from('notifications').insert(notificationRows);
-        if (notificationError && !silent) {
-          toast.warning('Defect updated, but one or more user notifications could not be sent');
         }
       }
       if (body.status === 'Closed') {
@@ -1120,13 +1071,44 @@ export function useDefectTrackerData() {
     return null;
   }, [canAccessDefect, selectedDefect]);
 
+  const escalateDefect = useCallback(async (
+    defect: Defect,
+    actorId?: string,
+    actorName?: string,
+    reason?: string,
+  ): Promise<boolean> => {
+    try {
+      if (!await canAccessDefect(defect.id)) {
+        toast.error('You do not have access to escalate this defect');
+        return false;
+      }
+      const { error: escalationError } = await supabase.rpc('escalate_defect_with_notifications', {
+        target_defect_id: defect.id,
+        escalation_actor_id: actorId ?? null,
+        escalation_actor_name: actorName ?? null,
+        escalation_reason: reason ?? null,
+      });
+      if (escalationError) {
+        toast.error(escalationError.message);
+        return false;
+      }
+      toast.success(`${defect.defectId} escalated`, {
+        description: 'The processor and manager have been notified.',
+      });
+      return true;
+    } catch {
+      toast.error('Escalation failed. No notifications were sent.');
+      return false;
+    }
+  }, [canAccessDefect]);
+
   return {
     defects, dashboard, slaData, analyticsData, byProjectData,
     selectedDefect, setSelectedDefect, masterData,
     loading, error,
     loadDefects, loadDashboard, loadSLAData, loadAnalytics,
     loadByProject, loadDefectDetail, loadMasterData,
-    createDefect, updateDefect, bulkUpdateDefects, deleteDefect, addComment, addLink,
+    createDefect, updateDefect, bulkUpdateDefects, deleteDefect, addComment, addLink, escalateDefect,
   };
 }
 

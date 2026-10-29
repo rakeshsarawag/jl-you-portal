@@ -288,26 +288,8 @@ app.post('/defects', async (c) => {
       new_value: 'Open',
     }]).catch(() => {});
 
-    // Notifications
-    const createdDefectId = data.defect_id ?? defectId;
-    const createdTitle = data.title ?? body.title ?? '';
-    const createdSeverity = data.severity ?? body.severity ?? 'Medium';
-    if (createdSeverity === 'Very High') {
-      await sendDefectNotification(supabase, {
-        defectId: createdDefectId, defectTitle: createdTitle, severity: createdSeverity,
-        recipientIds: [body.reporterId ?? ''].filter(Boolean),
-        type: 'defect_critical',
-        message: `A Very High severity defect has been logged: ${createdTitle}`,
-      });
-    }
-    if (body.assigneeId) {
-      await sendDefectNotification(supabase, {
-        defectId: createdDefectId, defectTitle: createdTitle, severity: createdSeverity,
-        recipientIds: [body.assigneeId],
-        type: 'defect_assigned',
-        message: `You have been assigned defect ${createdDefectId}: ${createdTitle}`,
-      });
-    }
+    // Creation and assignment notifications are emitted by the database
+    // workflow trigger for every write path.
 
     const { data: policies } = await supabase.from('defect_sla_policies').select('*');
     return c.json({ success: true, data: normalizeDefect(data, computeSLA(data, policies ?? [])) }, 201);
@@ -391,69 +373,8 @@ app.put('/defects/:id', async (c) => {
       }).catch(() => {});
     }
 
-    // Notifications
-    if (existing) {
-      const notifDefectId = existing.defect_id ?? id;
-      const notifTitle = existing.title ?? '';
-      const notifSeverity = existing.severity ?? 'Medium';
-      if (body.status === 'Resolved' && existing.reporter_id) {
-        await sendDefectNotification(supabase, {
-          defectId: notifDefectId, defectTitle: notifTitle, severity: notifSeverity,
-          recipientIds: [existing.reporter_id],
-          type: 'defect_resolved',
-          message: `Defect ${notifDefectId} has been resolved and needs your verification`,
-        });
-      }
-      if (body.status === 'Awaiting Info' && existing.reporter_id) {
-        await sendDefectNotification(supabase, {
-          defectId: notifDefectId, defectTitle: notifTitle, severity: notifSeverity,
-          recipientIds: [existing.reporter_id],
-          type: 'defect_awaiting_info',
-          message: `Defect ${notifDefectId} needs more information from you`,
-        });
-      }
-      if (body.status === 'Verified' && existing.assignee_id) {
-        await sendDefectNotification(supabase, {
-          defectId: notifDefectId, defectTitle: notifTitle, severity: notifSeverity,
-          recipientIds: [existing.assignee_id],
-          type: 'defect_verified',
-          message: `Defect ${notifDefectId} has been verified and closed`,
-        });
-      }
-      if (body.severity && body._oldSeverity && body.severity !== body._oldSeverity) {
-        await sendDefectNotification(supabase, {
-          defectId: notifDefectId, defectTitle: notifTitle, severity: body.severity,
-          recipientIds: [existing.reporter_id, existing.assignee_id].filter(Boolean),
-          type: 'severity_changed',
-          message: `Severity changed from ${body._oldSeverity} to ${body.severity} on defect ${notifDefectId}`,
-        });
-      }
-      if (body.status === "Won't Fix" && existing.reporter_id) {
-        await sendDefectNotification(supabase, {
-          defectId: notifDefectId, defectTitle: notifTitle, severity: notifSeverity,
-          recipientIds: [existing.reporter_id],
-          type: 'wont_fix',
-          message: `Defect ${notifDefectId} has been marked as Won't Fix`,
-        });
-      }
-      if (body.status === 'Duplicate' && existing.reporter_id) {
-        await sendDefectNotification(supabase, {
-          defectId: notifDefectId, defectTitle: notifTitle, severity: notifSeverity,
-          recipientIds: [existing.reporter_id],
-          type: 'marked_duplicate',
-          message: `Defect ${notifDefectId} has been marked as a duplicate`,
-        });
-      }
-      if (body.isRegression === true && existing.status === 'Closed') {
-        const regressionRecipients = [...(existing.watchers ?? []), existing.assignee_id].filter(Boolean);
-        await sendDefectNotification(supabase, {
-          defectId: notifDefectId, defectTitle: notifTitle, severity: notifSeverity,
-          recipientIds: regressionRecipients,
-          type: 'regression_detected',
-          message: `Defect ${notifDefectId} has been reopened as a regression`,
-        });
-      }
-    }
+    // Lifecycle notifications are emitted by the database workflow trigger so
+    // API, UI, scheduled, and administrative updates cannot diverge.
 
     // Log activity
     if (body.actorId || body.actorName) {

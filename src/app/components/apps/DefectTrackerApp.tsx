@@ -131,6 +131,10 @@ function priorityLabel(priority: string) {
   return PRIORITY_LABELS[priority] ?? priority;
 }
 
+function normalizeEmployeeLabel(value: string) {
+  return value.trim().toLowerCase().replace(/\s*\([^)]*\)\s*$/, "");
+}
+
 function defectFieldValue(field: string | undefined, value: string) {
   return field?.toLowerCase() === "priority" ? priorityLabel(value) : value;
 }
@@ -1068,6 +1072,7 @@ function AllDefectsScreen({
   const [priorityFilter, setPriorityFilter] = useState("");
   const [reporterFilter, setReporterFilter] = useState("");
   const [sprintFilter, setSprintFilter] = useState("");
+  const [transportRequestFilter, setTransportRequestFilter] = useState("");
   const [labelFilter, setLabelFilter] = useState("");
   const [duplicateFilter, setDuplicateFilter] = useState("all");
   const [savedFilterName, setSavedFilterName] = useState("");
@@ -1141,8 +1146,15 @@ function AllDefectsScreen({
     if (dateFrom && new Date(d.createdAt) < new Date(dateFrom)) return false;
     if (dateTo && new Date(d.createdAt) > new Date(dateTo)) return false;
     if (priorityFilter && d.priority !== priorityFilter) return false;
-    if (reporterFilter && !d.reporterName.toLowerCase().includes(reporterFilter.toLowerCase())) return false;
+    if (
+      reporterFilter
+      && !normalizeEmployeeLabel(d.reporterName).includes(normalizeEmployeeLabel(reporterFilter))
+    ) return false;
     if (sprintFilter && d.sprintName !== sprintFilter) return false;
+    if (
+      transportRequestFilter
+      && !d.transportRequest.toLowerCase().includes(transportRequestFilter.trim().toLowerCase())
+    ) return false;
     if (labelFilter && !(d.labels ?? []).includes(labelFilter)) return false;
     if (duplicateFilter === "yes" && !d.isDuplicate) return false;
     if (duplicateFilter === "no" && d.isDuplicate) return false;
@@ -1255,6 +1267,7 @@ function AllDefectsScreen({
     ...(priorityFilter ? [{ label: `Priority: ${priorityLabel(priorityFilter)}`, clear: () => setPriorityFilter("") }] : []),
     ...(reporterFilter ? [{ label: `Reporter: ${reporterFilter}`, clear: () => setReporterFilter("") }] : []),
     ...(sprintFilter ? [{ label: `Sprint: ${sprintFilter}`, clear: () => setSprintFilter("") }] : []),
+    ...(transportRequestFilter ? [{ label: `Transport Request: ${transportRequestFilter}`, clear: () => setTransportRequestFilter("") }] : []),
     ...(labelFilter ? [{ label: `Label: ${labelFilter}`, clear: () => setLabelFilter("") }] : []),
     ...(duplicateFilter !== "all" ? [{ label: `Duplicate: ${duplicateFilter}`, clear: () => setDuplicateFilter("all") }] : []),
   ];
@@ -1262,7 +1275,8 @@ function AllDefectsScreen({
   const clearAll = () => {
     setSeverityFilter([]); setStatusFilter([]); setEnvFilter("");
     setRegressionFilter("all"); setSlaStatusFilter(""); setDateFrom(""); setDateTo("");
-    setPriorityFilter(""); setReporterFilter(""); setSprintFilter(""); setLabelFilter(""); setDuplicateFilter("all");
+    setPriorityFilter(""); setReporterFilter(""); setSprintFilter(""); setTransportRequestFilter("");
+    setLabelFilter(""); setDuplicateFilter("all");
   };
 
   const applySavedFilter = (sf: { id: string; name: string; filters: any }) => {
@@ -1274,6 +1288,7 @@ function AllDefectsScreen({
     if (f.regressionFilter) setRegressionFilter(f.regressionFilter);
     if (f.dateFrom) setDateFrom(f.dateFrom);
     if (f.dateTo) setDateTo(f.dateTo);
+    if (f.transportRequestFilter) setTransportRequestFilter(f.transportRequestFilter);
     setShowSavedFilterDropdown(false);
   };
 
@@ -1283,7 +1298,10 @@ function AllDefectsScreen({
     setSavedFilters((prev) => [...prev, {
       id,
       name: savedFilterName,
-      filters: { statusFilter, severityFilter, slaStatusFilter, regressionFilter, dateFrom, dateTo, envFilter, priorityFilter },
+      filters: {
+        statusFilter, severityFilter, slaStatusFilter, regressionFilter, dateFrom, dateTo,
+        envFilter, priorityFilter, transportRequestFilter,
+      },
     }]);
     setSavedFilterName("");
     setShowSaveFilter(false);
@@ -1480,11 +1498,27 @@ function AllDefectsScreen({
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Reporter</label>
-              <input value={reporterFilter} onChange={(e) => setReporterFilter(e.target.value)} placeholder="Reporter name..." className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none" />
+              <EmployeeSearchDropdown
+                value={reporterFilter}
+                onChange={(name) => setReporterFilter(name)}
+                placeholder="Search reporter…"
+              />
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Sprint</label>
               <input value={sprintFilter} onChange={(e) => setSprintFilter(e.target.value)} placeholder="Sprint name..." className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none" />
+            </div>
+            <div>
+              <Label htmlFor="transport-request-filter" className="block text-xs font-semibold text-gray-500 mb-1">
+                Transport Request
+              </Label>
+              <Input
+                id="transport-request-filter"
+                value={transportRequestFilter}
+                onChange={(e) => setTransportRequestFilter(e.target.value)}
+                placeholder="TR / deployment reference..."
+                className="h-auto px-2 py-1.5 text-sm"
+              />
             </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">Label</label>
@@ -1934,7 +1968,10 @@ function DefectDetailScreen({
   onBack: () => void;
   canUpdate?: boolean;
 }) {
-  const { selectedDefect, loading, error, loadDefectDetail, updateDefect, addComment, addLink, masterData, loadMasterData } = useDefectTrackerData();
+  const {
+    selectedDefect, loading, error, loadDefectDetail, updateDefect, addComment,
+    addLink, escalateDefect, masterData, loadMasterData,
+  } = useDefectTrackerData();
   const { currentUser: user } = useUser();
 
   const [activeTab, setActiveTab] = useState<"activity" | "comments">("comments");
@@ -2355,7 +2392,7 @@ function DefectDetailScreen({
                     toast.error("Severity was updated, but the reason could not be added to Comments");
                   }
                   if (newSeverity === "Very High") {
-                    toast.warning("Severity escalation to Very High submitted — manager approval required");
+                    await escalateDefect(d, user?.id, user?.name, `Severity escalated to Very High: ${severityReason.trim()}`);
                   }
                   setShowSeverityModal(false);
                 }}
@@ -3120,10 +3157,31 @@ function DefectDetailScreen({
 // ── SCREEN 4: SLA Tracker ─────────────────────────────────────────────────────
 
 function SLATrackerScreen({ onNavigateDetail, canEscalate = true, canExport = true }: { onNavigateDetail: (id: string) => void; canEscalate?: boolean; canExport?: boolean }) {
-  const { slaData, loading, loadSLAData } = useDefectTrackerData();
+  const { slaData, loading, loadSLAData, escalateDefect } = useDefectTrackerData();
+  const { currentUser: user } = useUser();
   const [slaDateFrom, setSlaDateFrom] = useState("");
   const [slaDateTo, setSlaDateTo] = useState("");
   const [slaProjectFilter, setSlaProjectFilter] = useState("");
+  const [escalatingIds, setEscalatingIds] = useState<Set<string>>(new Set());
+
+  const handleEscalate = async (defect: Defect) => {
+    if (escalatingIds.has(defect.id)) return;
+    setEscalatingIds((current) => new Set(current).add(defect.id));
+    try {
+      await escalateDefect(
+        defect,
+        user?.id,
+        user?.name,
+        `SLA breached for ${defect.defectId}`,
+      );
+    } finally {
+      setEscalatingIds((current) => {
+        const next = new Set(current);
+        next.delete(defect.id);
+        return next;
+      });
+    }
+  };
 
   useEffect(() => { loadSLAData(); }, []);
 
@@ -3272,10 +3330,11 @@ function SLATrackerScreen({ onNavigateDetail, canEscalate = true, canExport = tr
                     <button onClick={() => onNavigateDetail(d.id)} className="text-xs text-red-700 underline hover:text-red-900">View</button>
                     {canEscalate && (
                       <button
-                        onClick={() => toast.success(`Escalation triggered for ${d.defectId}`)}
-                        className="text-xs bg-red-600 text-white px-2 py-0.5 rounded hover:bg-red-700"
+                        onClick={() => void handleEscalate(d)}
+                        disabled={escalatingIds.has(d.id)}
+                        className="text-xs bg-red-600 text-white px-2 py-0.5 rounded hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        Escalate
+                        {escalatingIds.has(d.id) ? "Escalating…" : "Escalate"}
                       </button>
                     )}
                   </td>

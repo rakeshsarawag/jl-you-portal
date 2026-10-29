@@ -2761,20 +2761,6 @@ BEGIN
       target.status, 'Closed', closure_message
     );
 
-    IF NULLIF(target.reporter_id, '') IS NOT NULL THEN
-      INSERT INTO public.notifications (
-        user_id, title, body, message, type, link, read
-      ) VALUES (
-        target.reporter_id,
-        format('%s was automatically closed', COALESCE(target.defect_id, 'Defect')),
-        closure_message,
-        closure_message,
-        'defect_auto_closed',
-        '/defect-tracker',
-        FALSE
-      );
-    END IF;
-
     closed_total := closed_total + 1;
   END LOOP;
 
@@ -10884,6 +10870,465 @@ CREATE POLICY "portal_attachments_owner_delete"
       )
     )
   );
+
+-- A defect escalation is one transaction: validate both required recipients,
+-- record the escalation, write the activity entry, and notify the processor
+-- plus the project manager (or the processor's direct manager as fallback).
+CREATE OR REPLACE FUNCTION public.escalate_defect_with_notifications(
+  target_defect_id UUID,
+  escalation_actor_id TEXT DEFAULT NULL,
+  escalation_actor_name TEXT DEFAULT NULL,
+  escalation_reason TEXT DEFAULT NULL
+)
+RETURNS TABLE(processor_id TEXT, manager_id TEXT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  target_defect RECORD;
+  resolved_manager_id UUID;
+  notification_title TEXT;
+  notification_message TEXT;
+BEGIN
+  SELECT
+    defect.id,
+    defect.defect_id,
+    defect.title,
+    defect.project_id,
+    defect.assignee_id,
+    defect.assignee_name
+  INTO target_defect
+  FROM public.project_defects AS defect
+  WHERE defect.id = target_defect_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Defect not found';
+  END IF;
+
+  IF NOT public.defect_tracker_is_admin()
+    AND NOT public.defect_tracker_can_access_project(target_defect.project_id) THEN
+    RAISE EXCEPTION 'Project access denied';
+  END IF;
+
+  IF NULLIF(BTRIM(target_defect.assignee_id), '') IS NULL THEN
+    RAISE EXCEPTION 'Assign a processor before escalating this defect';
+  END IF;
+
+  SELECT project.manager_id
+  INTO resolved_manager_id
+  FROM public.projects AS project
+  WHERE project.id = target_defect.project_id;
+
+  IF resolved_manager_id IS NULL THEN
+    SELECT employee.manager_id
+    INTO resolved_manager_id
+    FROM public.employees AS employee
+    WHERE employee.id::TEXT = target_defect.assignee_id;
+  END IF;
+
+  IF resolved_manager_id IS NULL THEN
+    RAISE EXCEPTION 'Configure a project manager or processor manager before escalating this defect';
+  END IF;
+
+  notification_title := format('%s escalated', COALESCE(target_defect.defect_id, 'Defect'));
+  notification_message := format(
+    '%s has been escalated. Processor: %s. Reason: %s',
+    COALESCE(target_defect.title, 'Defect'),
+    COALESCE(NULLIF(target_defect.assignee_name, ''), 'Assigned processor'),
+    COALESCE(NULLIF(BTRIM(escalation_reason), ''), 'SLA escalation')
+  );
+
+  INSERT INTO public.defect_sla_events (
+    defect_id, event_type, actor_id, notes, metadata
+  ) VALUES (
+    target_defect.id,
+    'escalated',
+    COALESCE(NULLIF(BTRIM(escalation_actor_id), ''), auth.uid()::TEXT, 'system'),
+    notification_message,
+    jsonb_build_object(
+      'processor_id', target_defect.assignee_id,
+      'manager_id', resolved_manager_id::TEXT,
+      'reason', COALESCE(escalation_reason, '')
+    )
+  );
+
+  INSERT INTO public.defect_activity_log (
+    defect_id, actor_id, actor_name, action, field_changed,
+    old_value, new_value, comment
+  ) VALUES (
+    target_defect.id,
+    COALESCE(NULLIF(BTRIM(escalation_actor_id), ''), auth.uid()::TEXT, 'system'),
+    COALESCE(NULLIF(BTRIM(escalation_actor_name), ''), 'System'),
+    'escalated',
+    'sla',
+    '',
+    'Escalated',
+    notification_message
+  );
+
+  INSERT INTO public.notifications (
+    user_id, title, body, message, type, link, read
+  )
+  SELECT DISTINCT
+    recipient.user_id,
+    notification_title,
+    notification_message,
+    notification_message,
+    'defect_escalated',
+    '/defect-tracker',
+    FALSE
+  FROM (
+    VALUES
+      (target_defect.assignee_id),
+      (resolved_manager_id::TEXT)
+  ) AS recipient(user_id);
+
+  RETURN QUERY
+  SELECT target_defect.assignee_id::TEXT, resolved_manager_id::TEXT;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.escalate_defect_with_notifications(UUID, TEXT, TEXT, TEXT)
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.escalate_defect_with_notifications(UUID, TEXT, TEXT, TEXT)
+  TO authenticated;
+
+-- Central notification matrix for defect lifecycle changes. Keeping this in a
+-- trigger ensures UI, API, bulk, scheduled, and administrative writes all
+-- notify the same responsible people.
+CREATE OR REPLACE FUNCTION public.notify_defect_workflow_change()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  resolved_manager_id TEXT;
+  recipient_ids TEXT[] := ARRAY[]::TEXT[];
+  notification_type TEXT;
+  notification_title TEXT;
+  notification_message TEXT;
+BEGIN
+  SELECT COALESCE(
+    project.manager_id::TEXT,
+    processor.manager_id::TEXT
+  )
+  INTO resolved_manager_id
+  FROM public.project_defects AS defect
+  LEFT JOIN public.projects AS project
+    ON project.id = defect.project_id
+  LEFT JOIN public.employees AS processor
+    ON processor.id::TEXT = defect.assignee_id
+  WHERE defect.id = NEW.id;
+
+  -- Assignment and reassignment: processor owns the next action. Managers are
+  -- included for Very High defects.
+  IF NULLIF(BTRIM(NEW.assignee_id), '') IS NOT NULL
+    AND (
+      TG_OP = 'INSERT'
+      OR OLD.assignee_id IS DISTINCT FROM NEW.assignee_id
+    ) THEN
+    recipient_ids := ARRAY[NEW.assignee_id];
+    IF TG_OP = 'UPDATE'
+      AND NEW.severity = 'Very High'
+      AND resolved_manager_id IS NOT NULL THEN
+      recipient_ids := array_append(recipient_ids, resolved_manager_id);
+    END IF;
+
+    notification_type := 'defect_assigned';
+    notification_title := format('%s assigned', COALESCE(NEW.defect_id, 'Defect'));
+    notification_message := format(
+      '%s was assigned to %s%s',
+      COALESCE(NEW.title, 'Defect'),
+      COALESCE(NULLIF(NEW.assignee_name, ''), 'the processor'),
+      CASE WHEN NEW.severity = 'Very High' THEN ' and requires immediate attention' ELSE '' END
+    );
+
+    INSERT INTO public.notifications (user_id, title, body, message, type, link, read)
+    SELECT DISTINCT recipient_id, notification_title, notification_message,
+      notification_message, notification_type, '/defect-tracker', FALSE
+    FROM unnest(recipient_ids) AS recipient_id
+    WHERE NULLIF(BTRIM(recipient_id), '') IS NOT NULL;
+  END IF;
+
+  IF TG_OP = 'INSERT' AND NEW.severity = 'Very High' THEN
+    recipient_ids := ARRAY[NEW.reporter_id, resolved_manager_id];
+    notification_title := format(
+      '%s logged as Very High',
+      COALESCE(NEW.defect_id, 'Defect')
+    );
+    notification_message := format(
+      '%s was logged as a Very High severity defect and requires immediate attention',
+      COALESCE(NEW.title, 'Defect')
+    );
+
+    INSERT INTO public.notifications (user_id, title, body, message, type, link, read)
+    SELECT DISTINCT recipient_id, notification_title, notification_message,
+      notification_message, 'defect_critical', '/defect-tracker', FALSE
+    FROM unnest(recipient_ids) AS recipient_id
+    WHERE NULLIF(BTRIM(recipient_id), '') IS NOT NULL;
+  END IF;
+
+  IF TG_OP = 'UPDATE' AND OLD.status IS DISTINCT FROM NEW.status THEN
+    recipient_ids := ARRAY[]::TEXT[];
+    notification_type := 'defect_status_change';
+    notification_title := format(
+      '%s is now %s',
+      COALESCE(NEW.defect_id, 'Defect'),
+      NEW.status
+    );
+    notification_message := format(
+      '%s changed from %s to %s',
+      COALESCE(NEW.title, 'Defect'),
+      OLD.status,
+      NEW.status
+    );
+
+    CASE NEW.status
+      WHEN 'Awaiting Info' THEN
+        recipient_ids := ARRAY[NEW.reporter_id];
+        notification_type := 'defect_awaiting_info';
+        notification_message := format(
+          '%s needs information from the reporter before work can continue',
+          COALESCE(NEW.title, 'Defect')
+        );
+      WHEN 'Resolved' THEN
+        recipient_ids := ARRAY[NEW.reporter_id];
+        notification_type := 'defect_resolved';
+        notification_message := format(
+          '%s has been resolved and is waiting for reporter verification',
+          COALESCE(NEW.title, 'Defect')
+        );
+      WHEN 'Verified' THEN
+        recipient_ids := ARRAY[NEW.assignee_id, NEW.reporter_id];
+        notification_type := 'defect_verified';
+      WHEN 'Closed' THEN
+        recipient_ids := ARRAY[NEW.assignee_id, NEW.reporter_id];
+        notification_type := 'defect_closed';
+      WHEN 'In Progress' THEN
+        recipient_ids := ARRAY[NEW.assignee_id];
+        notification_type := 'defect_in_progress';
+      WHEN 'Blocked' THEN
+        recipient_ids := ARRAY[NEW.assignee_id];
+        notification_type := 'defect_blocked';
+      WHEN 'Deferred' THEN
+        recipient_ids := ARRAY[NEW.reporter_id, NEW.assignee_id];
+        notification_type := 'defect_deferred';
+      WHEN 'Won''t Fix' THEN
+        recipient_ids := ARRAY[NEW.reporter_id];
+        notification_type := 'defect_wont_fix';
+      WHEN 'Duplicate' THEN
+        recipient_ids := ARRAY[NEW.reporter_id];
+        notification_type := 'defect_duplicate';
+      WHEN 'Open' THEN
+        recipient_ids := ARRAY[NEW.reporter_id, NEW.assignee_id];
+        notification_type := 'defect_reopened';
+      ELSE
+        recipient_ids := ARRAY[NEW.assignee_id, NEW.reporter_id];
+    END CASE;
+
+    -- Every transition on a Very High defect is manager-visible.
+    IF NEW.severity = 'Very High' AND resolved_manager_id IS NOT NULL THEN
+      recipient_ids := array_append(recipient_ids, resolved_manager_id);
+    END IF;
+
+    INSERT INTO public.notifications (user_id, title, body, message, type, link, read)
+    SELECT DISTINCT recipient_id, notification_title, notification_message,
+      notification_message, notification_type, '/defect-tracker', FALSE
+    FROM unnest(recipient_ids) AS recipient_id
+    WHERE NULLIF(BTRIM(recipient_id), '') IS NOT NULL;
+  END IF;
+
+  -- Severity changes notify the reporter and processor; becoming Very High
+  -- additionally alerts the responsible manager.
+  IF TG_OP = 'UPDATE' AND OLD.severity IS DISTINCT FROM NEW.severity THEN
+    recipient_ids := ARRAY[NEW.reporter_id, NEW.assignee_id];
+    IF NEW.severity = 'Very High' AND resolved_manager_id IS NOT NULL THEN
+      recipient_ids := array_append(recipient_ids, resolved_manager_id);
+    END IF;
+
+    notification_title := format(
+      '%s severity changed to %s',
+      COALESCE(NEW.defect_id, 'Defect'),
+      NEW.severity
+    );
+    notification_message := format(
+      '%s severity changed from %s to %s',
+      COALESCE(NEW.title, 'Defect'),
+      OLD.severity,
+      NEW.severity
+    );
+
+    INSERT INTO public.notifications (user_id, title, body, message, type, link, read)
+    SELECT DISTINCT recipient_id, notification_title, notification_message,
+      notification_message, 'defect_severity_changed', '/defect-tracker', FALSE
+    FROM unnest(recipient_ids) AS recipient_id
+    WHERE NULLIF(BTRIM(recipient_id), '') IS NOT NULL;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_notify_defect_workflow_change ON public.project_defects;
+CREATE TRIGGER trg_notify_defect_workflow_change
+  AFTER INSERT OR UPDATE OF status, assignee_id, severity
+  ON public.project_defects
+  FOR EACH ROW
+  EXECUTE FUNCTION public.notify_defect_workflow_change();
+
+-- Find newly breached fix/verification SLAs, record each breach once, and
+-- notify the current action owner plus the manager. This function is safe to
+-- call repeatedly from UI loads or a scheduled service.
+CREATE OR REPLACE FUNCTION public.process_defect_sla_breaches()
+RETURNS INTEGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  target RECORD;
+  resolved_manager_id TEXT;
+  recipient_ids TEXT[];
+  notification_title TEXT;
+  notification_message TEXT;
+  processed_count INTEGER := 0;
+BEGIN
+  FOR target IN
+    SELECT
+      defect.id,
+      defect.defect_id,
+      defect.title,
+      defect.project_id,
+      defect.assignee_id,
+      defect.assignee_name,
+      defect.reporter_id,
+      defect.severity,
+      breach.event_type
+    FROM public.project_defects AS defect
+    JOIN public.defect_sla_policies AS policy
+      ON policy.severity = defect.severity
+    CROSS JOIN LATERAL (
+      SELECT CASE
+        WHEN defect.status = 'Resolved'
+          AND defect.fixed_date IS NOT NULL
+          AND defect.fixed_date
+            + (policy.verification_mins * INTERVAL '1 minute') <= NOW()
+          THEN 'verify_breached'
+        WHEN defect.status NOT IN ('Resolved', 'Verified', 'Closed', 'Deferred', 'Won''t Fix', 'Duplicate')
+          AND COALESCE(defect.sla_paused, FALSE) = FALSE
+          AND defect.created_at
+            + ((policy.fix_mins + COALESCE(defect.sla_total_paused_mins, 0))
+              * INTERVAL '1 minute') <= NOW()
+          THEN 'fix_breached'
+        ELSE NULL
+      END AS event_type
+    ) AS breach
+    WHERE breach.event_type IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.defect_sla_events AS existing_event
+        WHERE existing_event.defect_id = defect.id
+          AND existing_event.event_type = breach.event_type
+      )
+    FOR UPDATE OF defect SKIP LOCKED
+  LOOP
+    SELECT COALESCE(project.manager_id::TEXT, processor.manager_id::TEXT)
+    INTO resolved_manager_id
+    FROM public.projects AS project
+    LEFT JOIN public.employees AS processor
+      ON processor.id::TEXT = target.assignee_id
+    WHERE project.id = target.project_id;
+
+    IF target.event_type = 'verify_breached' THEN
+      recipient_ids := ARRAY[target.reporter_id, target.assignee_id, resolved_manager_id];
+      notification_title := format('%s verification SLA breached', COALESCE(target.defect_id, 'Defect'));
+      notification_message := format(
+        '%s exceeded its verification target. Reporter action and manager attention are required.',
+        COALESCE(target.title, 'Defect')
+      );
+    ELSE
+      recipient_ids := ARRAY[target.assignee_id, resolved_manager_id];
+      notification_title := format('%s resolution SLA breached', COALESCE(target.defect_id, 'Defect'));
+      notification_message := format(
+        '%s exceeded its resolution target. Processor action and manager attention are required.',
+        COALESCE(target.title, 'Defect')
+      );
+    END IF;
+
+    INSERT INTO public.defect_sla_events (
+      defect_id, event_type, actor_id, notes, metadata
+    ) VALUES (
+      target.id,
+      target.event_type,
+      'system:sla-monitor',
+      notification_message,
+      jsonb_build_object(
+        'processor_id', COALESCE(target.assignee_id, ''),
+        'manager_id', COALESCE(resolved_manager_id, ''),
+        'reporter_id', COALESCE(target.reporter_id, '')
+      )
+    );
+
+    INSERT INTO public.defect_activity_log (
+      defect_id, actor_id, actor_name, action, field_changed,
+      old_value, new_value, comment
+    ) VALUES (
+      target.id,
+      'system:sla-monitor',
+      'System',
+      'sla_breached',
+      'sla',
+      'On Track',
+      CASE WHEN target.event_type = 'verify_breached'
+        THEN 'Verification Breached'
+        ELSE 'Resolution Breached'
+      END,
+      notification_message
+    );
+
+    INSERT INTO public.notifications (user_id, title, body, message, type, link, read)
+    SELECT DISTINCT recipient_id, notification_title, notification_message,
+      notification_message, 'defect_sla_breached', '/defect-tracker', FALSE
+    FROM unnest(recipient_ids) AS recipient_id
+    WHERE NULLIF(BTRIM(recipient_id), '') IS NOT NULL;
+
+    processed_count := processed_count + 1;
+  END LOOP;
+
+  RETURN processed_count;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.process_defect_sla_breaches()
+  FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.process_defect_sla_breaches()
+  TO authenticated, service_role;
+
+-- Supabase projects normally expose pg_cron. Schedule the monitor when the
+-- extension is available; page-load RPC calls remain a fallback if scheduling
+-- is unavailable in a local or restricted environment.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_available_extensions
+    WHERE name = 'pg_cron'
+  ) THEN
+    EXECUTE 'CREATE EXTENSION IF NOT EXISTS pg_cron WITH SCHEMA pg_catalog';
+    EXECUTE format(
+      'SELECT cron.schedule(%L, %L, %L)',
+      'process-defect-sla-breaches',
+      '*/5 * * * *',
+      'SELECT public.process_defect_sla_breaches();'
+    );
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'Could not schedule defect SLA monitor: %', SQLERRM;
+END;
+$$;
 
 -- ────────────────────────────────────────────────────────────
 -- File: 05_business_extensions.sql
