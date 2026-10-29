@@ -62,6 +62,8 @@
   --destructive-foreground: oklch(0.637 0.237 25.331);
   --border: oklch(0.269 0 0);
   --input: oklch(0.269 0 0);
+  --input-background: oklch(0.205 0 0);
+  --switch-background: oklch(0.439 0 0);
   --ring: oklch(0.439 0 0);
   --font-weight-medium: 500;
   --font-weight-normal: 400;
@@ -78,6 +80,88 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.269 0 0);
   --sidebar-ring: oklch(0.439 0 0);
+}
+
+/*
+ * Legacy app compatibility
+ *
+ * Several established screens still use Tailwind's neutral palette directly
+ * instead of semantic theme tokens. Map only those neutral surfaces, text,
+ * and borders in dark mode; status and severity colors remain unchanged.
+ */
+.dark .bg-white {
+  background-color: var(--card);
+}
+
+.dark .bg-gray-50,
+.dark .bg-slate-50 {
+  background-color: var(--background);
+}
+
+.dark .bg-gray-100,
+.dark .bg-slate-100,
+.dark .bg-gray-200,
+.dark .bg-slate-200 {
+  background-color: var(--muted);
+}
+
+.dark .bg-gray-300,
+.dark .bg-slate-300,
+.dark .bg-gray-400,
+.dark .bg-slate-400 {
+  background-color: var(--accent);
+}
+
+.dark .text-gray-950,
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-gray-700,
+.dark .text-slate-950,
+.dark .text-slate-900,
+.dark .text-slate-800,
+.dark .text-slate-700 {
+  color: var(--foreground);
+}
+
+.dark .text-gray-600,
+.dark .text-gray-500,
+.dark .text-gray-400,
+.dark .text-gray-300,
+.dark .text-slate-600,
+.dark .text-slate-500,
+.dark .text-slate-400,
+.dark .text-slate-300 {
+  color: var(--muted-foreground);
+}
+
+.dark .border-gray-50,
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300,
+.dark .border-gray-400,
+.dark .border-slate-50,
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-300,
+.dark .border-slate-400 {
+  border-color: var(--border);
+}
+
+.dark .hover\:bg-gray-50:hover,
+.dark .hover\:bg-gray-100:hover,
+.dark .hover\:bg-gray-200:hover,
+.dark .hover\:bg-slate-50:hover,
+.dark .hover\:bg-slate-100:hover {
+  background-color: var(--accent);
+}
+
+.dark .disabled\:bg-gray-50:disabled,
+.dark .disabled\:bg-gray-100:disabled {
+  background-color: var(--muted);
+}
+
+.dark .via-white {
+  --tw-gradient-via: var(--card);
 }
 
 /*
