@@ -353,6 +353,7 @@ app.put('/defects/:id', async (c) => {
     if (body.status === 'Resolved' && !body.fixedDate) updates.fixed_date = new Date().toISOString();
     if (body.fixedDate) updates.fixed_date = body.fixedDate;
     if (body.status === 'Verified' && !body.verifiedDate) updates.verified_date = new Date().toISOString();
+    if (body.status === 'Closed') updates.updated_by = body.actorName ?? body.actorId ?? 'System';
 
     // First response tracking
     if (body.firstResponse) updates.first_response_at = new Date().toISOString();

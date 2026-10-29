@@ -453,6 +453,7 @@ app.put('/defects/:id', async (c) => {
     if (body.status === 'Resolved' && !body.fixedDate) updates.fixed_date = new Date().toISOString();
     if (body.fixedDate) updates.fixed_date = body.fixedDate;
     if (body.status === 'Verified' && !body.verifiedDate) updates.verified_date = new Date().toISOString();
+    if (body.status === 'Closed') updates.updated_by = body.actorName ?? body.actorId ?? 'System';
 
     // First response tracking. Taking ownership by moving the defect to
     // In Progress is a qualifying response even when no comment is posted.

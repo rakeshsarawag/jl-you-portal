@@ -853,6 +853,7 @@ export function useDefectTrackerData() {
       const updateBody = { ...body };
       if (body.status === 'Resolved' && !body.fixedDate) updateBody.fixedDate = new Date().toISOString();
       if (body.status === 'Verified' && !body.verifiedDate) updateBody.verifiedDate = new Date().toISOString();
+      if (body.status === 'Closed') updateBody.updatedBy = actorName ?? actorId ?? 'System';
       let { data, error: dbErr } = await supabase.from('project_defects').update(toDbBody(updateBody)).eq('id', id).select().single();
       let compatibilityUpdates: Record<string, any> = {};
       if (dbErr && isMissingDetailColumn(dbErr)) {
@@ -894,7 +895,7 @@ export function useDefectTrackerData() {
         .filter(k => !k.startsWith('_') && !['id','createdAt','updatedAt','ageInDays','slaStatus','slaFixRemainingMins',
                         'slaVerifyRemainingMins','slaFirstResponseDueAt','slaFixDueAt','slaVerifyDueAt','slaFirstResponseMet',
                         'slaFixBreached','slaVerifyBreached','slaPolicyName','severityChangeReason',
-                        'comments','activityLog','linkedItems'].includes(k));
+                        'comments','activityLog','linkedItems','updatedBy'].includes(k));
       if (changedFields.length > 0) {
         const activityRows = changedFields.map((field) => ({
           defect_id: id,
@@ -967,13 +968,16 @@ export function useDefectTrackerData() {
           toast.warning('Defect updated, but one or more user notifications could not be sent');
         }
       }
+      if (body.status === 'Closed' && selectedDefect?.id === id) {
+        await loadDefectDetail(id);
+      }
       if (!silent) toast.success(t('defectTracker.defectUpdated'));
       return updated;
     } catch {
       if (!silent) toast.error(t('defectTracker.updateFailed'));
     }
     return null;
-  }, [canAccessDefect, defects, selectedDefect]);
+  }, [canAccessDefect, defects, loadDefectDetail, selectedDefect]);
 
   const bulkUpdateDefects = useCallback(async (
     ids: string[],

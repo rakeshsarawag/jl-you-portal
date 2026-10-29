@@ -2432,6 +2432,66 @@ CREATE TRIGGER trg_enforce_defect_workflow
   BEFORE INSERT OR UPDATE ON project_defects
   FOR EACH ROW EXECUTE FUNCTION enforce_defect_workflow();
 
+-- Attachments are intentionally ephemeral once a defect is closed. This
+-- trigger covers direct client writes, API writes, and scheduled auto-closure.
+CREATE OR REPLACE FUNCTION cleanup_defect_attachments_on_close()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  removed_count INTEGER := 0;
+  closer_name TEXT;
+  manual_close_message TEXT;
+BEGIN
+  IF NEW.status = 'Closed' AND OLD.status IS DISTINCT FROM 'Closed' THEN
+    SELECT COUNT(*)::INTEGER
+    INTO removed_count
+    FROM public.entity_attachments
+    WHERE entity_type = 'defect'
+      AND entity_id = NEW.id::TEXT;
+
+    DELETE FROM storage.objects AS object
+    USING public.entity_attachments AS attachment
+    WHERE attachment.entity_type = 'defect'
+      AND attachment.entity_id = NEW.id::TEXT
+      AND object.bucket_id = attachment.storage_bucket
+      AND object.name = attachment.storage_path;
+
+    DELETE FROM public.entity_attachments
+    WHERE entity_type = 'defect'
+      AND entity_id = NEW.id::TEXT;
+
+    -- Scheduled closure creates its own detailed system comment below.
+    IF COALESCE(NEW.updated_by, '') <> 'system:auto-close' THEN
+      closer_name := COALESCE(NULLIF(BTRIM(NEW.updated_by), ''), 'System');
+      manual_close_message := CASE
+        WHEN removed_count = 0 THEN
+          format('System update: This defect was manually closed by %s. No attachments were present.', closer_name)
+        WHEN removed_count = 1 THEN
+          format('System update: This defect was manually closed by %s. 1 attachment was permanently removed.', closer_name)
+        ELSE
+          format('System update: This defect was manually closed by %s. %s attachments were permanently removed.', closer_name, removed_count)
+      END;
+
+      INSERT INTO public.defect_comments (
+        defect_id, author_id, author_name, content, is_internal
+      ) VALUES (
+        NEW.id, 'system:manual-close', 'System', manual_close_message, FALSE
+      );
+    END IF;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_cleanup_defect_attachments_on_close ON project_defects;
+CREATE TRIGGER trg_cleanup_defect_attachments_on_close
+  AFTER UPDATE OF status ON project_defects
+  FOR EACH ROW EXECUTE FUNCTION cleanup_defect_attachments_on_close();
+
 -- ── Step 3: defect_sla_policies — created with final severity names directly ──
 -- (Avoids the S1→'Very High' rename dance from migrations 06+07)
 
@@ -2623,7 +2683,7 @@ BEGIN
     FOR UPDATE SKIP LOCKED
   LOOP
     warning_message := format(
-      'System reminder: This defect has remained %s for 25 days without a reporter response. It will be automatically closed in 5 days unless the reporter comments or the status changes.',
+      'System reminder: This defect has remained %s for 25 days without a reporter response. It will be automatically closed in 5 days unless the reporter comments or the status changes. Any attachments will also be permanently removed when it closes.',
       target.status
     );
 
@@ -2658,16 +2718,36 @@ BEGIN
   -- Close after 30 days of reporter inactivity. The workflow trigger permits
   -- this otherwise-disallowed transition only for the system marker below.
   FOR target IN
-    SELECT id, defect_id, title, status, reporter_id
-    FROM public.project_defects
-    WHERE status IN ('Awaiting Info', 'Resolved')
-      AND auto_close_reference_at <= NOW() - INTERVAL '30 days'
+    SELECT defect.id, defect.defect_id, defect.title, defect.status, defect.reporter_id,
+      (
+        SELECT COUNT(*)::INTEGER
+        FROM public.entity_attachments AS attachment
+        WHERE attachment.entity_type = 'defect'
+          AND attachment.entity_id = defect.id::TEXT
+      ) AS attachment_count
+    FROM public.project_defects AS defect
+    WHERE defect.status IN ('Awaiting Info', 'Resolved')
+      AND defect.auto_close_reference_at <= NOW() - INTERVAL '30 days'
     FOR UPDATE SKIP LOCKED
   LOOP
-    closure_message := format(
-      'System update: This defect was automatically closed after 30 days in %s without a reporter response or manual closure.',
-      target.status
-    );
+    closure_message := CASE
+      WHEN target.attachment_count = 0 THEN
+        format(
+          'System update: This defect was automatically closed after 30 days in %s without a reporter response or manual closure. No attachments were present.',
+          target.status
+        )
+      WHEN target.attachment_count = 1 THEN
+        format(
+          'System update: This defect was automatically closed after 30 days in %s without a reporter response or manual closure. 1 attachment was permanently removed.',
+          target.status
+        )
+      ELSE
+        format(
+          'System update: This defect was automatically closed after 30 days in %s without a reporter response or manual closure. %s attachments were permanently removed.',
+          target.status,
+          target.attachment_count
+        )
+    END;
 
     UPDATE public.project_defects
     SET status = 'Closed',

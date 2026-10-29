@@ -2769,6 +2769,7 @@ function DefectDetailScreen({
           </div>
 
           <AttachmentSection
+            key={`${d.id}-${d.status}`}
             entityType={ATTACHMENT_ENTITY_TYPES.defect}
             entityId={d.id}
             uploadedBy={user?.id ?? ""}
