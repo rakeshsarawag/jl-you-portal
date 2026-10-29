@@ -7431,10 +7431,10 @@ function DashboardView({
         ))}
       </div>
 
-      {/* Row 2: My Tasks + My Projects */}
+      {/* Row 2: My Projects + My Tasks */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
         {/* My Tasks widget */}
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm lg:col-span-3">
+        <div className="order-2 rounded-2xl border border-border bg-card p-5 shadow-sm lg:col-span-3">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <div className="flex size-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
@@ -7496,7 +7496,7 @@ function DashboardView({
         </div>
 
         {/* My Projects widget */}
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-sm lg:col-span-2">
+        <div className="order-1 rounded-2xl border border-border bg-card p-5 shadow-sm lg:col-span-2">
           <div className="flex items-center gap-3 mb-4">
             <div className="flex size-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
               <Folder className="size-4" />
