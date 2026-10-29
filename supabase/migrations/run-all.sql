@@ -1279,6 +1279,37 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
 
 -- ============================================================
+-- REUSABLE ENTITY ATTACHMENTS
+-- ============================================================
+CREATE TABLE IF NOT EXISTS entity_attachments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  context_type TEXT NOT NULL DEFAULT 'entity',
+  context_id TEXT,
+  storage_bucket TEXT NOT NULL DEFAULT 'portal-attachments',
+  storage_path TEXT NOT NULL UNIQUE,
+  original_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+  uploaded_by TEXT NOT NULL,
+  uploaded_by_name TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_attachments_entity
+  ON entity_attachments(entity_type, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_entity_attachments_context
+  ON entity_attachments(context_type, context_id)
+  WHERE context_id IS NOT NULL;
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('portal-attachments', 'portal-attachments', FALSE, 5242880, NULL)
+ON CONFLICT (id) DO UPDATE SET
+  public = EXCLUDED.public,
+  file_size_limit = EXCLUDED.file_size_limit;
+
+-- ============================================================
 -- SECTION 16: WORKFLOW
 -- ============================================================
 
@@ -10647,6 +10678,108 @@ BEGIN
     );
   END LOOP;
 END $$;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- REUSABLE ENTITY ATTACHMENTS
+-- Unknown entity types are denied by default. Add an explicit branch here when
+-- another app integrates the shared attachment component.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.portal_attachment_can_access(
+  target_entity_type TEXT,
+  target_entity_id TEXT
+)
+RETURNS BOOLEAN
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF target_entity_type = 'defect' THEN
+    RETURN EXISTS (
+      SELECT 1
+      FROM public.project_defects AS defect
+      WHERE defect.id::TEXT = target_entity_id
+        AND public.defect_tracker_can_access_project(defect.project_id)
+    );
+  END IF;
+
+  RETURN FALSE;
+EXCEPTION WHEN OTHERS THEN
+  RETURN FALSE;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.portal_attachment_can_access(TEXT, TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.portal_attachment_can_access(TEXT, TEXT) TO authenticated;
+
+ALTER TABLE public.entity_attachments ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Authenticated users full access" ON public.entity_attachments;
+DROP POLICY IF EXISTS "entity_attachments_project_read" ON public.entity_attachments;
+DROP POLICY IF EXISTS "entity_attachments_project_insert" ON public.entity_attachments;
+DROP POLICY IF EXISTS "entity_attachments_owner_delete" ON public.entity_attachments;
+
+CREATE POLICY "entity_attachments_project_read"
+  ON public.entity_attachments
+  FOR SELECT TO authenticated
+  USING (public.portal_attachment_can_access(entity_type, entity_id));
+
+CREATE POLICY "entity_attachments_project_insert"
+  ON public.entity_attachments
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    uploaded_by = auth.uid()::TEXT
+    AND storage_bucket = 'portal-attachments'
+    AND public.portal_attachment_can_access(entity_type, entity_id)
+  );
+
+CREATE POLICY "entity_attachments_owner_delete"
+  ON public.entity_attachments
+  FOR DELETE TO authenticated
+  USING (
+    uploaded_by = auth.uid()::TEXT
+    OR public.defect_tracker_is_admin()
+  );
+
+GRANT SELECT, INSERT, DELETE ON TABLE public.entity_attachments TO authenticated;
+REVOKE UPDATE ON TABLE public.entity_attachments FROM authenticated;
+
+DROP POLICY IF EXISTS "portal_attachments_project_read" ON storage.objects;
+DROP POLICY IF EXISTS "portal_attachments_project_insert" ON storage.objects;
+DROP POLICY IF EXISTS "portal_attachments_owner_delete" ON storage.objects;
+
+CREATE POLICY "portal_attachments_project_read"
+  ON storage.objects
+  FOR SELECT TO authenticated
+  USING (
+    bucket_id = 'portal-attachments'
+    AND public.portal_attachment_can_access(
+      (storage.foldername(name))[1],
+      (storage.foldername(name))[2]
+    )
+  );
+
+CREATE POLICY "portal_attachments_project_insert"
+  ON storage.objects
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    bucket_id = 'portal-attachments'
+    AND public.portal_attachment_can_access(
+      (storage.foldername(name))[1],
+      (storage.foldername(name))[2]
+    )
+  );
+
+CREATE POLICY "portal_attachments_owner_delete"
+  ON storage.objects
+  FOR DELETE TO authenticated
+  USING (
+    bucket_id = 'portal-attachments'
+    AND (
+      owner_id = auth.uid()::TEXT
+      OR public.defect_tracker_is_admin()
+    )
+  );
 
 -- ────────────────────────────────────────────────────────────
 -- File: 05_business_extensions.sql

@@ -1260,6 +1260,37 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
 CREATE INDEX IF NOT EXISTS idx_push_subs_user ON push_subscriptions(user_id);
 
 -- ============================================================
+-- REUSABLE ENTITY ATTACHMENTS
+-- ============================================================
+CREATE TABLE IF NOT EXISTS entity_attachments (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  context_type TEXT NOT NULL DEFAULT 'entity',
+  context_id TEXT,
+  storage_bucket TEXT NOT NULL DEFAULT 'portal-attachments',
+  storage_path TEXT NOT NULL UNIQUE,
+  original_name TEXT NOT NULL,
+  mime_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+  size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
+  uploaded_by TEXT NOT NULL,
+  uploaded_by_name TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_entity_attachments_entity
+  ON entity_attachments(entity_type, entity_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_entity_attachments_context
+  ON entity_attachments(context_type, context_id)
+  WHERE context_id IS NOT NULL;
+
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES ('portal-attachments', 'portal-attachments', FALSE, 5242880, NULL)
+ON CONFLICT (id) DO UPDATE SET
+  public = EXCLUDED.public,
+  file_size_limit = EXCLUDED.file_size_limit;
+
+-- ============================================================
 -- SECTION 16: WORKFLOW
 -- ============================================================
 

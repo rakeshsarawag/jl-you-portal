@@ -33,6 +33,9 @@ import { Button } from "../ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
+import { AttachmentSection } from "../shared/AttachmentSection";
+import { ATTACHMENT_ENTITY_TYPES } from "../../../constants/attachments";
+import { uploadEntityAttachments } from "../../services/attachments";
 
 // ── Utility functions ─────────────────────────────────────────────────────────
 
@@ -595,7 +598,7 @@ function LogDefectModal({
   masterData,
 }: {
   onClose: () => void;
-  onCreate: (data: any) => Promise<boolean>;
+  onCreate: (data: any) => Promise<Defect | null>;
   masterData?: any;
 }) {
   const { currentUser: user } = useUser();
@@ -619,6 +622,7 @@ function LogDefectModal({
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [sprints, setSprints] = useState<{ id: string; name: string }[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const isAdmin = user?.roles?.includes("admin") || user?.primaryRole === "admin";
 
   useEffect(() => {
@@ -710,7 +714,22 @@ function LogDefectModal({
         projectId: form.projectId || null,
         projectName: form.projectName || "General",
       });
-      if (created) onClose();
+      if (!created) return;
+      if (pendingAttachments.length > 0 && user) {
+        const result = await uploadEntityAttachments({
+          entityType: ATTACHMENT_ENTITY_TYPES.defect,
+          entityId: created.id,
+          files: pendingAttachments,
+          uploadedBy: user.id,
+          uploadedByName: user.name,
+        });
+        if (result.failed.length > 0) {
+          toast.warning(
+            `Defect created, but ${result.failed.length} attachment${result.failed.length === 1 ? "" : "s"} could not be uploaded`,
+          );
+        }
+      }
+      onClose();
     } finally {
       setSubmitting(false);
     }
@@ -992,6 +1011,13 @@ function LogDefectModal({
             />
             <span className="font-medium text-gray-700">This is a regression</span>
           </label>
+
+          <AttachmentSection
+            pendingFiles={pendingAttachments}
+            onPendingFilesChange={setPendingAttachments}
+            title="Attachments"
+            description="Optional screenshots, logs, documents, or other supporting files. Maximum 5 MB per file."
+          />
         </div>
 
         <div className="flex items-center justify-end gap-3 p-5 border-t border-gray-100">
@@ -1767,7 +1793,7 @@ function AllDefectsScreen({
       {showLogModal && (
         <LogDefectModal
           onClose={() => setShowLogModal(false)}
-          onCreate={async (data) => Boolean(await createDefect(data))}
+          onCreate={createDefect}
           masterData={masterData}
         />
       )}
@@ -1984,6 +2010,7 @@ function DefectDetailScreen({
   const isResolved = ["Resolved", "Verified", "Closed"].includes(d.status);
   const isVerified = d.status === "Verified" || d.status === "Closed";
   const isClosed = d.status === "Closed";
+  const isAdmin = user?.roles?.includes("admin") || user?.primaryRole === "admin";
   const userIds = [user?.id, user?.appUserId, user?.employeeId].filter(Boolean);
   const isReporter = userIds.includes(d.reporterId) || user?.name === d.reporterName || user?.email === d.reporterName;
   const cancelEnvironmentEditing = () => {
@@ -2740,6 +2767,18 @@ function DefectDetailScreen({
               );
             })}
           </div>
+
+          <AttachmentSection
+            entityType={ATTACHMENT_ENTITY_TYPES.defect}
+            entityId={d.id}
+            uploadedBy={user?.id ?? ""}
+            uploadedByName={user?.name ?? ""}
+            readOnly={isClosed || !canUpdate}
+            canDeleteAll={Boolean(isAdmin)}
+            title="Attachments"
+            description=""
+            onAttachmentsChange={() => loadDefectDetail(d.id)}
+          />
 
           {/* Activity & Comments */}
           <div className="bg-white rounded-xl border border-gray-200 p-5">
