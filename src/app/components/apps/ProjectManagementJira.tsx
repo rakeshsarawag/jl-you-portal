@@ -8330,8 +8330,8 @@ export function ProjectManagementJira({
     <div className="min-h-screen bg-muted">
       {/* Header */}
       <div className="sticky top-0 z-30 border-b border-border/80 bg-background/90 backdrop-blur-xl">
-        <div className="w-full px-4 sm:px-6 py-3 flex items-center gap-4">
-          <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex w-full flex-wrap items-center gap-3 px-4 py-3 sm:px-6 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-4">
+          <div className="order-1 flex min-w-0 flex-1 items-center gap-3">
             <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
               <BriefcaseBusiness className="size-5" />
             </div>
@@ -8342,7 +8342,7 @@ export function ProjectManagementJira({
             </div>
           </div>
           {/* Main view toggle */}
-          <div className="flex rounded-lg border border-border/70 bg-muted/60 p-1 gap-1">
+          <div className="order-3 flex w-full justify-center gap-1 rounded-lg border border-border/70 bg-muted/60 p-1 md:order-2 md:w-auto">
             <Button
               size="sm"
               variant={mainView === "dashboard" ? "secondary" : "ghost"}
@@ -8378,23 +8378,25 @@ export function ProjectManagementJira({
               )}
             </Button>
           </div>
-          {secCreateProject && mainView === "projects" && (
+          <div className="order-2 ml-auto flex items-center gap-2 md:order-3 md:ml-0 md:justify-self-end">
+            {secCreateProject && mainView === "projects" && (
+              <Button
+                size="sm"
+                onClick={() => setShowProjectForm(true)}
+              >
+                <Plus />
+                <span className="hidden sm:inline">{t("project.newProject")}</span>
+              </Button>
+            )}
             <Button
-              size="sm"
-              onClick={() => setShowProjectForm(true)}
+              size="icon"
+              variant="outline"
+              onClick={() => setShowNotifPrefs(true)}
+              title={t("pm.notifPrefs.button")}
             >
-              <Plus />
-              <span className="hidden sm:inline">{t("project.newProject")}</span>
+              <Settings />
             </Button>
-          )}
-          <Button
-            size="icon"
-            variant="outline"
-            onClick={() => setShowNotifPrefs(true)}
-            title={t("pm.notifPrefs.button")}
-          >
-            <Settings />
-          </Button>
+          </div>
         </div>
       </div>
 
