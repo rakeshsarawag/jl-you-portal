@@ -2413,8 +2413,9 @@ CREATE TRIGGER trg_enforce_defect_workflow
   BEFORE INSERT OR UPDATE ON project_defects
   FOR EACH ROW EXECUTE FUNCTION enforce_defect_workflow();
 
--- Attachments are intentionally ephemeral once a defect is closed. This
--- trigger covers direct client writes, API writes, and scheduled auto-closure.
+-- Attachments are intentionally ephemeral once a defect is closed. Storage
+-- objects must be removed through the Storage API, so this trigger records the
+-- closure and leaves attachment metadata available to the cleanup caller.
 CREATE OR REPLACE FUNCTION cleanup_defect_attachments_on_close()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -2430,17 +2431,6 @@ BEGIN
     SELECT COUNT(*)::INTEGER
     INTO removed_count
     FROM public.entity_attachments
-    WHERE entity_type = 'defect'
-      AND entity_id = NEW.id::TEXT;
-
-    DELETE FROM storage.objects AS object
-    USING public.entity_attachments AS attachment
-    WHERE attachment.entity_type = 'defect'
-      AND attachment.entity_id = NEW.id::TEXT
-      AND object.bucket_id = attachment.storage_bucket
-      AND object.name = attachment.storage_path;
-
-    DELETE FROM public.entity_attachments
     WHERE entity_type = 'defect'
       AND entity_id = NEW.id::TEXT;
 

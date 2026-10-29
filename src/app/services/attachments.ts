@@ -206,3 +206,25 @@ export async function deleteEntityAttachment(
     .eq('id', attachment.id);
   if (metadataError) throw metadataError;
 }
+
+export async function deleteAllEntityAttachments(
+  entityType: string,
+  entityId: string,
+): Promise<number> {
+  const attachments = await listEntityAttachments(entityType, entityId);
+  if (attachments.length === 0) return 0;
+
+  const { error: storageError } = await supabase.storage
+    .from(ATTACHMENT_CONFIG.bucket)
+    .remove(attachments.map((attachment) => attachment.storagePath));
+  if (storageError) throw storageError;
+
+  const { error: metadataError } = await supabase
+    .from('entity_attachments')
+    .delete()
+    .eq('entity_type', entityType)
+    .eq('entity_id', entityId);
+  if (metadataError) throw metadataError;
+
+  return attachments.length;
+}

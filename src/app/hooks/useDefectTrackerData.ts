@@ -4,6 +4,8 @@ import { API_BASE, apiHeaders, safeJson, supabase } from '../utils/constants';
 import { t } from '../../i18n/index';
 import { computeDefectSLA } from '../utils/defectSla';
 import { useUser } from '../context/UserContext';
+import { deleteAllEntityAttachments } from '../services/attachments';
+import { ATTACHMENT_ENTITY_TYPES } from '../../constants/attachments';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -966,6 +968,15 @@ export function useDefectTrackerData() {
         const { error: notificationError } = await supabase.from('notifications').insert(notificationRows);
         if (notificationError && !silent) {
           toast.warning('Defect updated, but one or more user notifications could not be sent');
+        }
+      }
+      if (body.status === 'Closed') {
+        try {
+          await deleteAllEntityAttachments(ATTACHMENT_ENTITY_TYPES.defect, id);
+        } catch {
+          if (!silent) {
+            toast.warning('Defect closed, but its attachments could not be removed. Please retry or contact an administrator.');
+          }
         }
       }
       if (body.status === 'Closed' && selectedDefect?.id === id) {

@@ -1420,6 +1420,16 @@ CREATE POLICY "entity_attachments_owner_delete"
   USING (
     uploaded_by = auth.uid()::TEXT
     OR public.defect_tracker_is_admin()
+    OR (
+      entity_type = 'defect'
+      AND public.portal_attachment_can_access(entity_type, entity_id)
+      AND EXISTS (
+        SELECT 1
+        FROM public.project_defects AS defect
+        WHERE defect.id::TEXT = entity_id
+          AND defect.status = 'Closed'
+      )
+    )
   );
 
 GRANT SELECT, INSERT, DELETE ON TABLE public.entity_attachments TO authenticated;
@@ -1459,5 +1469,18 @@ CREATE POLICY "portal_attachments_owner_delete"
     AND (
       owner_id = auth.uid()::TEXT
       OR public.defect_tracker_is_admin()
+      OR (
+        (storage.foldername(name))[1] = 'defect'
+        AND public.portal_attachment_can_access(
+          (storage.foldername(name))[1],
+          (storage.foldername(name))[2]
+        )
+        AND EXISTS (
+          SELECT 1
+          FROM public.project_defects AS defect
+          WHERE defect.id::TEXT = (storage.foldername(name))[2]
+            AND defect.status = 'Closed'
+        )
+      )
     )
   );

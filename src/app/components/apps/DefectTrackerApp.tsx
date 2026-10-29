@@ -2409,10 +2409,14 @@ function DefectDetailScreen({
               </div>
             )}
             {pendingStatus === "Verified" && (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-gray-600 mb-1 block">Verified By *</label>
-                  <input value={verifiedBy} onChange={(e) => setVerifiedBy(e.target.value)} className="w-full border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none" />
+                  <EmployeeSearchDropdown
+                    value={verifiedBy}
+                    onChange={(name) => setVerifiedBy(name)}
+                    placeholder="Select verifier…"
+                  />
                 </div>
                 <div>
                   <label className="text-xs font-semibold text-gray-600 mb-1 block">Test Evidence *</label>
