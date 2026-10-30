@@ -25,6 +25,7 @@ import { SelectOptions } from '../../context/ValueHelpsContext';
 import { t } from '../../../i18n/index';
 import { useEmployees } from '../../context/EmployeesContext';
 import { useSectionPermission } from '../SectionGuard';
+import { getPasswordResetRedirectUrl } from '../../utils/authRedirect';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface AppUserSession {
@@ -893,7 +894,7 @@ function ProvisionForm({ onClose, onDone, existingUserEmails }: {
     setResetting(prev => new Set([...prev, email]));
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: getPasswordResetRedirectUrl(),
       });
       if (error) throw error;
       setResetDone(prev => new Set([...prev, email]));
@@ -1266,6 +1267,7 @@ function ResetPasswordModal({ user, onClose }: { user: UserWithRole; onClose: ()
       const res = await fetch(`${API_BASE}/users/${user.id}/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
+        body: JSON.stringify({ redirectTo: getPasswordResetRedirectUrl() }),
       });
       const json = await safeJson(res);
       if (!res.ok) throw new Error(json.error ?? 'Failed to send reset email');

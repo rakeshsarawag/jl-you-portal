@@ -578,15 +578,25 @@ app.post('/:id/reset-password', async (c) => {
   try {
     const supabase = getSupabase();
     const id = c.req.param('id');
+    const body = await c.req.json().catch(() => ({}));
     const { data: user, error: fetchErr } = await supabase
       .from('app_users')
       .select('email, name')
       .eq('id', id)
       .maybeSingle();
     if (fetchErr || !user) return c.json({ error: 'User not found' }, 404);
-    const { error } = await supabase.auth.admin.generateLink({
-      type: 'recovery',
-      email: user.email,
+    const requestOrigin = c.req.header('origin');
+    let redirectTo: string | undefined;
+    if (typeof body.redirectTo === 'string' && requestOrigin) {
+      try {
+        const requestedUrl = new URL(body.redirectTo);
+        if (requestedUrl.origin === requestOrigin && requestedUrl.pathname === '/reset-password') {
+          redirectTo = requestedUrl.toString();
+        }
+      } catch {}
+    }
+    const { error } = await supabase.auth.resetPasswordForEmail(user.email, {
+      ...(redirectTo ? { redirectTo } : {}),
     });
     if (error) return c.json({ error: error.message }, 500);
     await logAudit(supabase, user.email, 'RESET_PASSWORD', `Password reset email sent to ${user.email}`);

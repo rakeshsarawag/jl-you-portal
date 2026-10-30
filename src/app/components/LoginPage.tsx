@@ -9,6 +9,7 @@ import { Label } from './ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
 import { t } from '../../i18n';
+import { getPasswordResetRedirectUrl } from '../utils/authRedirect';
 
 interface LoginPageProps {
   onLoginSuccess: (accessToken: string, userId: string) => Promise<boolean>;
@@ -41,7 +42,7 @@ export function LoginPage({
     setLoading(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: getPasswordResetRedirectUrl(),
       });
       if (error) {
         toast.error(`${t('login.resetEmailFailedPrefix')} ${error.message}`);
@@ -90,8 +91,11 @@ export function LoginPage({
     setLoading(true);
     try {
       const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: { shouldCreateUser: false },
+        email: email.trim().toLowerCase(),
+        options: {
+          shouldCreateUser: false,
+          emailRedirectTo: window.location.origin,
+        },
       });
       if (error) {
         toast.error(`${t('login.sendOTPFailedPrefix')} ${error.message}`);
@@ -110,7 +114,11 @@ export function LoginPage({
     e.preventDefault();
     setLoading(true);
     try {
-      const { data, error } = await supabase.auth.verifyOtp({ email, token: otp, type: 'email' });
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: email.trim().toLowerCase(),
+        token: otp.trim(),
+        type: 'email',
+      });
       if (error) {
         toast.error(`${t('login.otpFailedPrefix')} ${error.message}`);
         return;
@@ -316,10 +324,12 @@ export function LoginPage({
                     type="text"
                     placeholder={t('login.enterOTP')}
                     value={otp}
-                    onChange={e => setOtp(e.target.value)}
+                    onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     required
                     disabled={loading}
                     maxLength={6}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
                     className="text-center text-lg tracking-widest"
                   />
                   <p className="text-xs text-muted-foreground">{t('login.sentTo')} {email}</p>

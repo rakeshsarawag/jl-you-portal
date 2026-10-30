@@ -26,6 +26,10 @@ import { useSessionTimeout } from './hooks/useSessionTimeout';
 import { SessionTimeoutWarning } from './components/SessionTimeoutWarning';
 import { invalidatePermissionsCache } from './hooks/usePermissions';
 import PreboardingPortal from './components/apps/PreboardingPortal';
+import {
+  getRecoverySessionFromHash,
+  isPasswordRecoveryUrl,
+} from './utils/authRedirect';
 
 /**
  * Main App Component
@@ -39,16 +43,36 @@ export default function App() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [logoutReason, setLogoutReason] = useState<'idle_timeout' | null>(null);
-  const [passwordRecovery, setPasswordRecovery] = useState(
-    () => window.location.pathname === '/reset-password',
-  );
+  const [passwordRecovery, setPasswordRecovery] = useState(() => isPasswordRecoveryUrl());
 
   // Check for existing session on mount
   useEffect(() => {
     const checkSession = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
-        if (window.location.pathname === '/reset-password') {
+        const recoveryRequested = isPasswordRecoveryUrl();
+        let { data: { session }, error } = await supabase.auth.getSession();
+
+        // detectSessionInUrl normally handles both callback formats. These
+        // fallbacks cover slow initialization and recovery events emitted
+        // before React subscribes to onAuthStateChange.
+        if (recoveryRequested && !session) {
+          const code = new URLSearchParams(window.location.search).get('code');
+          if (code) {
+            const exchange = await supabase.auth.exchangeCodeForSession(code);
+            session = exchange.data.session;
+            error = exchange.error;
+          } else {
+            const hashSession = getRecoverySessionFromHash();
+            if (hashSession) {
+              const restored = await supabase.auth.setSession(hashSession);
+              session = restored.data.session;
+              error = restored.error;
+            }
+          }
+        }
+
+        if (recoveryRequested) {
+          setPasswordRecovery(true);
           setApiSessionToken(session?.access_token ?? null);
           setUserId(null);
           setAccessToken(null);
@@ -86,11 +110,14 @@ export default function App() {
       // INITIAL_SESSION is handled by checkSession() above — skip to avoid double render
       if (event === 'INITIAL_SESSION') return;
 
-      if (event === 'PASSWORD_RECOVERY') {
+      if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && isPasswordRecoveryUrl())) {
         setPasswordRecovery(true);
         setApiSessionToken(session?.access_token ?? null);
         setUserId(null);
         setAccessToken(null);
+        if (window.location.pathname !== '/reset-password') {
+          window.history.replaceState({}, '', '/reset-password?mode=recovery');
+        }
         return;
       }
 
