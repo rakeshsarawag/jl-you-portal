@@ -1040,6 +1040,68 @@ function LogDefectModal({
 
 // ── SCREEN 2: All Defects ─────────────────────────────────────────────────────
 
+type DefectSortBy =
+  | "recommended"
+  | "severity"
+  | "priority"
+  | "sla"
+  | "created"
+  | "updated"
+  | "status"
+  | "title"
+  | "project"
+  | "assignee";
+
+type SortDirection = "asc" | "desc";
+
+interface DefectListSettings {
+  statusFilter?: string[];
+  severityFilter?: string[];
+  slaStatusFilter?: string;
+  regressionFilter?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  envFilter?: string;
+  priorityFilter?: string;
+  reporterFilter?: string;
+  sprintFilter?: string;
+  transportRequestFilter?: string;
+  labelFilter?: string;
+  duplicateFilter?: string;
+  sortBy?: DefectSortBy;
+  sortDirection?: SortDirection;
+  groupBy?: "none" | "project" | "severity" | "status";
+  view?: ViewMode;
+  isDefault?: boolean;
+}
+
+interface SavedDefectFilter {
+  id: string;
+  name: string;
+  filters: DefectListSettings;
+  builtIn?: boolean;
+}
+
+const BUILT_IN_DEFECT_FILTERS: SavedDefectFilter[] = [
+  { id: "my-open", name: "My Open Defects", filters: { statusFilter: ["Open", "In Progress"] }, builtIn: true },
+  { id: "vh-today", name: "Very High Today", filters: { severityFilter: ["Very High"], dateFrom: new Date().toISOString().slice(0, 10) }, builtIn: true },
+  { id: "sla-breached", name: "SLA Breached", filters: { slaStatusFilter: "fix_breached" }, builtIn: true },
+  { id: "regressions", name: "All Regressions", filters: { regressionFilter: "yes" }, builtIn: true },
+];
+
+const SORT_DIRECTION_LABELS: Record<DefectSortBy, [string, string]> = {
+  recommended: ["Recommended", "Recommended"],
+  severity: ["Highest severity first", "Lowest severity first"],
+  priority: ["Highest priority first", "Lowest priority first"],
+  sla: ["Most urgent first", "Least urgent first"],
+  created: ["Oldest first", "Newest first"],
+  updated: ["Least recently updated", "Recently updated"],
+  status: ["Workflow order", "Reverse workflow order"],
+  title: ["Title A–Z", "Title Z–A"],
+  project: ["Project A–Z", "Project Z–A"],
+  assignee: ["Assignee A–Z", "Assignee Z–A"],
+};
+
 function AllDefectsScreen({
   initialFilters,
   onNavigateDetail,
@@ -1077,14 +1139,12 @@ function AllDefectsScreen({
   const [duplicateFilter, setDuplicateFilter] = useState("all");
   const [savedFilterName, setSavedFilterName] = useState("");
   const [showSaveFilter, setShowSaveFilter] = useState(false);
-  const [savedFilters, setSavedFilters] = useState<{ id: string; name: string; filters: any }[]>([
-    { id: "my-open", name: "My Open Defects", filters: { statusFilter: ["Open", "In Progress"] } },
-    { id: "vh-today", name: "Very High Today", filters: { severityFilter: ["Very High"], dateFrom: new Date().toISOString().slice(0, 10) } },
-    { id: "sla-breached", name: "SLA Breached", filters: { slaStatusFilter: "fix_breached" } },
-    { id: "regressions", name: "All Regressions", filters: { regressionFilter: "yes" } },
-  ]);
+  const [savedFilters, setSavedFilters] = useState<SavedDefectFilter[]>(BUILT_IN_DEFECT_FILTERS);
+  const [defaultFilterId, setDefaultFilterId] = useState<string | null>(null);
+  const [savingDefault, setSavingDefault] = useState(false);
   const [showSavedFilterDropdown, setShowSavedFilterDropdown] = useState(false);
-  const [sortBy, setSortBy] = useState<"severity" | "age" | "sla">("severity");
+  const [sortBy, setSortBy] = useState<DefectSortBy>("recommended");
+  const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [groupBy, setGroupBy] = useState<"none" | "project" | "severity" | "status">("none");
   const [view, setView] = useState<ViewMode>("table");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -1134,6 +1194,26 @@ function AllDefectsScreen({
   };
 
   const severityOrder: Record<string, number> = { "Very High": 0, "High": 1, "Medium": 2, "Low": 3 };
+  const priorityOrder: Record<string, number> = { P1: 0, P2: 1, P3: 2, P4: 3 };
+  const statusOrder: Record<string, number> = {
+    Open: 0,
+    "In Progress": 1,
+    Blocked: 2,
+    "Awaiting Info": 3,
+    Resolved: 4,
+    Verified: 5,
+    Deferred: 6,
+    Closed: 7,
+    "Won't Fix": 8,
+    Duplicate: 9,
+  };
+  const slaOrder: Record<string, number> = {
+    fix_breached: 0,
+    verify_breached: 1,
+    at_risk: 2,
+    on_track: 3,
+  };
+  const terminalStatuses = new Set(["Closed", "Verified", "Won't Fix", "Duplicate"]);
 
   const filtered = defects.filter((d) => {
     if (search && !d.title.toLowerCase().includes(search.toLowerCase()) && !d.defectId.toLowerCase().includes(search.toLowerCase())) return false;
@@ -1160,10 +1240,32 @@ function AllDefectsScreen({
     if (duplicateFilter === "no" && d.isDuplicate) return false;
     return true;
   }).sort((a, b) => {
-    if (sortBy === "severity") return (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9);
-    if (sortBy === "age") return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-    if (sortBy === "sla") return (a.slaFixRemainingMins ?? 9999) - (b.slaFixRemainingMins ?? 9999);
-    return 0;
+    if (sortBy === "recommended") {
+      return (
+        Number(terminalStatuses.has(a.status)) - Number(terminalStatuses.has(b.status))
+        || (slaOrder[a.slaStatus] ?? 9) - (slaOrder[b.slaStatus] ?? 9)
+        || (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9)
+        || (priorityOrder[a.priority] ?? 9) - (priorityOrder[b.priority] ?? 9)
+        || new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+    }
+
+    const direction = sortDirection === "asc" ? 1 : -1;
+    let comparison = 0;
+    if (sortBy === "severity") comparison = (severityOrder[a.severity] ?? 9) - (severityOrder[b.severity] ?? 9);
+    if (sortBy === "priority") comparison = (priorityOrder[a.priority] ?? 9) - (priorityOrder[b.priority] ?? 9);
+    if (sortBy === "sla") {
+      if (a.slaFixRemainingMins === null) return 1;
+      if (b.slaFixRemainingMins === null) return -1;
+      comparison = a.slaFixRemainingMins - b.slaFixRemainingMins;
+    }
+    if (sortBy === "created") comparison = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    if (sortBy === "updated") comparison = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
+    if (sortBy === "status") comparison = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+    if (sortBy === "title") comparison = a.title.localeCompare(b.title);
+    if (sortBy === "project") comparison = a.projectName.localeCompare(b.projectName);
+    if (sortBy === "assignee") comparison = (a.assigneeName || "Unassigned").localeCompare(b.assigneeName || "Unassigned");
+    return comparison * direction || a.defectId.localeCompare(b.defectId);
   });
 
   const paginated = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
@@ -1279,33 +1381,146 @@ function AllDefectsScreen({
     setLabelFilter(""); setDuplicateFilter("all");
   };
 
-  const applySavedFilter = (sf: { id: string; name: string; filters: any }) => {
+  const currentListSettings = (): DefectListSettings => ({
+    statusFilter,
+    severityFilter,
+    slaStatusFilter,
+    regressionFilter,
+    dateFrom,
+    dateTo,
+    envFilter,
+    priorityFilter,
+    reporterFilter,
+    sprintFilter,
+    transportRequestFilter,
+    labelFilter,
+    duplicateFilter,
+    sortBy,
+    sortDirection,
+    groupBy,
+    view,
+  });
+
+  const applyListSettings = (settings: DefectListSettings, preserveInitialFilters = false) => {
     clearAll();
-    const f = sf.filters;
-    if (f.statusFilter) setStatusFilter(f.statusFilter);
-    if (f.severityFilter) setSeverityFilter(f.severityFilter);
-    if (f.slaStatusFilter) setSlaStatusFilter(f.slaStatusFilter);
-    if (f.regressionFilter) setRegressionFilter(f.regressionFilter);
-    if (f.dateFrom) setDateFrom(f.dateFrom);
-    if (f.dateTo) setDateTo(f.dateTo);
-    if (f.transportRequestFilter) setTransportRequestFilter(f.transportRequestFilter);
+    if (settings.statusFilter) setStatusFilter(settings.statusFilter);
+    if (preserveInitialFilters && initialFilters?.severity) {
+      setSeverityFilter([initialFilters.severity]);
+    } else if (settings.severityFilter) {
+      setSeverityFilter(settings.severityFilter);
+    }
+    if (settings.slaStatusFilter) setSlaStatusFilter(settings.slaStatusFilter);
+    if (settings.regressionFilter) setRegressionFilter(settings.regressionFilter);
+    if (settings.dateFrom) setDateFrom(settings.dateFrom);
+    if (settings.dateTo) setDateTo(settings.dateTo);
+    if (settings.envFilter) setEnvFilter(settings.envFilter);
+    if (settings.priorityFilter) setPriorityFilter(settings.priorityFilter);
+    if (settings.reporterFilter) setReporterFilter(settings.reporterFilter);
+    if (settings.sprintFilter) setSprintFilter(settings.sprintFilter);
+    if (settings.transportRequestFilter) setTransportRequestFilter(settings.transportRequestFilter);
+    if (settings.labelFilter) setLabelFilter(settings.labelFilter);
+    if (settings.duplicateFilter) setDuplicateFilter(settings.duplicateFilter);
+    if (settings.sortBy) setSortBy(settings.sortBy);
+    if (settings.sortDirection) setSortDirection(settings.sortDirection);
+    if (settings.groupBy) setGroupBy(settings.groupBy);
+    if (settings.view) setView(settings.view);
+    setPage(0);
+  };
+
+  const applySavedFilter = (sf: SavedDefectFilter) => {
+    applyListSettings(sf.filters);
     setShowSavedFilterDropdown(false);
   };
 
-  const saveCurrentFilter = () => {
-    if (!savedFilterName.trim()) return;
-    const id = `custom-${Date.now()}`;
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+
+    void supabase
+      .from("defect_saved_filters")
+      .select("id, name, filters")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.warn("[DefectTracker] Could not load saved views:", error.message);
+          return;
+        }
+
+        const userFilters: SavedDefectFilter[] = (data ?? []).map((row: any) => ({
+          id: row.id,
+          name: row.name,
+          filters: (row.filters ?? {}) as DefectListSettings,
+        }));
+        const defaultFilter = userFilters.find((filter) => filter.filters.isDefault);
+        setDefaultFilterId(defaultFilter?.id ?? null);
+        setSavedFilters([
+          ...BUILT_IN_DEFECT_FILTERS,
+          ...userFilters.filter((filter) => !filter.filters.isDefault),
+        ]);
+        if (defaultFilter) applyListSettings(defaultFilter.filters, true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  const saveCurrentFilter = async () => {
+    const name = savedFilterName.trim();
+    if (!name || !user?.id) return;
+    const settings = currentListSettings();
+    const { data, error } = await supabase
+      .from("defect_saved_filters")
+      .insert({ user_id: user.id, name, filters: settings })
+      .select("id, name, filters")
+      .single();
+
+    if (error || !data) {
+      toast.error("Could not save view", { description: error?.message });
+      return;
+    }
+
     setSavedFilters((prev) => [...prev, {
-      id,
-      name: savedFilterName,
-      filters: {
-        statusFilter, severityFilter, slaStatusFilter, regressionFilter, dateFrom, dateTo,
-        envFilter, priorityFilter, transportRequestFilter,
-      },
+      id: data.id,
+      name: data.name,
+      filters: (data.filters ?? settings) as DefectListSettings,
     }]);
     setSavedFilterName("");
     setShowSaveFilter(false);
-    toast.success(`Filter "${savedFilterName}" saved`);
+    toast.success(`View "${name}" saved`);
+  };
+
+  const saveAsDefault = async () => {
+    if (!user?.id || savingDefault) return;
+    setSavingDefault(true);
+    const settings: DefectListSettings = { ...currentListSettings(), isDefault: true };
+
+    const query = defaultFilterId
+      ? supabase
+          .from("defect_saved_filters")
+          .update({ name: "Default defect view", filters: settings })
+          .eq("id", defaultFilterId)
+          .eq("user_id", user.id)
+          .select("id")
+          .single()
+      : supabase
+          .from("defect_saved_filters")
+          .insert({ user_id: user.id, name: "Default defect view", filters: settings })
+          .select("id")
+          .single();
+
+    const { data, error } = await query;
+    setSavingDefault(false);
+    if (error || !data) {
+      toast.error("Could not save default view", { description: error?.message });
+      return;
+    }
+    setDefaultFilterId(data.id);
+    toast.success("Default defect view saved", {
+      description: "Your filters, sorting, grouping, and view will be restored automatically.",
+    });
   };
 
   // Group the paginated rows
@@ -1587,11 +1802,33 @@ function AllDefectsScreen({
         <div className="flex items-center gap-2 flex-wrap">
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-gray-500">Sort:</span>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none">
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as DefectSortBy)}
+              className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none"
+            >
+              <option value="recommended">Recommended</option>
               <option value="severity">Severity</option>
-              <option value="age">Age</option>
-              <option value="sla">SLA</option>
+              <option value="priority">Priority</option>
+              <option value="sla">SLA urgency</option>
+              <option value="created">Created date</option>
+              <option value="updated">Last updated</option>
+              <option value="status">Status</option>
+              <option value="title">Title</option>
+              <option value="project">Project</option>
+              <option value="assignee">Assignee</option>
             </select>
+            {sortBy !== "recommended" && (
+              <select
+                value={sortDirection}
+                onChange={(e) => setSortDirection(e.target.value as SortDirection)}
+                aria-label="Sort direction"
+                className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none"
+              >
+                <option value="asc">{SORT_DIRECTION_LABELS[sortBy][0]}</option>
+                <option value="desc">{SORT_DIRECTION_LABELS[sortBy][1]}</option>
+              </select>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-gray-500">Group:</span>
@@ -1608,7 +1845,7 @@ function AllDefectsScreen({
               onClick={() => { setShowSavedFilterDropdown(!showSavedFilterDropdown); setShowSaveFilter(false); }}
               className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50"
             >
-              <Filter className="h-3.5 w-3.5" /> Saved Filters
+              <Filter className="h-3.5 w-3.5" /> Saved Views
               <ChevronDown className="h-3 w-3" />
             </button>
             {showSavedFilterDropdown && (
@@ -1627,23 +1864,34 @@ function AllDefectsScreen({
                     onClick={() => { setShowSaveFilter(true); setShowSavedFilterDropdown(false); }}
                     className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 text-red-600 font-medium"
                   >
-                    + Save Current Filter
+                    + Save Current View
                   </button>
                 </div>
               </div>
             )}
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 px-2.5 text-xs text-gray-600"
+            onClick={() => void saveAsDefault()}
+            disabled={!user?.id || savingDefault}
+          >
+            <Settings className="h-3.5 w-3.5" />
+            {savingDefault ? "Saving..." : defaultFilterId ? "Update default" : "Save as default"}
+          </Button>
           {showSaveFilter && (
             <div className="flex items-center gap-2 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-1.5">
               <input
                 value={savedFilterName}
                 onChange={(e) => setSavedFilterName(e.target.value)}
-                placeholder="Filter name..."
+                placeholder="View name..."
                 className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none w-32"
                 autoFocus
-                onKeyDown={(e) => { if (e.key === "Enter") saveCurrentFilter(); if (e.key === "Escape") setShowSaveFilter(false); }}
+                onKeyDown={(e) => { if (e.key === "Enter") void saveCurrentFilter(); if (e.key === "Escape") setShowSaveFilter(false); }}
               />
-              <button onClick={saveCurrentFilter} className="text-xs bg-red-600 text-white px-2 py-1 rounded font-medium">Save</button>
+              <button onClick={() => void saveCurrentFilter()} className="text-xs bg-red-600 text-white px-2 py-1 rounded font-medium">Save</button>
               <button onClick={() => setShowSaveFilter(false)} className="text-xs text-gray-500 hover:text-gray-700"><X className="h-3 w-3" /></button>
             </div>
           )}
