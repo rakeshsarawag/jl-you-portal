@@ -130,7 +130,15 @@ function PushToggleCompact() {
 }
 
 function NotificationPanel({ onClose, navigate }: { onClose: () => void; navigate: ReturnType<typeof useNavigate> }) {
-  const { notifications, unreadCount, loading, markRead, markAllRead, deleteNotification } = useNotifications();
+  const {
+    notifications,
+    unreadCount,
+    loading,
+    markRead,
+    markAllRead,
+    deleteNotification,
+    clearAllNotifications,
+  } = useNotifications();
   return (
     <div className="absolute right-0 top-11 z-50 w-84 bg-card border border-border rounded-xl shadow-xl overflow-hidden" style={{ width: 336 }}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-muted/30">
@@ -179,9 +187,19 @@ function NotificationPanel({ onClose, navigate }: { onClose: () => void; navigat
       </div>
       <div className="border-t border-border px-4 py-2.5 flex items-center justify-between gap-3 bg-muted/20">
         <PushToggleCompact />
-        <button onClick={() => { onClose(); navigate('/communications'); }} className="text-xs text-primary hover:underline ml-auto">
-          View all
-        </button>
+        <div className="ml-auto flex items-center gap-3">
+          {notifications.length > 0 && (
+            <button
+              onClick={() => void clearAllNotifications()}
+              className="text-xs text-destructive hover:underline"
+            >
+              Clear all
+            </button>
+          )}
+          <button onClick={() => { onClose(); navigate('/communications'); }} className="text-xs text-primary hover:underline">
+            View all
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -181,5 +181,32 @@ export function useNotifications() {
     dispatchNotifChanged();
   }, []);
 
-  return { notifications, unreadCount, loading, markRead, markAllRead, deleteNotification, refresh: fetchNotifications };
+  const clearAllNotifications = useCallback(async () => {
+    const ids = notifications.map((notification) => notification.id);
+    if (ids.length === 0) return;
+
+    setNotifications([]);
+    setUnreadCount(0);
+
+    await Promise.allSettled(
+      ids.map((id) =>
+        apiFetch(`${API_BASE}/notifications/${id}`, {
+          method: 'DELETE',
+          headers: apiHeaders(),
+        })
+      )
+    );
+    dispatchNotifChanged();
+  }, [notifications]);
+
+  return {
+    notifications,
+    unreadCount,
+    loading,
+    markRead,
+    markAllRead,
+    deleteNotification,
+    clearAllNotifications,
+    refresh: fetchNotifications,
+  };
 }
