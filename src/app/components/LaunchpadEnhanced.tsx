@@ -409,12 +409,16 @@ function AppTileCard({ tile, navigate }: { tile: { id: string; title: string; su
   return (
     <button
       onClick={() => navigate(tile.path)}
-      className="group flex flex-col items-center gap-3 p-4 pt-5 pb-4 rounded-2xl border border-border bg-card hover:border-primary/30 hover:shadow-md hover:bg-muted/30 transition-all duration-200 text-center min-w-0"
+      className="group relative overflow-hidden flex flex-col items-center gap-3 p-4 pt-5 pb-4 rounded-2xl border border-border bg-card hover:border-primary/30 hover:shadow-md transition-all duration-200 text-center min-w-0"
     >
-      <div className={`w-14 h-14 rounded-2xl flex items-center justify-center ${tile.iconBg} shadow-sm group-hover:scale-105 transition-transform duration-200 flex-shrink-0`}>
+      <div
+        aria-hidden="true"
+        className={`absolute inset-0 ${tile.iconBg} opacity-30 transition-opacity duration-200 group-hover:opacity-50 dark:opacity-10 dark:group-hover:opacity-20`}
+      />
+      <div className={`relative z-10 w-14 h-14 rounded-2xl flex items-center justify-center ${tile.iconBg} shadow-sm group-hover:scale-105 transition-transform duration-200 flex-shrink-0`}>
         <tile.icon size={26} className={tile.color} />
       </div>
-      <div className="w-full space-y-0.5">
+      <div className="relative z-10 w-full space-y-0.5">
         <p className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors leading-snug">{tile.title}</p>
         <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{tile.subtitle}</p>
       </div>
