@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useDisplaySettings } from '../context/DisplaySettingsContext';
 import { useNavigate, useLocation } from 'react-router';
-import { ArrowLeft, ChevronRight, Bell, BellDot, Sun, Moon, Monitor, Sparkles, LogOut, ChevronDown, CalendarOff, CheckSquare, Ticket, GitBranch, Info, HelpCircle, X } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Bell, BellDot, Sun, Moon, Monitor, Sparkles, LogOut, ChevronDown, CalendarOff, CheckSquare, Ticket, GitBranch, Info, HelpCircle, X, UserRound, CircleUserRound, Smile, Laugh, Baby, VenetianMask, Pencil } from 'lucide-react';
 import { useUnsavedChangesContext } from '../context/UnsavedChangesContext';
 import { useUser } from '../context/UserContext';
 import { useNotifications } from '../hooks/useNotificationsData';
@@ -9,6 +9,50 @@ import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useLocale } from '../../i18n/LocaleContext';
 import type { Locale } from '../../i18n';
 import { normalizeAppPath } from '../../constants/appRegistry';
+import { APP_VERSION } from '../../constants/global';
+import { Button } from './ui/button';
+
+type UserAvatarId = 'initials' | 'classic' | 'portrait' | 'smile' | 'joy' | 'young' | 'masked';
+
+const USER_AVATARS = [
+  { id: 'classic' as const, label: 'Classic face', icon: UserRound, className: 'bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300' },
+  { id: 'portrait' as const, label: 'Portrait face', icon: CircleUserRound, className: 'bg-violet-100 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300' },
+  { id: 'smile' as const, label: 'Smiling face', icon: Smile, className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' },
+  { id: 'joy' as const, label: 'Joyful face', icon: Laugh, className: 'bg-pink-100 text-pink-700 dark:bg-pink-950/50 dark:text-pink-300' },
+  { id: 'young' as const, label: 'Young face', icon: Baby, className: 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' },
+  { id: 'masked' as const, label: 'Masked face', icon: VenetianMask, className: 'bg-cyan-100 text-cyan-700 dark:bg-cyan-950/50 dark:text-cyan-300' },
+];
+
+const USER_AVATAR_IDS = new Set<UserAvatarId>(['initials', ...USER_AVATARS.map((avatar) => avatar.id)]);
+
+function UserAvatarDisplay({
+  avatarId,
+  initials,
+  size = 'md',
+}: {
+  avatarId: UserAvatarId;
+  initials: string;
+  size?: 'sm' | 'md' | 'lg';
+}) {
+  const sizeClass = size === 'lg' ? 'size-11' : size === 'sm' ? 'size-7' : 'size-9';
+  const iconSize = size === 'lg' ? 20 : size === 'sm' ? 14 : 16;
+  const avatar = USER_AVATARS.find((option) => option.id === avatarId);
+
+  if (!avatar) {
+    return (
+      <span className={`${sizeClass} rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0`}>
+        <span className={`${size === 'sm' ? 'text-[11px]' : 'text-sm'} font-bold text-primary leading-none`}>{initials}</span>
+      </span>
+    );
+  }
+
+  const AvatarIcon = avatar.icon;
+  return (
+    <span className={`${sizeClass} rounded-full ${avatar.className} border border-current/15 flex items-center justify-center shrink-0`}>
+      <AvatarIcon size={iconSize} aria-hidden="true" />
+    </span>
+  );
+}
 
 function JeshanLogo({ size = 28 }: { size?: number }) {
   const id = 'jl-header-grad';
@@ -206,30 +250,114 @@ function NotificationPanel({ onClose, navigate }: { onClose: () => void; navigat
   );
 }
 
-export function UserMenu({ currentUser, onLogout }: { currentUser: any; onLogout: () => void }) {
+export function UserMenu({
+  currentUser,
+  onLogout,
+  avatarId,
+  onAvatarChange,
+}: {
+  currentUser: any;
+  onLogout: () => void;
+  avatarId?: UserAvatarId;
+  onAvatarChange?: (avatarId: UserAvatarId) => void;
+}) {
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('jl-theme') as Theme) ?? 'light');
   const { locale, setLocale } = useLocale();
   const [langOpen, setLangOpen] = useState(false);
   const { fontScale, density, setFontScale, setDensity } = useDisplaySettings();
+  const menuAvatarStorageKey = `jl-user-avatar:${currentUser?.id ?? currentUser?.email ?? 'anonymous'}`;
+  const [menuAvatarId, setMenuAvatarId] = useState<UserAvatarId>('initials');
+  const [editingAvatar, setEditingAvatar] = useState(false);
 
   const handleTheme = (t: Theme) => { setTheme(t); applyTheme(t); };
   const currentLang = LANGUAGES.find(l => l.value === locale) ?? LANGUAGES[0];
   const initials = currentUser?.name ? currentUser.name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2) : 'U';
+  const selectedAvatarId = avatarId ?? menuAvatarId;
+
+  useEffect(() => {
+    if (avatarId) return;
+    const savedAvatar = localStorage.getItem(menuAvatarStorageKey) as UserAvatarId | null;
+    setMenuAvatarId(savedAvatar && USER_AVATAR_IDS.has(savedAvatar) ? savedAvatar : 'initials');
+  }, [avatarId, menuAvatarStorageKey]);
+
+  const selectAvatar = (nextAvatarId: UserAvatarId) => {
+    if (onAvatarChange) {
+      onAvatarChange(nextAvatarId);
+      setEditingAvatar(false);
+      return;
+    }
+    setMenuAvatarId(nextAvatarId);
+    localStorage.setItem(menuAvatarStorageKey, nextAvatarId);
+    window.dispatchEvent(new CustomEvent('jl-user-avatar-changed', {
+      detail: { storageKey: menuAvatarStorageKey, avatarId: nextAvatarId },
+    }));
+    setEditingAvatar(false);
+  };
 
   return (
-    <div className="py-1 w-64">
+    <div className="py-1 w-72">
       {/* User info */}
       <div className="px-4 py-3 border-b border-border">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
-            <span className="text-sm font-bold text-primary">{initials}</span>
-          </div>
+          <span className="relative shrink-0">
+            <UserAvatarDisplay avatarId={selectedAvatarId} initials={initials} />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => setEditingAvatar((editing) => !editing)}
+              className="absolute -right-1 -bottom-1 size-5 rounded-full border-card bg-primary text-primary-foreground shadow-sm hover:bg-primary/90"
+              aria-label={editingAvatar ? 'Close avatar picker' : 'Edit avatar'}
+              title={editingAvatar ? 'Close avatar picker' : 'Edit avatar'}
+            >
+              {editingAvatar ? <X className="size-2.5" /> : <Pencil className="size-2.5" />}
+            </Button>
+          </span>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-foreground truncate">{currentUser?.name ?? 'User'}</p>
             <p className="text-xs text-muted-foreground truncate">{currentUser?.email ?? ''}</p>
           </div>
         </div>
       </div>
+
+      {/* Avatar picker */}
+      {editingAvatar && (
+        <div className="px-4 pt-3 pb-2 border-b border-border">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Choose avatar</p>
+          <div className="grid grid-cols-7 gap-1.5">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => selectAvatar('initials')}
+              className={`size-8 rounded-full p-0.5 transition-all ${
+                selectedAvatarId === 'initials' ? 'ring-2 ring-primary ring-offset-2 ring-offset-card' : 'hover:scale-105'
+              }`}
+              aria-label="Use name initials"
+              title="Name initials"
+            >
+              <UserAvatarDisplay avatarId="initials" initials={initials} size="sm" />
+            </Button>
+            {USER_AVATARS.map((avatar) => (
+              <Button
+                key={avatar.id}
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => selectAvatar(avatar.id)}
+                className={`size-8 rounded-full p-0.5 transition-all ${
+                  selectedAvatarId === avatar.id ? 'ring-2 ring-primary ring-offset-2 ring-offset-card' : 'hover:scale-105'
+                }`}
+                aria-label={`Use ${avatar.label} avatar`}
+                title={avatar.label}
+              >
+                <UserAvatarDisplay avatarId={avatar.id} initials={initials} size="sm" />
+              </Button>
+            ))}
+          </div>
+          <p className="mt-2 text-[10px] text-muted-foreground">Select initials or a face avatar.</p>
+        </div>
+      )}
 
       {/* Theme */}
       <div className="px-4 pt-3 pb-2">
@@ -314,8 +442,14 @@ export function UserMenu({ currentUser, onLogout }: { currentUser: any; onLogout
         </div>
       </div>
 
+      {/* Version */}
+      <div className="border-t border-border px-4 py-2 flex items-center justify-between text-[10px] text-muted-foreground">
+        <span>App version</span>
+        <span className="font-mono font-medium text-foreground">{APP_VERSION}</span>
+      </div>
+
       {/* Logout */}
-      <div className="border-t border-border mt-1 pt-1">
+      <div className="border-t border-border pt-1">
         <button
           onClick={onLogout}
           className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
@@ -345,6 +479,7 @@ export function AppHeader({ onLogout }: AppHeaderProps) {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [search, setSearch] = useState('');
+  const [userAvatarId, setUserAvatarId] = useState<UserAvatarId>('initials');
 
   const userMenuRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
@@ -353,6 +488,7 @@ export function AppHeader({ onLogout }: AppHeaderProps) {
   const normalizedPathname = normalizeAppPath(location.pathname);
   const isHome = normalizedPathname === '/';
   const pageLabel = ROUTE_LABELS[normalizedPathname] ?? '';
+  const avatarStorageKey = `jl-user-avatar:${currentUser?.id ?? currentUser?.email ?? 'anonymous'}`;
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -368,6 +504,27 @@ export function AppHeader({ onLogout }: AppHeaderProps) {
     const saved = (localStorage.getItem('jl-theme') as Theme) ?? 'light';
     applyTheme(saved);
   }, []);
+
+  useEffect(() => {
+    const savedAvatar = localStorage.getItem(avatarStorageKey) as UserAvatarId | null;
+    setUserAvatarId(savedAvatar && USER_AVATAR_IDS.has(savedAvatar) ? savedAvatar : 'initials');
+    const handleStoredAvatarChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ storageKey: string; avatarId: UserAvatarId }>).detail;
+      if (detail?.storageKey === avatarStorageKey && USER_AVATAR_IDS.has(detail.avatarId)) {
+        setUserAvatarId(detail.avatarId);
+      }
+    };
+    window.addEventListener('jl-user-avatar-changed', handleStoredAvatarChange);
+    return () => window.removeEventListener('jl-user-avatar-changed', handleStoredAvatarChange);
+  }, [avatarStorageKey]);
+
+  const handleAvatarChange = (avatarId: UserAvatarId) => {
+    setUserAvatarId(avatarId);
+    localStorage.setItem(avatarStorageKey, avatarId);
+    window.dispatchEvent(new CustomEvent('jl-user-avatar-changed', {
+      detail: { storageKey: avatarStorageKey, avatarId },
+    }));
+  };
 
   const guardedAction = useCallback((action: () => void) => {
     if (hasUnsaved()) {
@@ -489,9 +646,7 @@ export function AppHeader({ onLogout }: AppHeaderProps) {
               className="flex items-center gap-1.5 px-1.5 py-1 rounded-lg hover:bg-muted transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               aria-label="User settings"
             >
-              <div className="w-7 h-7 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
-                <span className="text-[11px] font-bold text-primary leading-none">{initials}</span>
-              </div>
+              <UserAvatarDisplay avatarId={userAvatarId} initials={initials} size="sm" />
               <span className="text-xs font-medium text-foreground hidden md:block max-w-[90px] truncate">
                 {currentUser?.name?.split(' ')[0] ?? 'User'}
               </span>
@@ -500,7 +655,12 @@ export function AppHeader({ onLogout }: AppHeaderProps) {
 
             {userMenuOpen && (
               <div className="absolute right-0 top-[calc(100%+4px)] z-[100] bg-card border border-border rounded-xl shadow-2xl">
-                <UserMenu currentUser={currentUser} onLogout={onLogout} />
+                <UserMenu
+                  currentUser={currentUser}
+                  onLogout={onLogout}
+                  avatarId={userAvatarId}
+                  onAvatarChange={handleAvatarChange}
+                />
               </div>
             )}
           </div>

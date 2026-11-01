@@ -14,7 +14,7 @@ import {
   ChevronDown, ChevronUp, Plus, X, Filter, Search, Eye, Edit2, Trash2,
   ExternalLink, RefreshCw, Download, AlertCircle, CheckSquare,
   Square, MoreHorizontal, Link2, MessageSquare, Activity, User, Users,
-  Calendar, Tag, ArrowRight, Pause, Flag, Shield, AtSign, HelpCircle,
+  Calendar, Tag, ArrowRight, Pause, Flag, Shield, AtSign, HelpCircle, Columns3,
 } from "lucide-react";
 import {
   useDefectTrackerData, Defect, DefectFilters, SEVERITY_CONFIG, STATUS_CONFIG,
@@ -38,6 +38,7 @@ import { ATTACHMENT_CONFIG, ATTACHMENT_ENTITY_TYPES } from "../../../constants/a
 import { uploadEntityAttachments } from "../../services/attachments";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { Checkbox } from "../ui/checkbox";
 
 // ── Utility functions ─────────────────────────────────────────────────────────
 
@@ -1094,6 +1095,67 @@ type DefectSortBy =
 
 type SortDirection = "asc" | "desc";
 
+type DefectColumnKey =
+  | "id"
+  | "severity"
+  | "title"
+  | "project"
+  | "status"
+  | "assignee"
+  | "reporter"
+  | "foundIn"
+  | "sla"
+  | "age"
+  | "priority"
+  | "environment"
+  | "sprint"
+  | "client"
+  | "system"
+  | "transportRequest"
+  | "externalTicket"
+  | "labels"
+  | "buildVersion"
+  | "updated"
+  | "regression";
+
+const DEFECT_TABLE_COLUMNS: { key: DefectColumnKey; label: string; header: string }[] = [
+  { key: "id", label: "Defect ID", header: "ID" },
+  { key: "severity", label: "Severity", header: "Sev" },
+  { key: "title", label: "Title", header: "Title" },
+  { key: "project", label: "Project", header: "Project" },
+  { key: "status", label: "Status", header: "Status" },
+  { key: "assignee", label: "Assignee", header: "Assignee" },
+  { key: "reporter", label: "Reporter", header: "Reporter" },
+  { key: "foundIn", label: "Found In", header: "Found In" },
+  { key: "sla", label: "SLA", header: "SLA" },
+  { key: "age", label: "Age", header: "Age" },
+  { key: "priority", label: "Priority", header: "Priority" },
+  { key: "environment", label: "Environment", header: "Environment" },
+  { key: "sprint", label: "Sprint", header: "Sprint" },
+  { key: "client", label: "Client", header: "Client" },
+  { key: "system", label: "System", header: "System" },
+  { key: "transportRequest", label: "Transport Request", header: "TR" },
+  { key: "externalTicket", label: "External Ticket", header: "External Ticket" },
+  { key: "labels", label: "Labels", header: "Labels" },
+  { key: "buildVersion", label: "Build Version", header: "Build" },
+  { key: "updated", label: "Last Updated", header: "Updated" },
+  { key: "regression", label: "Regression", header: "Regression" },
+];
+
+const ALL_DEFECT_COLUMNS = DEFECT_TABLE_COLUMNS.map((column) => column.key);
+const DEFAULT_DEFECT_COLUMNS: DefectColumnKey[] = [
+  "id",
+  "severity",
+  "title",
+  "project",
+  "status",
+  "assignee",
+  "reporter",
+  "foundIn",
+  "sla",
+  "age",
+];
+
 interface DefectListSettings {
   statusFilter?: string[];
   severityFilter?: string[];
@@ -1112,6 +1174,7 @@ interface DefectListSettings {
   sortDirection?: SortDirection;
   groupBy?: "none" | "project" | "severity" | "status";
   view?: ViewMode;
+  visibleColumns?: DefectColumnKey[];
   isDefault?: boolean;
 }
 
@@ -1183,10 +1246,12 @@ function AllDefectsScreen({
   const [defaultFilterId, setDefaultFilterId] = useState<string | null>(null);
   const [savingDefault, setSavingDefault] = useState(false);
   const [showSavedFilterDropdown, setShowSavedFilterDropdown] = useState(false);
+  const [openControlMenu, setOpenControlMenu] = useState<"severity" | "status" | "columns" | null>(null);
   const [sortBy, setSortBy] = useState<DefectSortBy>("recommended");
   const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
   const [groupBy, setGroupBy] = useState<"none" | "project" | "severity" | "status">("none");
   const [view, setView] = useState<ViewMode>("table");
+  const [visibleColumns, setVisibleColumns] = useState<DefectColumnKey[]>(DEFAULT_DEFECT_COLUMNS);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(0);
   const [showLogModal, setShowLogModal] = useState(false);
@@ -1224,6 +1289,23 @@ function AllDefectsScreen({
     loadDefects,
     loadMasterData,
   ]);
+
+  useEffect(() => {
+    if (!openControlMenu) return;
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      const target = event.target as Element;
+      if (!target.closest("[data-defect-control-menu]")) setOpenControlMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpenControlMenu(null);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [openControlMenu]);
 
   const toggleSeverity = (s: string) => {
     setSeverityFilter((prev) => prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]);
@@ -1406,6 +1488,8 @@ function AllDefectsScreen({
     ...(envFilter ? [{ label: `Env: ${envFilter}`, clear: () => setEnvFilter("") }] : []),
     ...(slaStatusFilter ? [{ label: `SLA: ${slaStatusFilter}`, clear: () => setSlaStatusFilter("") }] : []),
     ...(regressionFilter !== "all" ? [{ label: `Regression: ${regressionFilter}`, clear: () => setRegressionFilter("all") }] : []),
+    ...(dateFrom ? [{ label: `From: ${dateFrom}`, clear: () => setDateFrom("") }] : []),
+    ...(dateTo ? [{ label: `To: ${dateTo}`, clear: () => setDateTo("") }] : []),
     ...(priorityFilter ? [{ label: `Priority: ${priorityLabel(priorityFilter)}`, clear: () => setPriorityFilter("") }] : []),
     ...(reporterFilter ? [{ label: `Reporter: ${reporterFilter}`, clear: () => setReporterFilter("") }] : []),
     ...(sprintFilter ? [{ label: `Sprint: ${sprintFilter}`, clear: () => setSprintFilter("") }] : []),
@@ -1439,6 +1523,7 @@ function AllDefectsScreen({
     sortDirection,
     groupBy,
     view,
+    visibleColumns,
   });
 
   const applyListSettings = (settings: DefectListSettings, preserveInitialFilters = false) => {
@@ -1464,8 +1549,28 @@ function AllDefectsScreen({
     if (settings.sortDirection) setSortDirection(settings.sortDirection);
     if (settings.groupBy) setGroupBy(settings.groupBy);
     if (settings.view) setView(settings.view);
+    if (settings.visibleColumns) {
+      const validColumns = settings.visibleColumns.filter((column) =>
+        ALL_DEFECT_COLUMNS.includes(column)
+      );
+      if (validColumns.length > 0) setVisibleColumns(validColumns);
+    }
     setPage(0);
   };
+
+  const toggleColumn = (column: DefectColumnKey) => {
+    setVisibleColumns((current) => {
+      if (current.includes(column)) {
+        return current.length === 1 ? current : current.filter((key) => key !== column);
+      }
+      return ALL_DEFECT_COLUMNS.filter((key) => key === column || current.includes(key));
+    });
+  };
+
+  const isColumnVisible = (column: DefectColumnKey) => visibleColumns.includes(column);
+  const hasDefaultColumns =
+    visibleColumns.length === DEFAULT_DEFECT_COLUMNS.length
+    && DEFAULT_DEFECT_COLUMNS.every((column) => visibleColumns.includes(column));
 
   const applySavedFilter = (sf: SavedDefectFilter) => {
     applyListSettings(sf.filters);
@@ -1559,7 +1664,7 @@ function AllDefectsScreen({
     }
     setDefaultFilterId(data.id);
     toast.success("Default defect view saved", {
-      description: "Your filters, sorting, grouping, and view will be restored automatically.",
+      description: "Your filters, sorting, grouping, columns, and view will be restored automatically.",
     });
   };
 
@@ -1597,106 +1702,163 @@ function AllDefectsScreen({
         className={`${rowBg} border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors`}
       >
         <td className="pl-4 pr-4 py-3" onClick={(e) => e.stopPropagation()}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => toggleSelect(d.id)}
-                className="text-gray-400 hover:text-red-600"
-                aria-label={`${selectedIds.has(d.id) ? "Deselect" : "Select"} ${d.defectId}`}
-              >
-                {selectedIds.has(d.id) ? <CheckSquare className="h-4 w-4 text-red-600" /> : <Square className="h-4 w-4" />}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              {selectedIds.has(d.id) ? "Deselect defect" : "Select defect"}
-            </TooltipContent>
-          </Tooltip>
+          <button
+            onClick={() => toggleSelect(d.id)}
+            className="text-gray-400 hover:text-red-600"
+            aria-label={`${selectedIds.has(d.id) ? "Deselect" : "Select"} ${d.defectId}`}
+          >
+            {selectedIds.has(d.id) ? <CheckSquare className="h-4 w-4 text-red-600" /> : <Square className="h-4 w-4" />}
+          </button>
         </td>
-        <td className="py-3 pr-3 font-mono text-xs font-bold text-gray-700">
-          <TableCellTooltip content={`${d.defectId}${d.isRegression ? " · Regression" : ""}`}>
+        {isColumnVisible("id") && (
+          <td className="py-3 pr-3 font-mono text-xs font-bold text-gray-700">
             {d.isRegression && (
               <span className="inline-block mr-1 w-4 h-4 bg-orange-500 text-white text-[9px] font-bold rounded text-center leading-4">R</span>
             )}
             {d.defectId}
-          </TableCellTooltip>
-        </td>
-        <td className="py-3 pr-3">
-          <TableCellTooltip content={`Severity: ${d.severity}`}>
+          </td>
+        )}
+        {isColumnVisible("severity") && (
+          <td className="py-3 pr-3">
             <SeverityBadge severity={d.severity} />
-          </TableCellTooltip>
-        </td>
-        <td className="py-3 pr-4 max-w-[280px]">
-          <TableCellTooltip content={d.title} className="w-full">
-            <span className="text-sm text-gray-800 font-medium line-clamp-1">{d.title}</span>
-          </TableCellTooltip>
-        </td>
-        <td className="py-3 pr-3 text-xs text-gray-500">
-          <TableCellTooltip content={d.projectName || "No project"}>
-            <span className="max-w-[120px] truncate">{d.projectName || "—"}</span>
-          </TableCellTooltip>
-        </td>
-        <td className="py-3 pr-3">
-          <TableCellTooltip content={`Status: ${d.status}`}>
+          </td>
+        )}
+        {isColumnVisible("title") && (
+          <td className="py-3 pr-4 max-w-[280px]">
+            <TableCellTooltip content={d.title} className="w-full">
+              <span className="text-sm text-gray-800 font-medium line-clamp-1">{d.title}</span>
+            </TableCellTooltip>
+          </td>
+        )}
+        {isColumnVisible("project") && (
+          <td className="py-3 pr-3 text-xs text-gray-500">
+            <TableCellTooltip content={d.projectName || "No project"}>
+              <span className="max-w-[120px] truncate">{d.projectName || "—"}</span>
+            </TableCellTooltip>
+          </td>
+        )}
+        {isColumnVisible("status") && (
+          <td className="py-3 pr-3">
             <StatusBadge status={d.status} />
-          </TableCellTooltip>
-        </td>
-        <td className="py-3 pr-3">
-          <TableCellTooltip content={d.assigneeName || "Unassigned"} className="items-center">
+          </td>
+        )}
+        {isColumnVisible("assignee") && (
+          <td className="py-3 pr-3">
             {d.assigneeName ? (
               <span className="flex items-center gap-1.5">
                 <Avatar name={d.assigneeName} size="sm" />
                 <span className="text-xs text-gray-600 max-w-[80px] truncate">{d.assigneeName}</span>
               </span>
             ) : <span className="text-xs text-gray-300">Unassigned</span>}
-          </TableCellTooltip>
-        </td>
-        <td className="py-3 pr-3 text-xs text-gray-500">
-          <TableCellTooltip content={d.reporterName || "No reporter"}>
+          </td>
+        )}
+        {isColumnVisible("reporter") && (
+          <td className="py-3 pr-3 text-xs text-gray-500">
             <span className="max-w-[100px] truncate">{d.reporterName || "—"}</span>
-          </TableCellTooltip>
-        </td>
-        <td className="py-3 pr-3 text-xs text-gray-400 font-mono">
-          <TableCellTooltip content={d.foundInVersion ? `Found in version ${d.foundInVersion}` : "Found-in version not provided"}>
+          </td>
+        )}
+        {isColumnVisible("foundIn") && (
+          <td className="py-3 pr-3 text-xs text-gray-400 font-mono">
             <span className="max-w-[90px] truncate">{d.foundInVersion || "—"}</span>
-          </TableCellTooltip>
-        </td>
-        <td className="py-3 pr-3">
-          <TableCellTooltip content={`SLA: ${SLA_STATUS_CONFIG[d.slaStatus as keyof typeof SLA_STATUS_CONFIG]?.label ?? d.slaStatus}`}>
+          </td>
+        )}
+        {isColumnVisible("sla") && (
+          <td className="py-3 pr-3">
             <SLADot slaStatus={d.slaStatus} />
-          </TableCellTooltip>
-        </td>
-        <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">
-          <TableCellTooltip content={`Created ${new Date(d.createdAt).toLocaleString()}`}>
+          </td>
+        )}
+        {isColumnVisible("age") && (
+          <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">
             {formatDefectAge(d.createdAt)}
-          </TableCellTooltip>
-        </td>
+          </td>
+        )}
+        {isColumnVisible("priority") && (
+          <td className="py-3 pr-3">
+            <Badge variant="secondary" className="whitespace-nowrap text-[10px] font-semibold">
+              {priorityLabel(d.priority)}
+            </Badge>
+          </td>
+        )}
+        {isColumnVisible("environment") && (
+          <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">
+            {d.environment || "—"}
+          </td>
+        )}
+        {isColumnVisible("sprint") && (
+          <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">
+            {d.sprintName || "—"}
+          </td>
+        )}
+        {isColumnVisible("client") && (
+          <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">
+            {d.clientName || "—"}
+          </td>
+        )}
+        {isColumnVisible("system") && (
+          <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">
+            {d.systemName || "—"}
+          </td>
+        )}
+        {isColumnVisible("transportRequest") && (
+          <td className="py-3 pr-3 font-mono text-xs text-gray-500 whitespace-nowrap">
+            {d.transportRequest || "—"}
+          </td>
+        )}
+        {isColumnVisible("externalTicket") && (
+          <td className="py-3 pr-3 font-mono text-xs text-gray-500 whitespace-nowrap">
+            {d.externalTicketNo || "—"}
+          </td>
+        )}
+        {isColumnVisible("labels") && (
+          <td className="py-3 pr-3">
+            {d.labels?.length ? (
+              <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                <Badge variant="outline" className="max-w-28 truncate text-[10px] font-medium">
+                  {d.labels[0]}
+                </Badge>
+                {d.labels.length > 1 && (
+                  <span className="text-[10px] text-gray-400">+{d.labels.length - 1}</span>
+                )}
+              </span>
+            ) : <span className="text-xs text-gray-300">—</span>}
+          </td>
+        )}
+        {isColumnVisible("buildVersion") && (
+          <td className="py-3 pr-3 font-mono text-xs text-gray-500 whitespace-nowrap">
+            {d.buildVersion || "—"}
+          </td>
+        )}
+        {isColumnVisible("updated") && (
+          <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">
+            {d.updatedAt ? shortDate(d.updatedAt) : "—"}
+          </td>
+        )}
+        {isColumnVisible("regression") && (
+          <td className="py-3 pr-3 text-xs whitespace-nowrap">
+            {d.isRegression ? (
+              <Badge variant="secondary" className="bg-orange-100 text-[10px] font-semibold text-orange-700">
+                Yes
+              </Badge>
+            ) : <span className="text-gray-400">No</span>}
+          </td>
+        )}
         <td className="py-3 pr-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={() => onNavigateDetail(d.id)}
-                  className="p-1 text-gray-400 hover:text-blue-600 rounded"
-                  aria-label={`View ${d.defectId}`}
-                >
-                  <Eye className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="top">View defect</TooltipContent>
-            </Tooltip>
+            <button
+              onClick={() => onNavigateDetail(d.id)}
+              className="p-1 text-gray-400 hover:text-blue-600 rounded"
+              aria-label={`View ${d.defectId}`}
+            >
+              <Eye className="h-3.5 w-3.5" />
+            </button>
             {canDelete && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={(e) => handleDelete(d.id, e)}
-                    className="p-1 text-gray-400 hover:text-red-600 rounded"
-                    aria-label={`Delete ${d.defectId}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="top">Delete defect</TooltipContent>
-              </Tooltip>
+              <button
+                onClick={(e) => handleDelete(d.id, e)}
+                className="p-1 text-gray-400 hover:text-red-600 rounded"
+                aria-label={`Delete ${d.defectId}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
             )}
           </div>
         </td>
@@ -1724,64 +1886,140 @@ function AllDefectsScreen({
 
       {/* Filter Bar */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="relative flex-1 min-w-[200px]">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+          <div className="relative flex-1 min-w-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <input
+            <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by title or ID..."
-              className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-200"
+              placeholder="Search by title or defect ID..."
+              className="h-10 pl-9 border-gray-200 focus-visible:ring-red-200"
             />
           </div>
-          <div className="flex gap-1.5">
-            {DEFECT_SEVERITIES.map((s) => (
-              <button
-                key={s}
-                onClick={() => toggleSeverity(s)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold border-2 transition-all ${
-                  severityFilter.includes(s)
-                    ? `${SEVERITY_CONFIG[s].color} border-transparent`
-                    : "border-gray-200 text-gray-500 hover:border-gray-300"
-                }`}
-              >
-                {s}
-              </button>
-            ))}
+
+          <div className="relative w-full lg:w-auto" data-defect-control-menu>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpenControlMenu((current) => current === "severity" ? null : "severity")}
+              aria-expanded={openControlMenu === "severity"}
+              className="h-10 w-full justify-between lg:min-w-36"
+            >
+              <span className="flex items-center gap-2">
+                <Flag className="h-4 w-4 text-gray-400" />
+                Severity
+              </span>
+              {severityFilter.length > 0 ? (
+                <Badge variant="secondary" className="min-w-5 justify-center px-1.5">
+                  {severityFilter.length}
+                </Badge>
+              ) : (
+                <ChevronDown className={`h-3.5 w-3.5 text-gray-400 transition-transform ${openControlMenu === "severity" ? "rotate-180" : ""}`} />
+              )}
+            </Button>
+            {openControlMenu === "severity" && (
+              <div className="absolute right-0 top-full z-[60] mt-1 w-full min-w-52 rounded-lg border border-gray-200 bg-white p-1 shadow-xl lg:w-52">
+                <p className="px-2 py-1.5 text-xs font-semibold text-gray-700">Filter by severity</p>
+                <div className="border-t border-gray-100 py-1">
+                  {DEFECT_SEVERITIES.map((severity) => (
+                    <label key={severity} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                      <Checkbox
+                        checked={severityFilter.includes(severity)}
+                        onCheckedChange={() => toggleSeverity(severity)}
+                      />
+                      <span className={`size-2 rounded-full ${SEVERITY_CONFIG[severity].dotColor}`} />
+                      {severity}
+                    </label>
+                  ))}
+                </div>
+                <div className="border-t border-gray-100 pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={severityFilter.length === 0}
+                    onClick={() => setSeverityFilter([])}
+                    className="w-full justify-start text-xs text-gray-500"
+                  >
+                    Clear severity
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="flex gap-1.5 flex-wrap">
-            {(masterData?.statuses?.length
-              ? masterData.statuses.filter((s: any) => !s.is_terminal).map((s: any) => s.name)
-              : (Object.keys(STATUS_CONFIG) as DefectStatus[]).filter(s => !['Closed', "Won't Fix", 'Duplicate'].includes(s))
-            ).map((s: string) => {
-              const cfg = STATUS_CONFIG[s as DefectStatus] ?? { bg: "bg-gray-100", color: "text-gray-600" };
-              return (
-                <button
-                  key={s}
-                  onClick={() => toggleStatus(s as DefectStatus)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
-                    statusFilter.includes(s as DefectStatus)
-                      ? `${cfg.bg} ${cfg.color} border-transparent`
-                      : "border-gray-200 text-gray-500 hover:border-gray-300"
-                  }`}
-                >
-                  {s}
-                </button>
-              );
-            })}
+
+          <div className="relative w-full lg:w-auto" data-defect-control-menu>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setOpenControlMenu((current) => current === "status" ? null : "status")}
+              aria-expanded={openControlMenu === "status"}
+              className="h-10 w-full justify-between lg:min-w-36"
+            >
+              <span className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-gray-400" />
+                Status
+              </span>
+              {statusFilter.length > 0 ? (
+                <Badge variant="secondary" className="min-w-5 justify-center px-1.5">
+                  {statusFilter.length}
+                </Badge>
+              ) : (
+                <ChevronDown className={`h-3.5 w-3.5 text-gray-400 transition-transform ${openControlMenu === "status" ? "rotate-180" : ""}`} />
+              )}
+            </Button>
+            {openControlMenu === "status" && (
+              <div className="absolute right-0 top-full z-[60] mt-1 max-h-72 w-full min-w-56 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 shadow-xl lg:w-56">
+                <p className="px-2 py-1.5 text-xs font-semibold text-gray-700">Filter by status</p>
+                <div className="border-t border-gray-100 py-1">
+                  {(masterData?.statuses?.length
+                    ? masterData.statuses.filter((status: any) => !status.is_terminal).map((status: any) => status.name)
+                    : (Object.keys(STATUS_CONFIG) as DefectStatus[]).filter((status) => !["Closed", "Won't Fix", "Duplicate"].includes(status))
+                  ).map((status: string) => (
+                    <label key={status} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                      <Checkbox
+                        checked={statusFilter.includes(status)}
+                        onCheckedChange={() => toggleStatus(status)}
+                      />
+                      {status}
+                    </label>
+                  ))}
+                </div>
+                <div className="border-t border-gray-100 pt-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={statusFilter.length === 0}
+                    onClick={() => setStatusFilter([])}
+                    className="w-full justify-start text-xs text-gray-500"
+                  >
+                    Clear status
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
-          <button
+
+          <Button
+            type="button"
+            variant={moreFiltersOpen ? "secondary" : "outline"}
             onClick={() => setMoreFiltersOpen(!moreFiltersOpen)}
-            className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+            className="h-10 w-full justify-between lg:w-auto lg:justify-center"
           >
-            <Filter className="h-3.5 w-3.5" />
-            More Filters
+            <Filter className="h-4 w-4" />
+            More filters
+            {activeFilters.length > 0 && (
+              <Badge variant="secondary" className="ml-1 min-w-5 justify-center px-1.5">
+                {activeFilters.length}
+              </Badge>
+            )}
             {moreFiltersOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-          </button>
+          </Button>
         </div>
 
         {moreFiltersOpen && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-gray-100">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 rounded-lg border border-gray-100 bg-gray-50/70 p-4">
             <div>
               <label className="block text-xs font-semibold text-gray-500 mb-1">{t("defectTracker.environment")}</label>
               <select value={envFilter} onChange={(e) => setEnvFilter(e.target.value)} className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none">
@@ -1879,128 +2117,220 @@ function AllDefectsScreen({
         )}
 
         {activeFilters.length > 0 && (
-          <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-gray-100">
+          <div className="flex items-center gap-2 flex-wrap rounded-lg bg-gray-50 px-3 py-2">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mr-1">Applied</span>
             {activeFilters.map((f) => (
               <span key={f.label} className="flex items-center gap-1 bg-red-50 text-red-700 text-xs rounded-full px-2.5 py-1 font-medium">
                 {f.label}
                 <button onClick={f.clear} className="hover:text-red-900"><X className="h-3 w-3" /></button>
               </span>
             ))}
-            <button onClick={clearAll} className="text-xs text-gray-500 underline hover:text-gray-700">Clear All</button>
+            <Button type="button" variant="ghost" size="sm" onClick={clearAll} className="ml-auto h-7 text-xs text-gray-500">
+              Clear all
+            </Button>
           </div>
         )}
       </div>
 
       {/* Toolbar */}
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-        <span className="text-sm text-gray-600 font-medium">{filtered.length} defects</span>
-        <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-500">Sort:</span>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as DefectSortBy)}
-              className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none"
-            >
-              <option value="recommended">Recommended</option>
-              <option value="severity">Severity</option>
-              <option value="priority">Priority</option>
-              <option value="sla">SLA urgency</option>
-              <option value="created">Created date</option>
-              <option value="updated">Last updated</option>
-              <option value="status">Status</option>
-              <option value="title">Title</option>
-              <option value="project">Project</option>
-              <option value="assignee">Assignee</option>
-            </select>
-            {sortBy !== "recommended" && (
-              <select
-                value={sortDirection}
-                onChange={(e) => setSortDirection(e.target.value as SortDirection)}
-                aria-label="Sort direction"
-                className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none"
-              >
-                <option value="asc">{SORT_DIRECTION_LABELS[sortBy][0]}</option>
-                <option value="desc">{SORT_DIRECTION_LABELS[sortBy][1]}</option>
-              </select>
+      <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-gray-800">{filtered.length} defects</span>
+            {activeFilters.length > 0 && (
+              <Badge variant="outline" className="text-[10px] font-medium text-gray-500">
+                {activeFilters.length} filter{activeFilters.length === 1 ? "" : "s"}
+              </Badge>
             )}
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-500">Group:</span>
-            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as any)} className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none">
-              <option value="none">None</option>
-              <option value="project">Project</option>
-              <option value="severity">Severity</option>
-              <option value="status">Status</option>
-            </select>
-          </div>
-          {/* Saved Filters */}
-          <div className="relative">
-            <button
-              onClick={() => { setShowSavedFilterDropdown(!showSavedFilterDropdown); setShowSaveFilter(false); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50"
-            >
-              <Filter className="h-3.5 w-3.5" /> Saved Views
-              <ChevronDown className="h-3 w-3" />
-            </button>
-            {showSavedFilterDropdown && (
-              <div className="absolute top-full right-0 mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
-                {savedFilters.map((sf) => (
-                  <button
-                    key={sf.id}
-                    onClick={() => applySavedFilter(sf)}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 text-gray-700"
-                  >
-                    {sf.name}
-                  </button>
-                ))}
-                <div className="border-t border-gray-100 mt-1 pt-1">
-                  <button
-                    onClick={() => { setShowSaveFilter(true); setShowSavedFilterDropdown(false); }}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 text-red-600 font-medium"
-                  >
-                    + Save Current View
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 px-2.5 text-xs text-gray-600"
-            onClick={() => void saveAsDefault()}
-            disabled={!user?.id || savingDefault}
-          >
-            <Settings className="h-3.5 w-3.5" />
-            {savingDefault ? "Saving..." : defaultFilterId ? "Update default" : "Save as default"}
-          </Button>
-          {showSaveFilter && (
-            <div className="flex items-center gap-2 bg-yellow-50 border border-yellow-200 rounded-lg px-3 py-1.5">
-              <input
-                value={savedFilterName}
-                onChange={(e) => setSavedFilterName(e.target.value)}
-                placeholder="View name..."
-                className="border border-gray-200 rounded px-2 py-1 text-xs focus:outline-none w-32"
-                autoFocus
-                onKeyDown={(e) => { if (e.key === "Enter") void saveCurrentFilter(); if (e.key === "Escape") setShowSaveFilter(false); }}
-              />
-              <button onClick={() => void saveCurrentFilter()} className="text-xs bg-red-600 text-white px-2 py-1 rounded font-medium">Save</button>
-              <button onClick={() => setShowSaveFilter(false)} className="text-xs text-gray-500 hover:text-gray-700"><X className="h-3 w-3" /></button>
+
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-lg overflow-hidden border border-gray-200 bg-gray-50 p-0.5">
+              <button onClick={() => setView("table")} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "table" ? "bg-white text-red-600 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>Table</button>
+              <button onClick={() => setView("kanban")} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "kanban" ? "bg-white text-red-600 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>Kanban</button>
+              <button onClick={() => setView("timeline")} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${view === "timeline" ? "bg-white text-red-600 shadow-sm" : "text-gray-500 hover:text-gray-700"}`}>Timeline</button>
             </div>
-          )}
-          <div className="flex rounded-lg overflow-hidden border border-gray-200">
-            <button onClick={() => setView("table")} className={`px-3 py-1.5 text-xs font-medium ${view === "table" ? "bg-red-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>Table</button>
-            <button onClick={() => setView("kanban")} className={`px-3 py-1.5 text-xs font-medium ${view === "kanban" ? "bg-red-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>Kanban</button>
-            <button onClick={() => setView("timeline")} className={`px-3 py-1.5 text-xs font-medium ${view === "timeline" ? "bg-red-600 text-white" : "bg-white text-gray-600 hover:bg-gray-50"}`}>Timeline</button>
+            {canExport && (
+              <Button type="button" variant="outline" size="sm" onClick={() => exportCSV()} className="h-8">
+                <Download className="h-3.5 w-3.5" /> Export
+              </Button>
+            )}
           </div>
-          {canExport && (
-            <button onClick={() => exportCSV()} className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-200 rounded-lg text-xs text-gray-600 hover:bg-gray-50">
-              <Download className="h-3.5 w-3.5" /> Export
-            </button>
-          )}
         </div>
+
+        <div className="grid gap-3 border-t border-gray-100 px-4 py-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <span className="w-16 shrink-0 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Organize</span>
+            <div className="flex flex-1 flex-wrap items-center gap-2">
+              <div className="flex min-w-0 items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1">
+                <span className="text-[11px] font-medium text-gray-400">Sort</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as DefectSortBy)}
+                  className="min-w-0 border-0 bg-transparent py-1 text-xs font-medium text-gray-700 focus:outline-none"
+                >
+                  <option value="recommended">Recommended</option>
+                  <option value="severity">Severity</option>
+                  <option value="priority">Priority</option>
+                  <option value="sla">SLA urgency</option>
+                  <option value="created">Created date</option>
+                  <option value="updated">Last updated</option>
+                  <option value="status">Status</option>
+                  <option value="title">Title</option>
+                  <option value="project">Project</option>
+                  <option value="assignee">Assignee</option>
+                </select>
+              </div>
+              {sortBy !== "recommended" && (
+                <select
+                  value={sortDirection}
+                  onChange={(e) => setSortDirection(e.target.value as SortDirection)}
+                  aria-label="Sort direction"
+                  className="h-8 max-w-48 rounded-lg border border-gray-200 bg-gray-50 px-2 text-xs font-medium text-gray-700 focus:outline-none"
+                >
+                  <option value="asc">{SORT_DIRECTION_LABELS[sortBy][0]}</option>
+                  <option value="desc">{SORT_DIRECTION_LABELS[sortBy][1]}</option>
+                </select>
+              )}
+              <div className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1">
+                <span className="text-[11px] font-medium text-gray-400">Group</span>
+                <select
+                  value={groupBy}
+                  onChange={(e) => setGroupBy(e.target.value as any)}
+                  className="border-0 bg-transparent py-1 text-xs font-medium text-gray-700 focus:outline-none"
+                >
+                  <option value="none">None</option>
+                  <option value="project">Project</option>
+                  <option value="severity">Severity</option>
+                  <option value="status">Status</option>
+                </select>
+              </div>
+              {view === "table" && (
+                <div className="relative" data-defect-control-menu>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setOpenControlMenu((current) => current === "columns" ? null : "columns")}
+                    aria-expanded={openControlMenu === "columns"}
+                    className="h-8 px-2.5 text-xs text-gray-600"
+                  >
+                    <Columns3 className="h-3.5 w-3.5" />
+                    Columns ({visibleColumns.length})
+                    <ChevronDown className={`h-3 w-3 transition-transform ${openControlMenu === "columns" ? "rotate-180" : ""}`} />
+                  </Button>
+                  {openControlMenu === "columns" && (
+                    <div className="absolute left-0 top-full z-[60] mt-1 w-52 rounded-lg border border-gray-200 bg-white p-1 shadow-xl">
+                      <p className="px-2 py-1.5 text-xs font-semibold text-gray-700">Visible columns</p>
+                      <div className="max-h-72 overflow-y-auto border-y border-gray-100 py-1">
+                        {DEFECT_TABLE_COLUMNS.map((column, index) => {
+                          const isVisible = isColumnVisible(column.key);
+                          return (
+                            <React.Fragment key={column.key}>
+                              {index === DEFAULT_DEFECT_COLUMNS.length && (
+                                <p className="mt-1 border-t border-gray-100 px-2 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400">
+                                  Additional fields
+                                </p>
+                              )}
+                            <label key={column.key} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                              <Checkbox
+                                checked={isVisible}
+                                disabled={isVisible && visibleColumns.length === 1}
+                                onCheckedChange={() => toggleColumn(column.key)}
+                              />
+                              {column.label}
+                            </label>
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={hasDefaultColumns}
+                        onClick={() => setVisibleColumns(DEFAULT_DEFECT_COLUMNS)}
+                        className="mt-1 w-full justify-start text-xs text-gray-500"
+                      >
+                        Reset columns
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">Views</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { setShowSavedFilterDropdown(!showSavedFilterDropdown); setShowSaveFilter(false); }}
+                  className="h-8 text-xs text-gray-600"
+                >
+                  <Filter className="h-3.5 w-3.5" /> Saved views
+                  <ChevronDown className="h-3 w-3" />
+                </Button>
+                {showSavedFilterDropdown && (
+                  <div className="absolute top-full right-0 mt-1 w-52 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1">
+                    {savedFilters.map((sf) => (
+                      <button
+                        key={sf.id}
+                        onClick={() => applySavedFilter(sf)}
+                        className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 text-gray-700"
+                      >
+                        {sf.name}
+                      </button>
+                    ))}
+                    <div className="border-t border-gray-100 mt-1 pt-1">
+                      <button
+                        onClick={() => { setShowSaveFilter(true); setShowSavedFilterDropdown(false); }}
+                        className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50 text-red-600 font-medium"
+                      >
+                        + Save current view
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs text-gray-600"
+                onClick={() => void saveAsDefault()}
+                disabled={!user?.id || savingDefault}
+              >
+                <Settings className="h-3.5 w-3.5" />
+                {savingDefault ? "Saving..." : defaultFilterId ? "Update default" : "Set default"}
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        {showSaveFilter && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 bg-yellow-50/70 px-4 py-2.5">
+            <span className="text-xs font-medium text-yellow-800">Save current view as</span>
+            <Input
+              value={savedFilterName}
+              onChange={(e) => setSavedFilterName(e.target.value)}
+              placeholder="View name..."
+              className="h-8 w-44 bg-white text-xs"
+              autoFocus
+              onKeyDown={(e) => { if (e.key === "Enter") void saveCurrentFilter(); if (e.key === "Escape") setShowSaveFilter(false); }}
+            />
+            <Button type="button" size="sm" onClick={() => void saveCurrentFilter()} className="h-8 bg-red-600 text-xs hover:bg-red-700">
+              Save view
+            </Button>
+            <Button type="button" variant="ghost" size="icon" onClick={() => setShowSaveFilter(false)} className="size-8 text-gray-500">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Bulk Bar */}
@@ -2049,9 +2379,12 @@ function AllDefectsScreen({
                       : <Square className="h-4 w-4" />}
                   </button>
                 </th>
-                {["ID", "Sev", "Title", "Project", "Status", "Assignee", "Reporter", "Found In", "SLA", "Age", ""].map((h) => (
-                  <th key={h} className="text-left py-3 pr-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
+                {DEFECT_TABLE_COLUMNS.filter((column) => isColumnVisible(column.key)).map((column) => (
+                  <th key={column.key} className="text-left py-3 pr-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                    {column.header}
+                  </th>
                 ))}
+                <th className="py-3 pr-3" aria-label="Row actions" />
               </tr>
             </thead>
             <tbody>
@@ -2060,7 +2393,7 @@ function AllDefectsScreen({
                 : groupedRows().map((group) => (
                     <React.Fragment key={group.key}>
                       <tr>
-                        <td colSpan={12} className="bg-gray-50 px-4 py-2 border-b border-gray-200">
+                        <td colSpan={visibleColumns.length + 2} className="bg-gray-50 px-4 py-2 border-b border-gray-200">
                           <button
                             onClick={() => toggleGroup(group.key)}
                             className="flex items-center gap-2 text-sm font-semibold text-gray-700"

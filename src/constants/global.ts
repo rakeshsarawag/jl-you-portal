@@ -28,5 +28,5 @@ export const TOAST_ERROR_DURATION = 5000;
 export const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes (FSD requirement)
 
 // ── App version ───────────────────────────────────────────────────────────────
-export const APP_VERSION = "2026-08-24";
+export const APP_VERSION = "596";
 export const APP_NAME = "JL You Portal";
