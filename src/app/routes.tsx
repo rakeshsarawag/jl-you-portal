@@ -1,9 +1,9 @@
 import React from "react";
-import { createBrowserRouter, Navigate } from "react-router";
+import { createBrowserRouter, Link, Navigate } from "react-router";
 import { RootLayout } from "./components/RootLayout";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ProtectedRoute } from "./components/ProtectedRoute";
-import { APP_BY_PATH } from "../constants/appRegistry";
+import { getAppByPath } from "../constants/appRegistry";
 import { UserRole } from "../types/rbac";
 
 // Heavy page components — loaded lazily so the initial bundle stays small
@@ -60,7 +60,7 @@ function AccessDenied() {
       </div>
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Access Restricted</h1>
       <p className="text-gray-600 mb-6">{"You don't have permission to view this page."}</p>
-      <a href="/dashboard" className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-sm">Back to Dashboard</a>
+      <Link to="/dashboard" className="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-sm">Back to Dashboard</Link>
     </div>
   );
 }
@@ -72,7 +72,7 @@ interface RouteParams {
 
 /** Pull required roles from the single APP_REGISTRY source of truth */
 function roles(path: string): UserRole[] {
-  return (APP_BY_PATH[path]?.requiredRoles ?? []) as UserRole[];
+  return (getAppByPath(path)?.requiredRoles ?? []) as UserRole[];
 }
 
 export const createAppRouter = ({ accessToken, onLogout }: RouteParams) => {

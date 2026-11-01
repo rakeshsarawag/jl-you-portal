@@ -298,6 +298,18 @@ export const APP_BY_PATH: Record<string, AppEntry> = Object.fromEntries(
   APP_REGISTRY.map(a => [a.path, a])
 );
 
+/** Normalize browser pathnames before comparing them with canonical app paths. */
+export function normalizeAppPath(pathname: string): string {
+  if (!pathname || pathname === '/') return '/';
+  const withLeadingSlash = pathname.startsWith('/') ? pathname : `/${pathname}`;
+  return withLeadingSlash.replace(/\/+$/, '');
+}
+
+/** Resolve an app for canonical and trailing-slash pathname variants. */
+export function getAppByPath(pathname: string): AppEntry | undefined {
+  return APP_BY_PATH[normalizeAppPath(pathname)];
+}
+
 /** Quick lookup by appId */
 export const APP_BY_ID: Record<string, AppEntry> = Object.fromEntries(
   APP_REGISTRY.map(a => [a.appId, a])

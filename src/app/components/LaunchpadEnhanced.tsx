@@ -19,7 +19,7 @@ import { useUser } from '../context/UserContext';
 import { useEmployeeDashboard } from '../hooks/useEmployeeDashboard';
 import { API_BASE, publicAnonKey, safeJson, getApiAccessToken } from '../utils/constants';
 import { APP_VERSION } from '../../constants/global';
-import { APP_BY_PATH, clientCanBeGrantedApp } from '../../constants/appRegistry';
+import { clientCanBeGrantedApp, getAppByPath } from '../../constants/appRegistry';
 import { usePermissions } from '../hooks/usePermissions';
 import { useProjectMembership } from '../hooks/useProjectMembership';
 import { t } from '../../i18n/index';
@@ -500,7 +500,7 @@ export function Launchpad({ accessToken, onLogout }: LaunchpadProps) {
   })), [t]);
 
   const accessibleTiles = useMemo(() => ALL_TILES.filter(tile => {
-    const app = APP_BY_PATH[tile.path];
+    const app = getAppByPath(tile.path);
     if (!app) return false;
     if (userRoles.includes('admin')) return true;
     if (!matrixLoaded || !membershipLoaded) return false;

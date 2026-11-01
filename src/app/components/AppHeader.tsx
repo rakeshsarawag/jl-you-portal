@@ -8,6 +8,7 @@ import { useNotifications } from '../hooks/useNotificationsData';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useLocale } from '../../i18n/LocaleContext';
 import type { Locale } from '../../i18n';
+import { normalizeAppPath } from '../../constants/appRegistry';
 
 function JeshanLogo({ size = 28 }: { size?: number }) {
   const id = 'jl-header-grad';
@@ -349,8 +350,9 @@ export function AppHeader({ onLogout }: AppHeaderProps) {
   const notifRef = useRef<HTMLDivElement>(null);
   const helpRef = useRef<HTMLDivElement>(null);
 
-  const isHome = location.pathname === '/';
-  const pageLabel = ROUTE_LABELS[location.pathname] ?? '';
+  const normalizedPathname = normalizeAppPath(location.pathname);
+  const isHome = normalizedPathname === '/';
+  const pageLabel = ROUTE_LABELS[normalizedPathname] ?? '';
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {

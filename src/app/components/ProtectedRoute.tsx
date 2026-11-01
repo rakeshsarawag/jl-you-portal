@@ -4,7 +4,7 @@ import { useUser } from '../context/UserContext';
 import { toast } from 'sonner';
 import { MfaEnrollmentGate } from './MfaEnrollmentGate';
 import { usePermissions } from '../hooks/usePermissions';
-import { APP_BY_PATH, clientCanBeGrantedApp } from '../../constants/appRegistry';
+import { clientCanBeGrantedApp, getAppByPath } from '../../constants/appRegistry';
 import { useProjectMembership } from '../hooks/useProjectMembership';
 
 interface ProtectedRouteProps {
@@ -22,7 +22,7 @@ export function ProtectedRoute({ children, requiredRoles, appName }: ProtectedRo
   const { currentUser, loading } = useUser();
   const navigate = useNavigate();
   const location = useLocation();
-  const appId = APP_BY_PATH[location.pathname]?.appId ?? null;
+  const appId = getAppByPath(location.pathname)?.appId ?? null;
   const allowsProjectMember = appId === 'defect-tracker';
   const { canSeeApp, matrixLoaded } = usePermissions(
     (currentUser?.roles ?? []) as any[],
