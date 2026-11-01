@@ -356,18 +356,7 @@ export function LoginPage({
                   />
                 </div>
                 <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-3">
-                    <Label htmlFor="password">{t('login.password')}</Label>
-                    <Button
-                      type="button"
-                      variant="link"
-                      className="h-auto p-0 text-xs"
-                      onClick={() => setForgotPassword(true)}
-                      disabled={loading}
-                    >
-                      {t('login.forgotPassword')}
-                    </Button>
-                  </div>
+                  <Label htmlFor="password">{t('login.password')}</Label>
                   <div className="relative">
                     <Input
                       id="password"
@@ -397,6 +386,15 @@ export function LoginPage({
                 <Button type="submit" className="w-full" disabled={loading}>
                   <Lock className="h-4 w-4 mr-2" />
                   {loading ? t('login.signingIn') : t('login.signIn')}
+                </Button>
+                <Button
+                  type="button"
+                  variant="link"
+                  className="w-full h-auto p-0 text-xs"
+                  onClick={() => setForgotPassword(true)}
+                  disabled={loading}
+                >
+                  {t('login.forgotPassword')}
                 </Button>
               </form>
             ) : (
