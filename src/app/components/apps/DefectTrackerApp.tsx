@@ -36,6 +36,7 @@ import { Label } from "../ui/label";
 import { AttachmentSection } from "../shared/AttachmentSection";
 import { ATTACHMENT_ENTITY_TYPES } from "../../../constants/attachments";
 import { uploadEntityAttachments } from "../../services/attachments";
+import { Tooltip as UiTooltip, TooltipContent as UiTooltipContent, TooltipTrigger as UiTooltipTrigger } from "../ui/tooltip";
 
 // ── Utility functions ─────────────────────────────────────────────────────────
 
@@ -172,6 +173,29 @@ function SLADot({ slaStatus }: { slaStatus: string }) {
       <span className={`inline-block w-2 h-2 rounded-full ${cfg.dot}`} />
       <span className={`text-xs font-medium ${cfg.text}`}>{cfg.label}</span>
     </span>
+  );
+}
+
+function TableCellTooltip({
+  content,
+  children,
+  className = "",
+}: {
+  content: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <UiTooltip>
+      <UiTooltipTrigger asChild>
+        <span tabIndex={0} className={`inline-flex max-w-full outline-none ${className}`}>
+          {children}
+        </span>
+      </UiTooltipTrigger>
+      <UiTooltipContent side="top" sideOffset={6} className="max-w-sm">
+        {content}
+      </UiTooltipContent>
+    </UiTooltip>
   );
 }
 
@@ -1557,51 +1581,106 @@ function AllDefectsScreen({
         className={`${rowBg} border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors`}
       >
         <td className="pl-4 pr-4 py-3" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => toggleSelect(d.id)} className="text-gray-400 hover:text-red-600">
-            {selectedIds.has(d.id) ? <CheckSquare className="h-4 w-4 text-red-600" /> : <Square className="h-4 w-4" />}
-          </button>
+          <UiTooltip>
+            <UiTooltipTrigger asChild>
+              <button
+                onClick={() => toggleSelect(d.id)}
+                className="text-gray-400 hover:text-red-600"
+                aria-label={`${selectedIds.has(d.id) ? "Deselect" : "Select"} ${d.defectId}`}
+              >
+                {selectedIds.has(d.id) ? <CheckSquare className="h-4 w-4 text-red-600" /> : <Square className="h-4 w-4" />}
+              </button>
+            </UiTooltipTrigger>
+            <UiTooltipContent side="top">
+              {selectedIds.has(d.id) ? "Deselect defect" : "Select defect"}
+            </UiTooltipContent>
+          </UiTooltip>
         </td>
         <td className="py-3 pr-3 font-mono text-xs font-bold text-gray-700">
-          {d.isRegression && (
-            <span className="inline-block mr-1 w-4 h-4 bg-orange-500 text-white text-[9px] font-bold rounded text-center leading-4">R</span>
-          )}
-          {d.defectId}
+          <TableCellTooltip content={`${d.defectId}${d.isRegression ? " · Regression" : ""}`}>
+            {d.isRegression && (
+              <span className="inline-block mr-1 w-4 h-4 bg-orange-500 text-white text-[9px] font-bold rounded text-center leading-4">R</span>
+            )}
+            {d.defectId}
+          </TableCellTooltip>
         </td>
-        <td className="py-3 pr-3"><SeverityBadge severity={d.severity} /></td>
-        <td className="py-3 pr-4 max-w-[280px]">
-          <span className="text-sm text-gray-800 font-medium line-clamp-1">{d.title}</span>
-        </td>
-        <td className="py-3 pr-3 text-xs text-gray-500">{d.projectName}</td>
-        <td className="py-3 pr-3"><StatusBadge status={d.status} /></td>
         <td className="py-3 pr-3">
-          {d.assigneeName ? (
-            <div className="flex items-center gap-1.5">
-              <Avatar name={d.assigneeName} size="sm" />
-              <span className="text-xs text-gray-600 max-w-[80px] truncate">{d.assigneeName}</span>
-            </div>
-          ) : <span className="text-xs text-gray-300">Unassigned</span>}
+          <TableCellTooltip content={`Severity: ${d.severity}`}>
+            <SeverityBadge severity={d.severity} />
+          </TableCellTooltip>
         </td>
-        <td className="py-3 pr-3 text-xs text-gray-500">{d.reporterName || <span className="text-gray-300">—</span>}</td>
-        <td className="py-3 pr-3 text-xs text-gray-400 font-mono">{d.foundInVersion || <span className="text-gray-200">—</span>}</td>
-        <td className="py-3 pr-3"><SLADot slaStatus={d.slaStatus} /></td>
-        <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">{formatDefectAge(d.createdAt)}</td>
+        <td className="py-3 pr-4 max-w-[280px]">
+          <TableCellTooltip content={d.title} className="w-full">
+            <span className="text-sm text-gray-800 font-medium line-clamp-1">{d.title}</span>
+          </TableCellTooltip>
+        </td>
+        <td className="py-3 pr-3 text-xs text-gray-500">
+          <TableCellTooltip content={d.projectName || "No project"}>
+            <span className="max-w-[120px] truncate">{d.projectName || "—"}</span>
+          </TableCellTooltip>
+        </td>
+        <td className="py-3 pr-3">
+          <TableCellTooltip content={`Status: ${d.status}`}>
+            <StatusBadge status={d.status} />
+          </TableCellTooltip>
+        </td>
+        <td className="py-3 pr-3">
+          <TableCellTooltip content={d.assigneeName || "Unassigned"} className="items-center">
+            {d.assigneeName ? (
+              <span className="flex items-center gap-1.5">
+                <Avatar name={d.assigneeName} size="sm" />
+                <span className="text-xs text-gray-600 max-w-[80px] truncate">{d.assigneeName}</span>
+              </span>
+            ) : <span className="text-xs text-gray-300">Unassigned</span>}
+          </TableCellTooltip>
+        </td>
+        <td className="py-3 pr-3 text-xs text-gray-500">
+          <TableCellTooltip content={d.reporterName || "No reporter"}>
+            <span className="max-w-[100px] truncate">{d.reporterName || "—"}</span>
+          </TableCellTooltip>
+        </td>
+        <td className="py-3 pr-3 text-xs text-gray-400 font-mono">
+          <TableCellTooltip content={d.foundInVersion ? `Found in version ${d.foundInVersion}` : "Found-in version not provided"}>
+            <span className="max-w-[90px] truncate">{d.foundInVersion || "—"}</span>
+          </TableCellTooltip>
+        </td>
+        <td className="py-3 pr-3">
+          <TableCellTooltip content={`SLA: ${SLA_STATUS_CONFIG[d.slaStatus as keyof typeof SLA_STATUS_CONFIG]?.label ?? d.slaStatus}`}>
+            <SLADot slaStatus={d.slaStatus} />
+          </TableCellTooltip>
+        </td>
+        <td className="py-3 pr-3 text-xs text-gray-500 whitespace-nowrap">
+          <TableCellTooltip content={`Created ${new Date(d.createdAt).toLocaleString()}`}>
+            {formatDefectAge(d.createdAt)}
+          </TableCellTooltip>
+        </td>
         <td className="py-3 pr-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
-            <button
-              onClick={() => onNavigateDetail(d.id)}
-              className="p-1 text-gray-400 hover:text-blue-600 rounded"
-              title="View"
-            >
-              <Eye className="h-3.5 w-3.5" />
-            </button>
+            <UiTooltip>
+              <UiTooltipTrigger asChild>
+                <button
+                  onClick={() => onNavigateDetail(d.id)}
+                  className="p-1 text-gray-400 hover:text-blue-600 rounded"
+                  aria-label={`View ${d.defectId}`}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                </button>
+              </UiTooltipTrigger>
+              <UiTooltipContent side="top">View defect</UiTooltipContent>
+            </UiTooltip>
             {canDelete && (
-              <button
-                onClick={(e) => handleDelete(d.id, e)}
-                className="p-1 text-gray-400 hover:text-red-600 rounded"
-                title="Delete"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              <UiTooltip>
+                <UiTooltipTrigger asChild>
+                  <button
+                    onClick={(e) => handleDelete(d.id, e)}
+                    className="p-1 text-gray-400 hover:text-red-600 rounded"
+                    aria-label={`Delete ${d.defectId}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </UiTooltipTrigger>
+                <UiTooltipContent side="top">Delete defect</UiTooltipContent>
+              </UiTooltip>
             )}
           </div>
         </td>
