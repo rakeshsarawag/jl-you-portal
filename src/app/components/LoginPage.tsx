@@ -92,10 +92,10 @@ export function LoginPage({
     try {
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim().toLowerCase(),
-        options: {
-          shouldCreateUser: false,
-          emailRedirectTo: window.location.origin,
-        },
+        // Numeric email OTP verification does not need a redirect URL. Keeping
+        // this independent of the redirect allow-list avoids blocking delivery
+        // on preview or newly deployed portal domains.
+        options: { shouldCreateUser: false },
       });
       if (error) {
         toast.error(`${t('login.sendOTPFailedPrefix')} ${error.message}`);

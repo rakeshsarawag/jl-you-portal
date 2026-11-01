@@ -5,7 +5,7 @@ import { API_BASE, apiHeaders, supabase } from "../../utils/constants";
 import { toast } from "sonner";
 import {
   PieChart, Pie, Cell, BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer,
   AreaChart, Area, RadialBarChart, RadialBar, ReferenceLine,
 } from "recharts";
 import {
@@ -34,9 +34,10 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { AttachmentSection } from "../shared/AttachmentSection";
-import { ATTACHMENT_ENTITY_TYPES } from "../../../constants/attachments";
+import { ATTACHMENT_CONFIG, ATTACHMENT_ENTITY_TYPES } from "../../../constants/attachments";
 import { uploadEntityAttachments } from "../../services/attachments";
-import { Tooltip as UiTooltip, TooltipContent as UiTooltipContent, TooltipTrigger as UiTooltipTrigger } from "../ui/tooltip";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 // ── Utility functions ─────────────────────────────────────────────────────────
 
@@ -186,16 +187,16 @@ function TableCellTooltip({
   className?: string;
 }) {
   return (
-    <UiTooltip>
-      <UiTooltipTrigger asChild>
+    <Tooltip>
+      <TooltipTrigger asChild>
         <span tabIndex={0} className={`inline-flex max-w-full outline-none ${className}`}>
           {children}
         </span>
-      </UiTooltipTrigger>
-      <UiTooltipContent side="top" sideOffset={6} className="max-w-sm">
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={6} className="max-w-sm">
         {content}
-      </UiTooltipContent>
-    </UiTooltip>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -502,7 +503,7 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen, extra?: any) 
                     <Cell key={entry.severity} fill={SEVERITY_CHART_COLORS[entry.severity] ?? "#ccc"} />
                   ))}
                 </Pie>
-                <Tooltip formatter={(v: any) => [v, "Defects"]} />
+                <RechartsTooltip formatter={(v: any) => [v, "Defects"]} />
               </PieChart>
             </ResponsiveContainer>
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
@@ -528,7 +529,7 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen, extra?: any) 
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="name" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip />
+              <RechartsTooltip />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="Very High" stackId="a" fill="#dc2626" />
               <Bar dataKey="High" stackId="a" fill="#f97316" />
@@ -580,7 +581,7 @@ function DashboardScreen({ onNavigate }: { onNavigate: (s: Screen, extra?: any) 
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="date" tick={{ fontSize: 10 }} interval={4} />
               <YAxis tick={{ fontSize: 10 }} />
-              <Tooltip />
+              <RechartsTooltip />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Line type="monotone" dataKey="opened" stroke="#dc2626" strokeWidth={2} dot={false} name="Opened" />
               <Line type="monotone" dataKey="closed" stroke="#16a34a" strokeWidth={2} dot={false} name="Closed" />
@@ -651,6 +652,7 @@ function LogDefectModal({
   const [sprints, setSprints] = useState<{ id: string; name: string }[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
+  const stepInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const isAdmin = user?.roles?.includes("admin") || user?.primaryRole === "admin";
 
   useEffect(() => {
@@ -703,7 +705,11 @@ function LogDefectModal({
     }
   };
 
-  const addStep = () => set("stepsToReproduce", [...form.stepsToReproduce, ""]);
+  const addStep = () => {
+    const nextStepIndex = form.stepsToReproduce.length;
+    set("stepsToReproduce", [...form.stepsToReproduce, ""]);
+    requestAnimationFrame(() => stepInputRefs.current[nextStepIndex]?.focus());
+  };
   const updateStep = (i: number, v: string) => {
     const steps = [...form.stepsToReproduce];
     steps[i] = v;
@@ -854,16 +860,16 @@ function LogDefectModal({
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-1">
+            <div className="mb-1">
               <label className="text-xs font-semibold text-gray-600">{t("defectTracker.stepsToReproduce")}</label>
-              <button onClick={addStep} className="text-xs text-red-600 hover:underline flex items-center gap-1">
-                <Plus className="h-3 w-3" /> Add Step
-              </button>
             </div>
             {form.stepsToReproduce.map((step: string, i: number) => (
               <div key={i} className="flex items-center gap-2 mb-1.5">
                 <span className="text-xs text-gray-400 w-5 text-right flex-shrink-0">{i + 1}.</span>
                 <input
+                  ref={(element) => {
+                    stepInputRefs.current[i] = element;
+                  }}
                   value={step}
                   onChange={(e) => updateStep(i, e.target.value)}
                   className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-red-200"
@@ -876,6 +882,16 @@ function LogDefectModal({
                 )}
               </div>
             ))}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={addStep}
+              className="ml-7 h-auto px-2 py-1 text-xs text-red-600 hover:text-red-700"
+            >
+              <Plus className="h-3 w-3" />
+              Add Step
+            </Button>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1581,8 +1597,8 @@ function AllDefectsScreen({
         className={`${rowBg} border-b border-gray-100 hover:bg-gray-50 cursor-pointer transition-colors`}
       >
         <td className="pl-4 pr-4 py-3" onClick={(e) => e.stopPropagation()}>
-          <UiTooltip>
-            <UiTooltipTrigger asChild>
+          <Tooltip>
+            <TooltipTrigger asChild>
               <button
                 onClick={() => toggleSelect(d.id)}
                 className="text-gray-400 hover:text-red-600"
@@ -1590,11 +1606,11 @@ function AllDefectsScreen({
               >
                 {selectedIds.has(d.id) ? <CheckSquare className="h-4 w-4 text-red-600" /> : <Square className="h-4 w-4" />}
               </button>
-            </UiTooltipTrigger>
-            <UiTooltipContent side="top">
+            </TooltipTrigger>
+            <TooltipContent side="top">
               {selectedIds.has(d.id) ? "Deselect defect" : "Select defect"}
-            </UiTooltipContent>
-          </UiTooltip>
+            </TooltipContent>
+          </Tooltip>
         </td>
         <td className="py-3 pr-3 font-mono text-xs font-bold text-gray-700">
           <TableCellTooltip content={`${d.defectId}${d.isRegression ? " · Regression" : ""}`}>
@@ -1656,8 +1672,8 @@ function AllDefectsScreen({
         </td>
         <td className="py-3 pr-3" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-1">
-            <UiTooltip>
-              <UiTooltipTrigger asChild>
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <button
                   onClick={() => onNavigateDetail(d.id)}
                   className="p-1 text-gray-400 hover:text-blue-600 rounded"
@@ -1665,12 +1681,12 @@ function AllDefectsScreen({
                 >
                   <Eye className="h-3.5 w-3.5" />
                 </button>
-              </UiTooltipTrigger>
-              <UiTooltipContent side="top">View defect</UiTooltipContent>
-            </UiTooltip>
+              </TooltipTrigger>
+              <TooltipContent side="top">View defect</TooltipContent>
+            </Tooltip>
             {canDelete && (
-              <UiTooltip>
-                <UiTooltipTrigger asChild>
+              <Tooltip>
+                <TooltipTrigger asChild>
                   <button
                     onClick={(e) => handleDelete(d.id, e)}
                     className="p-1 text-gray-400 hover:text-red-600 rounded"
@@ -1678,9 +1694,9 @@ function AllDefectsScreen({
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
-                </UiTooltipTrigger>
-                <UiTooltipContent side="top">Delete defect</UiTooltipContent>
-              </UiTooltip>
+                </TooltipTrigger>
+                <TooltipContent side="top">Delete defect</TooltipContent>
+              </Tooltip>
             )}
           </div>
         </td>
@@ -3680,7 +3696,7 @@ function SLATrackerScreen({ onNavigateDetail, canEscalate = true, canExport = tr
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis dataKey="day" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} />
-            <Tooltip />
+            <RechartsTooltip />
             <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
             <Area type="monotone" dataKey="met" stackId="1" stroke="#16a34a" fill="#dcfce7" name="Met" />
             <Area type="monotone" dataKey="atRisk" stackId="1" stroke="#ca8a04" fill="#fef9c3" name="At Risk" />
@@ -3943,7 +3959,7 @@ function AnalyticsScreen({ canExport = true }: { canExport?: boolean }) {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="sprint" tick={{ fontSize: 10 }} />
               <YAxis tick={{ fontSize: 10 }} />
-              <Tooltip />
+              <RechartsTooltip />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Line type="monotone" dataKey="opened" stroke="#dc2626" strokeWidth={2} dot={{ r: 3 }} name="Opened" />
               <Line type="monotone" dataKey="closed" stroke="#16a34a" strokeWidth={2} dot={{ r: 3 }} name="Closed" />
@@ -3957,7 +3973,7 @@ function AnalyticsScreen({ canExport = true }: { canExport?: boolean }) {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="sprint" tick={{ fontSize: 10 }} />
               <YAxis tick={{ fontSize: 10 }} />
-              <Tooltip />
+              <RechartsTooltip />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="opened" fill="#dc2626" name="New Defects" radius={[3,3,0,0]} />
             </BarChart>
@@ -3978,7 +3994,7 @@ function AnalyticsScreen({ canExport = true }: { canExport?: boolean }) {
                     <Cell key={i} fill={ROOT_CAUSE_COLORS[i % ROOT_CAUSE_COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip />
+                <RechartsTooltip />
               </PieChart>
             </ResponsiveContainer>
             <div className="flex flex-col gap-1.5 flex-1">
@@ -4034,7 +4050,7 @@ function AnalyticsScreen({ canExport = true }: { canExport?: boolean }) {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
               <XAxis type="number" tick={{ fontSize: 10 }} />
               <YAxis type="category" dataKey="bucket" tick={{ fontSize: 11 }} />
-              <Tooltip />
+              <RechartsTooltip />
               <Bar dataKey="count" fill="#3b82f6" radius={[0, 4, 4, 0]} name="Defects" />
             </BarChart>
           </ResponsiveContainer>
@@ -4048,7 +4064,7 @@ function AnalyticsScreen({ canExport = true }: { canExport?: boolean }) {
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis dataKey="severity" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 10 }} unit="h" />
-              <Tooltip formatter={(v: any) => [`${v}h`]} />
+              <RechartsTooltip formatter={(v: any) => [`${v}h`]} />
               <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="avgHours" fill="#3b82f6" name="Avg Fix Time" radius={[4, 4, 0, 0]} />
               <ReferenceLine y={analyticsData.avgFixTime[0]?.slaTarget ?? 0} stroke="#dc2626" strokeDasharray="4 4" label={{ value: "SLA", position: "right", fontSize: 10, fill: "#dc2626" }} />
@@ -4139,13 +4155,14 @@ function SettingsScreen({ canManageSla }: { canManageSla: boolean }) {
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [editingPolicy, setEditingPolicy] = useState<any | null>(null);
   const [savingPolicy, setSavingPolicy] = useState(false);
+  const [escalationRuleLimit, setEscalationRuleLimit] = useState(10);
 
   useEffect(() => {
     Promise.all([
       supabase.from('defect_sla_policies').select('*'),
       supabase.from('defect_resolution_codes').select('*').order('sort_order'),
       supabase.from('defect_root_cause_categories').select('*').order('sort_order'),
-      supabase.from('defect_rejection_reasons').select('*').order('name'),
+      supabase.from('defect_rejection_reasons').select('*').order('label'),
       supabase.from('defect_environments').select('*').order('sort_order'),
       supabase.from('defect_priorities').select('*').order('sort_order'),
       supabase.from('defect_statuses').select('*').order('sort_order'),
@@ -4178,6 +4195,73 @@ function SettingsScreen({ canManageSla }: { canManageSla: boolean }) {
     if (mins >= 60) return `${mins / 60}h`;
     return `${mins}m`;
   };
+
+  const escalationRules = Array.from(
+    new Map(
+      ((settingsMasterData.escalationRules ?? []) as any[])
+        .map((rule: any) => [String(rule.name).trim().toLowerCase(), rule]),
+    ).values(),
+  );
+  const visibleEscalationRules = escalationRules.slice(0, escalationRuleLimit);
+  const remainingEscalationRules = Math.max(0, escalationRules.length - visibleEscalationRules.length);
+  const attachmentSizeMb = ATTACHMENT_CONFIG.maxFileSizeBytes / (1024 * 1024);
+
+  const keyRuleGroups = [
+    {
+      title: "Attachment rules",
+      icon: Link2,
+      rules: [
+        `Maximum ${attachmentSizeMb} MB per file and ${ATTACHMENT_CONFIG.maxFilesPerSelection} files per selection.`,
+        "All file extensions are currently accepted; uploads are stored in the private portal-attachments bucket.",
+        `Preview and download links expire after ${ATTACHMENT_CONFIG.signedUrlExpiresInSeconds / 60} minutes.`,
+      ],
+    },
+    {
+      title: "Attachment deletion",
+      icon: Trash2,
+      rules: [
+        "Before closure, an attachment can be removed by its uploader or a Defect Tracker administrator.",
+        "Closing a defect through the portal attempts permanent attachment removal through the Supabase Storage API.",
+        "If file cleanup fails, the defect remains closed and the user receives a cleanup warning.",
+      ],
+    },
+    {
+      title: "Status workflow",
+      icon: ArrowRight,
+      rules: [
+        "Only the transitions shown below are allowed; the same transition map is enforced in the UI and database.",
+        "Closed and Duplicate are terminal. Closed defects are read-only and cannot be reopened.",
+        "Awaiting Info pauses the fix SLA. A reporter comment is required before work can resume.",
+      ],
+    },
+    {
+      title: "Mandatory status fields",
+      icon: CheckSquare,
+      rules: [
+        "Resolved: fix description of at least 30 characters, fix version, root cause, and resolution code.",
+        "Verified: Verified By and test evidence. Awaiting Info: information-request comment.",
+        "Won't Fix: rejection reason. Duplicate: original defect ID. Resume from Awaiting Info or Resolved: reporter comment.",
+      ],
+    },
+    {
+      title: "Inactivity and closure",
+      icon: Clock,
+      rules: [
+        "Awaiting Info and Resolved defects receive an auto-close warning after 25 days of reporter inactivity.",
+        "They are automatically closed after 30 days unless the reporter comments or the status changes.",
+        "A reporter comment resets the inactivity period and clears the pending warning.",
+      ],
+    },
+    {
+      title: "Escalation and notifications",
+      icon: Shield,
+      rules: [
+        "Assignment, status, severity, escalation, and SLA-breach events notify the person responsible for the next action.",
+        "Very High status changes and all manual or SLA-breach escalations also notify the responsible manager.",
+        "SLA breaches are recorded once and monitored every five minutes, with page-load processing as a fallback.",
+      ],
+    },
+  ];
 
   const savePolicy = async () => {
     if (!editingPolicy) return;
@@ -4227,7 +4311,7 @@ function SettingsScreen({ canManageSla }: { canManageSla: boolean }) {
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div>
         <h1 className="text-xl font-bold text-gray-900">{t("defectTracker.settings")}</h1>
-        <p className="text-sm text-gray-500 mt-1">SLA policies, escalation rules and master data configuration</p>
+        <p className="text-sm text-gray-500 mt-1">Effective SLA policies, escalation rules, workflow controls and master data</p>
       </div>
 
       {/* SLA Policies */}
@@ -4235,7 +4319,7 @@ function SettingsScreen({ canManageSla }: { canManageSla: boolean }) {
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <div>
             <h2 className="font-semibold text-gray-900">SLA Policies</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Response and fix time targets per severity level</p>
+            <p className="text-xs text-gray-500 mt-0.5">First response, resolution, verification and escalation targets per severity</p>
           </div>
           
         </div>
@@ -4333,24 +4417,34 @@ function SettingsScreen({ canManageSla }: { canManageSla: boolean }) {
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <div>
             <h2 className="font-semibold text-gray-900">Escalation Rules</h2>
-            <p className="text-xs text-gray-500 mt-0.5">Automatic escalation triggers from DB</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Showing {Math.min(visibleEscalationRules.length, escalationRules.length)} of {escalationRules.length} automatic rules
+            </p>
           </div>
           
         </div>
         <div className="divide-y divide-gray-100">
           {settingsLoading ? (
             <div className="p-6 text-center text-gray-400 text-sm">Loading...</div>
-          ) : (settingsMasterData.escalationRules ?? []).length > 0 ? (settingsMasterData.escalationRules as any[]).map((r: any) => (
+          ) : escalationRules.length > 0 ? visibleEscalationRules.map((r: any) => (
             <div key={r.id} className="flex items-center justify-between px-5 py-3.5">
               <div className="flex items-center gap-3">
                 <AlertTriangle className="h-4 w-4 text-orange-400 flex-shrink-0" />
                 <div>
                   <span className="text-sm text-gray-800">{r.name}</span>
                   {r.description && <p className="text-xs text-gray-400 mt-0.5">{r.description}</p>}
+                  <p className="text-xs text-gray-500 mt-1">
+                    {String(r.condition ?? "rule").replace(/_/g, " ")}
+                    {r.threshold !== null && r.threshold !== undefined ? ` · threshold ${r.threshold}` : ""}
+                    {r.target_role ? ` · target ${String(r.target_role).replace(/_/g, " ")}` : ""}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <span className={`text-xs px-2 py-0.5 rounded font-semibold ${severityColor(r.severity)}`}>{r.severity}</span>
+                <Badge variant={r.is_active === false ? "outline" : "secondary"}>
+                  {r.is_active === false ? "Inactive" : "Active"}
+                </Badge>
                 <span className="text-xs bg-orange-50 text-orange-700 px-2.5 py-1 rounded font-medium">{r.action?.replace(/_/g, " ")}</span>
               </div>
             </div>
@@ -4358,13 +4452,23 @@ function SettingsScreen({ canManageSla }: { canManageSla: boolean }) {
             <div className="px-5 py-4 text-sm text-gray-400">No escalation rules found. Run migration 08_defect_config_tables.sql</div>
           )}
         </div>
+        {!settingsLoading && remainingEscalationRules > 0 && (
+          <div className="border-t border-gray-100 p-4 text-center">
+            <Button
+              variant="outline"
+              onClick={() => setEscalationRuleLimit(escalationRules.length)}
+            >
+              Load more ({remainingEscalationRules} remaining)
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Status Transitions */}
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100">
           <h2 className="font-semibold text-gray-900">Status Workflow</h2>
-          <p className="text-xs text-gray-500 mt-0.5">Allowed status transitions enforced in the UI</p>
+          <p className="text-xs text-gray-500 mt-0.5">Allowed status transitions enforced consistently in the UI and database</p>
         </div>
         <div className="p-5 grid grid-cols-2 gap-3">
           {(Object.entries(VALID_TRANSITIONS) as [DefectStatus, DefectStatus[]][]).map(([from, tos]) => (
@@ -4429,6 +4533,39 @@ function SettingsScreen({ canManageSla }: { canManageSla: boolean }) {
           <div className="p-6 text-center text-gray-400 text-sm">No priorities found. Run migration 08_defect_config_tables.sql</div>
         )}
       </div>
+
+      {/* Key Application Rules — intentionally last for reference after live settings */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Key Application Rules</CardTitle>
+          <CardDescription>
+            Verified rules currently enforced by the Defect Tracker UI, database workflow, storage policies and scheduled monitors.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-4 md:grid-cols-2">
+          {keyRuleGroups.map((group) => {
+            const RuleIcon = group.icon;
+            return (
+              <div key={group.title} className="rounded-lg border border-border bg-muted/20 p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="flex size-8 items-center justify-center rounded-md bg-primary/10 text-primary">
+                    <RuleIcon className="size-4" />
+                  </span>
+                  <span className="font-semibold text-foreground">{group.title}</span>
+                </div>
+                <div className="space-y-2">
+                  {group.rules.map((rule) => (
+                    <div key={rule} className="flex items-start gap-2 text-sm text-muted-foreground">
+                      <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                      <span>{rule}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
     </div>
   );
 }

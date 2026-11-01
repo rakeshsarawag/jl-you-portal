@@ -1136,7 +1136,7 @@ export const STATUS_CONFIG: Record<DefectStatus, { color: string; bg: string }> 
 
 export const VALID_TRANSITIONS: Record<DefectStatus, DefectStatus[]> = {
   'Open':        ['In Progress', 'Awaiting Info', 'Deferred', "Won't Fix", 'Duplicate'],
-  'In Progress': ['Resolved', 'Awaiting Info', 'Blocked', 'Open'],
+  'In Progress': ['Resolved', 'Awaiting Info', 'Blocked', 'Open', "Won't Fix"],
   'Awaiting Info': ['In Progress'],
   'Blocked':     ['In Progress', "Won't Fix"],
   'Resolved':    ['Verified', 'In Progress'],

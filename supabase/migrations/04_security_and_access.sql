@@ -1938,6 +1938,12 @@ BEGIN
       '*/5 * * * *',
       'SELECT public.process_defect_sla_breaches();'
     );
+    EXECUTE format(
+      'SELECT cron.schedule(%L, %L, %L)',
+      'process-defect-auto-closure',
+      '0 * * * *',
+      'SELECT public.process_defect_auto_closure();'
+    );
   END IF;
 EXCEPTION WHEN OTHERS THEN
   RAISE NOTICE 'Could not schedule defect SLA monitor: %', SQLERRM;

@@ -2870,6 +2870,18 @@ CREATE TABLE IF NOT EXISTS defect_escalation_rules (
   created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Earlier repeatable seed runs could insert the same named escalation rule
+-- more than once because this table had no natural uniqueness constraint.
+DELETE FROM defect_escalation_rules AS duplicate
+USING defect_escalation_rules AS keeper
+WHERE LOWER(duplicate.name) = LOWER(keeper.name)
+  AND (
+    duplicate.created_at > keeper.created_at
+    OR (duplicate.created_at = keeper.created_at AND duplicate.id > keeper.id)
+  );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_defect_escalation_rules_name_unique
+  ON defect_escalation_rules (LOWER(name));
+
 -- ── Step 18: Enable RLS on all new defect-tracker tables ─────────────────────
 
 DO $$
