@@ -106,7 +106,7 @@ const OFFER_LETTER_TEMPLATES: { id: string; name: string; html: string }[] = [
 
 const REQUISITION_PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 const REQUISITION_STATUSES = ["draft", "submitted", "approved", "rejected", "converted"] as const;
-const EMPLOYMENT_TYPES = ["Full-time", "Part-time", "Contract", "Intern"] as const;
+const EMPLOYMENT_TYPES = ["Full-time", "Part-time", "Contract", "Internship"] as const;
 
 // ==================== INTERFACES ====================
 

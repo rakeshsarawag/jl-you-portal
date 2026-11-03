@@ -2,6 +2,7 @@ import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate, logAuditFromContext } from "./audit-helpers.ts";
 import { requireFields, requireParam } from "./validate.ts";
+import { writeWithSchemaCompatibility } from "./schema-compat.ts";
 import { dispatchWorkflowEvent } from "./workflow-api.tsx";
 
 const app = new Hono();
@@ -172,44 +173,48 @@ app.post('/candidates', async (c) => {
     if (!v.ok) return v.response;
     const body = v.body;
 
-    const { data, error } = await supabase
-      .from('recruitment_candidates')
-      .insert([{
-        name: body.name,
-        email: body.email,
-        phone: body.phone || '',
-        position: body.position || '',
-        department: body.department || '',
-        job_id: body.jobId || body.job_id || null,
-        experience: body.experience || 0,
-        current_company: body.currentCompany || '',
-        current_salary: body.currentSalary || '',
-        expected_salary: body.expectedSalary || '',
-        notice_period: body.noticePeriod || '',
-        source: body.source || 'Job Portal',
-        stage: body.stage || 'Applied',
-        applied_date: body.appliedDate || new Date().toISOString().split('T')[0],
-        resume_url: body.resumeUrl || null,
-        rating: 0,
-        skills: body.skills || [],
-        status: body.status || 'Active',
-        hiring_manager: body.hiringManager || '',
-        notes: body.notes || '',
-        expertise: body.expertise || '',
-        nationality: body.nationality || '',
-        part_of_organization: body.partOfOrganization ?? body.part_of_organization ?? false,
-        previous_company: body.previousCompany || body.previous_company || '',
-        serving_notice_period: body.servingNoticePeriod ?? body.serving_notice_period ?? false,
-        notice_period_end_date: body.noticePeriodEndDate || body.notice_period_end_date || null,
-        attachments: body.attachments || [],
-        user_notes: body.userNotes || body.user_notes || '',
-        agency_name: body.agencyName || body.agency_name || '',
-        agency_email: body.agencyEmail || body.agency_email || '',
-        agency_fee: body.agencyFee ?? body.agency_fee ?? null,
-        ...auditCreate(c),
-      }])
-      .select()
-      .single();
+    const record = {
+      name: body.name,
+      email: body.email,
+      phone: body.phone || '',
+      position: body.position || '',
+      department: body.department || '',
+      job_id: body.jobId || body.job_id || null,
+      experience: body.experience || 0,
+      current_company: body.currentCompany || '',
+      current_salary: body.currentSalary || '',
+      expected_salary: body.expectedSalary || '',
+      notice_period: body.noticePeriod || '',
+      source: body.source || 'Job Portal',
+      stage: body.stage || 'Applied',
+      applied_date: body.appliedDate || new Date().toISOString().split('T')[0],
+      resume_url: body.resumeUrl || null,
+      rating: 0,
+      skills: body.skills || [],
+      status: body.status || 'Active',
+      hiring_manager: body.hiringManager || '',
+      notes: body.notes || '',
+      expertise: body.expertise || '',
+      nationality: body.nationality || '',
+      part_of_organization: body.partOfOrganization ?? body.part_of_organization ?? false,
+      previous_company: body.previousCompany || body.previous_company || '',
+      serving_notice_period: body.servingNoticePeriod ?? body.serving_notice_period ?? false,
+      notice_period_end_date: body.noticePeriodEndDate || body.notice_period_end_date || null,
+      attachments: body.attachments || [],
+      user_notes: body.userNotes || body.user_notes || '',
+      agency_name: body.agencyName || body.agency_name || '',
+      agency_email: body.agencyEmail || body.agency_email || '',
+      agency_fee: body.agencyFee ?? body.agency_fee ?? null,
+      ...auditCreate(c),
+    };
+    const { data, error } = await writeWithSchemaCompatibility(
+      record,
+      compatibleRecord => supabase
+        .from('recruitment_candidates')
+        .insert([compatibleRecord])
+        .select()
+        .single(),
+    );
 
     if (error) return c.json({ success: false, error: error.message }, 500);
     return c.json({ success: true, data: { ...data, interviews: [], feedback: [] } }, 201);
@@ -252,7 +257,7 @@ app.post('/bulk-upload', async (c) => {
         continue;
       }
 
-      const { error } = await supabase.from('recruitment_candidates').insert([{
+      const record = {
         name: cd.name,
         email: cd.email,
         phone: cd.phone,
@@ -283,7 +288,11 @@ app.post('/bulk-upload', async (c) => {
         agency_email: cd.agencyEmail || cd.agency_email || '',
         agency_fee: cd.agencyFee ?? cd.agency_fee ?? null,
         ...auditCreate(c),
-      }]);
+      };
+      const { error } = await writeWithSchemaCompatibility(
+        record,
+        compatibleRecord => supabase.from('recruitment_candidates').insert([compatibleRecord]),
+      );
 
       if (error) {
         results.failed.push({ row, error: error.message, data: cd });
@@ -319,12 +328,15 @@ app.put('/candidates/:id', async (c) => {
       ...mappedUpdates(body, CANDIDATE_FIELD_MAPPINGS),
       ...auditUpdate(c),
     };
-    const { data, error } = await supabase
-      .from('recruitment_candidates')
-      .update(updates)
-      .eq('id', c.req.param('id'))
-      .select()
-      .single();
+    const { data, error } = await writeWithSchemaCompatibility(
+      updates,
+      compatibleUpdates => supabase
+        .from('recruitment_candidates')
+        .update(compatibleUpdates)
+        .eq('id', c.req.param('id'))
+        .select()
+        .single(),
+    );
 
     if (error) return c.json({ success: false, error: error.message }, 404);
     return c.json({ success: true, data });
@@ -343,12 +355,15 @@ app.post('/candidates/update', async (c) => {
       ...mappedUpdates(rest, CANDIDATE_FIELD_MAPPINGS),
       ...auditUpdate(c),
     };
-    const { data, error } = await supabase
-      .from('recruitment_candidates')
-      .update(updates)
-      .eq('id', id)
-      .select()
-      .single();
+    const { data, error } = await writeWithSchemaCompatibility(
+      updates,
+      compatibleUpdates => supabase
+        .from('recruitment_candidates')
+        .update(compatibleUpdates)
+        .eq('id', id)
+        .select()
+        .single(),
+    );
 
     if (error) return c.json({ success: false, error: error.message }, 404);
     return c.json({ success: true, data });
@@ -400,26 +415,30 @@ app.post('/candidates/:id/interviews', async (c) => {
     const candidateId = c.req.param('id');
     const body = await c.req.json();
 
-    const { data, error } = await supabase
-      .from('recruitment_interviews')
-      .insert([{
-        candidate_id: candidateId,
-        type: body.type,
-        interview_date: body.date,
-        interview_time: body.time,
-        interviewer: body.interviewer,
-        duration: body.duration,
-        meeting_link: body.meetingLink || null,
-        status: body.status || 'Scheduled',
-        notes: body.notes || '',
-        location_type: body.location_type === 'remote' ? 'virtual' : body.location_type === 'in-person' ? 'in_person' : body.location_type || 'virtual',
-        location_address: body.location_address || null,
-        ics_uid: body.ics_uid || null,
-        calendar_event_url: body.calendar_event_url || null,
-        ...auditCreate(c),
-      }])
-      .select()
-      .single();
+    const interview = {
+      candidate_id: candidateId,
+      type: body.type,
+      interview_date: body.date,
+      interview_time: body.time,
+      interviewer: body.interviewer,
+      duration: body.duration,
+      meeting_link: body.meetingLink || null,
+      status: body.status || 'Scheduled',
+      notes: body.notes || '',
+      location_type: body.location_type === 'remote' ? 'virtual' : body.location_type === 'in-person' ? 'in_person' : body.location_type || 'virtual',
+      location_address: body.location_address || null,
+      ics_uid: body.ics_uid || null,
+      calendar_event_url: body.calendar_event_url || null,
+      ...auditCreate(c),
+    };
+    const { data, error } = await writeWithSchemaCompatibility(
+      interview,
+      compatibleInterview => supabase
+        .from('recruitment_interviews')
+        .insert([compatibleInterview])
+        .select()
+        .single(),
+    );
 
     if (error) return c.json({ success: false, error: error.message }, 500);
 
@@ -448,27 +467,31 @@ app.put('/candidates/:id/interviews/:interviewId', async (c) => {
     const supabase = getSupabase();
     const body = await c.req.json();
 
-    const { data, error } = await supabase
-      .from('recruitment_interviews')
-      .update({
-        type: body.type,
-        interview_date: body.date,
-        interview_time: body.time,
-        interviewer: body.interviewer,
-        duration: body.duration,
-        meeting_link: body.meetingLink,
-        status: body.status,
-        notes: body.notes,
-        location_type: body.location_type === 'remote' ? 'virtual' : body.location_type === 'in-person' ? 'in_person' : body.location_type || 'virtual',
-        location_address: body.location_address || null,
-        ics_uid: body.ics_uid || null,
-        calendar_event_url: body.calendar_event_url || null,
-        ...auditUpdate(c),
-      })
-      .eq('id', c.req.param('interviewId'))
-      .eq('candidate_id', c.req.param('id'))
-      .select()
-      .single();
+    const updates = {
+      type: body.type,
+      interview_date: body.date,
+      interview_time: body.time,
+      interviewer: body.interviewer,
+      duration: body.duration,
+      meeting_link: body.meetingLink,
+      status: body.status,
+      notes: body.notes,
+      location_type: body.location_type === 'remote' ? 'virtual' : body.location_type === 'in-person' ? 'in_person' : body.location_type || 'virtual',
+      location_address: body.location_address || null,
+      ics_uid: body.ics_uid || null,
+      calendar_event_url: body.calendar_event_url || null,
+      ...auditUpdate(c),
+    };
+    const { data, error } = await writeWithSchemaCompatibility(
+      updates,
+      compatibleUpdates => supabase
+        .from('recruitment_interviews')
+        .update(compatibleUpdates)
+        .eq('id', c.req.param('interviewId'))
+        .eq('candidate_id', c.req.param('id'))
+        .select()
+        .single(),
+    );
 
     if (error) return c.json({ success: false, error: error.message }, 404);
     return c.json({ success: true, data });
@@ -485,26 +508,30 @@ app.post('/candidates/:id/feedback', async (c) => {
     const candidateId = c.req.param('id');
     const body = await c.req.json();
 
-    const { data, error } = await supabase
-      .from('recruitment_feedback')
-      .insert([{
-        candidate_id: candidateId,
-        interview_id: body.interview_id || body.interviewId || null,
-        interviewer: body.interviewer,
-        rating: body.rating,
-        feedback_date: String(body.date || body.feedback_date || new Date().toISOString()).slice(0, 10),
-        technical_skills: body.technicalSkills ?? body.technical_skills,
-        communication: body.communication,
-        cultural_fit: body.culturalFit ?? body.cultural_fit,
-        comments: body.comments,
-        recommendation: body.recommendation,
-        competency_ratings: body.competency_ratings || {},
-        strengths: body.strengths || '',
-        concerns: body.concerns || '',
-        ...auditCreate(c),
-      }])
-      .select()
-      .single();
+    const feedback = {
+      candidate_id: candidateId,
+      interview_id: body.interview_id || body.interviewId || null,
+      interviewer: body.interviewer,
+      rating: body.rating,
+      feedback_date: String(body.date || body.feedback_date || new Date().toISOString()).slice(0, 10),
+      technical_skills: body.technicalSkills ?? body.technical_skills,
+      communication: body.communication,
+      cultural_fit: body.culturalFit ?? body.cultural_fit,
+      comments: body.comments,
+      recommendation: body.recommendation,
+      competency_ratings: body.competency_ratings || {},
+      strengths: body.strengths || '',
+      concerns: body.concerns || '',
+      ...auditCreate(c),
+    };
+    const { data, error } = await writeWithSchemaCompatibility(
+      feedback,
+      compatibleFeedback => supabase
+        .from('recruitment_feedback')
+        .insert([compatibleFeedback])
+        .select()
+        .single(),
+    );
 
     if (error) return c.json({ success: false, error: error.message }, 500);
 
@@ -557,11 +584,14 @@ app.post('/jobs', async (c) => {
       platforms: body.platforms || ['Company Website'],
       ...auditCreate(c),
     };
-    const { data, error } = await supabase
-      .from('recruitment_jobs')
-      .insert([record])
-      .select()
-      .single();
+    const { data, error } = await writeWithSchemaCompatibility(
+      record,
+      compatibleRecord => supabase
+        .from('recruitment_jobs')
+        .insert([compatibleRecord])
+        .select()
+        .single(),
+    );
 
     if (error) return c.json({ success: false, error: error.message }, 500);
 
@@ -588,12 +618,15 @@ app.put('/jobs/:id', async (c) => {
       ...mappedUpdates(body, JOB_FIELD_MAPPINGS),
       ...auditUpdate(c),
     };
-    const { data, error } = await supabase
-      .from('recruitment_jobs')
-      .update(updates)
-      .eq('id', c.req.param('id'))
-      .select()
-      .single();
+    const { data, error } = await writeWithSchemaCompatibility(
+      updates,
+      compatibleUpdates => supabase
+        .from('recruitment_jobs')
+        .update(compatibleUpdates)
+        .eq('id', c.req.param('id'))
+        .select()
+        .single(),
+    );
 
     if (error) return c.json({ success: false, error: error.message }, 404);
     return c.json({ success: true, data });

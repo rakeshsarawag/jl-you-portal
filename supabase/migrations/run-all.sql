@@ -11873,7 +11873,7 @@ ALTER TABLE recruitment_candidates
 ALTER TABLE recruitment_candidates DROP CONSTRAINT IF EXISTS recruitment_candidates_source_check;
 ALTER TABLE recruitment_candidates
   ADD CONSTRAINT recruitment_candidates_source_check
-  CHECK (source IN ('Email', 'Job Portal', 'Referral', 'LinkedIn', 'Walk-in', 'Excel Upload', 'Agency', 'Other'));
+  CHECK (source IN ('Email', 'Job Portal', 'Referral', 'LinkedIn', 'Walk-in', 'Excel Upload', 'Agency', 'Internal', 'Other'));
 
 ALTER TABLE recruitment_jobs DROP CONSTRAINT IF EXISTS recruitment_jobs_type_check;
 ALTER TABLE recruitment_jobs
@@ -11893,6 +11893,9 @@ ALTER TABLE onboarding_records DROP CONSTRAINT IF EXISTS onboarding_records_stat
 ALTER TABLE onboarding_records
   ADD CONSTRAINT onboarding_records_status_check
   CHECK (status IN ('not-started', 'in-progress', 'completed', 'on-hold', 'Pending', 'In Progress', 'Completed', 'On Hold'));
+
+-- Make newly added columns available to PostgREST immediately after migration.
+NOTIFY pgrst, 'reload schema';
 
 DROP TRIGGER IF EXISTS trg_temp_grants_updated_at ON temporary_access_grants;
 CREATE TRIGGER trg_temp_grants_updated_at

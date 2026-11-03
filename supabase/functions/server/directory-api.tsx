@@ -1,6 +1,7 @@
 import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
+import { writeWithSchemaCompatibility } from "./schema-compat.ts";
 import { requireFields, requireParam } from "./validate.ts";
 
 const app = new Hono();
@@ -10,12 +11,6 @@ function getSupabase() {
     Deno.env.get('SUPABASE_URL')!,
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
   );
-}
-
-function isMissingLifecycleStatusColumn(error: unknown): boolean {
-  const message = String((error as { message?: string })?.message ?? '');
-  return message.includes('lifecycle_status')
-    && ((error as { code?: string })?.code === 'PGRST204' || message.includes('schema cache'));
 }
 
 // Get all employees from the employees table
@@ -112,11 +107,7 @@ app.post('/employees', async (c) => {
         .select()
         .single();
 
-    let result = await saveEmployee(record);
-    if (isMissingLifecycleStatusColumn(result.error)) {
-      const { lifecycle_status: _lifecycleStatus, ...compatibleRecord } = record;
-      result = await saveEmployee(compatibleRecord);
-    }
+    const result = await writeWithSchemaCompatibility(record, saveEmployee);
 
     if (result.error) {
       return c.json({ success: false, error: result.error.message }, 500);
@@ -160,22 +151,15 @@ app.put('/employees/:id', async (c) => {
     assign('date_of_birth', ['dateOfBirth', 'date_of_birth'], value => value || null);
     if (putEc !== undefined) putRecord.emergency_contact = putEc;
 
-    let result = await supabase
-      .from('employees')
-      .update(putRecord)
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (isMissingLifecycleStatusColumn(result.error)) {
-      delete putRecord.lifecycle_status;
-      result = await supabase
+    const result = await writeWithSchemaCompatibility(
+      putRecord,
+      compatibleRecord => supabase
         .from('employees')
-        .update(putRecord)
+        .update(compatibleRecord)
         .eq('id', id)
         .select()
-        .single();
-    }
+        .single(),
+    );
 
     if (result.error) return c.json({ success: false, error: result.error.message }, 404);
     return c.json({ success: true, data: result.data });

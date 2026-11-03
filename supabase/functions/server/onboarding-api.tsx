@@ -2,6 +2,7 @@ import { Hono } from 'npm:hono';
 import { createClient } from 'jsr:@supabase/supabase-js@2.49.8';
 import { auditCreate, auditUpdate } from "./audit-helpers.ts";
 import { requireParam } from "./validate.ts";
+import { writeWithSchemaCompatibility } from "./schema-compat.ts";
 import { dispatchWorkflowEvent } from "./workflow-api.tsx";
 
 const app = new Hono();
@@ -249,38 +250,42 @@ app.post('/employees', async (c) => {
       }, 400);
     }
 
-    const { data: record, error } = await supabase
-      .from('onboarding_records')
-      .insert([{
-        employee_id: body.employeeId || null,
-        candidate_id: body.candidateId || body.recruitmentCandidateId || null,
-        employee_name: employeeName,
-        email,
-        phone: body.phone || '',
-        department: body.department || '',
-        position: body.position || '',
-        start_date: body.startDate || body.joiningDate || null,
-        manager: body.manager || '',
-        buddy: body.buddy || '',
-        location: body.location || '',
-        status: toDbStatus(body.status),
-        progress: 0,
-        completed_tasks: 0,
-        total_tasks: DEFAULT_TASKS.length,
-        notes: body.notes || '',
-        personal_email: body.personalEmail || body.personal_email || '',
-        employment_type: body.employmentType || body.employment_type || 'Full-time',
-        work_mode: body.workMode || body.work_mode || 'On-site',
-        gender: body.gender || '',
-        nationality: body.nationality || '',
-        offered_ctc: body.offeredCTC || body.offered_ctc || '',
-        probation_days: body.probationDays ?? body.probation_days ?? 90,
-        source: body.source || 'Direct',
-        date_of_birth: body.dateOfBirth || body.date_of_birth || null,
-        ...auditCreate(c),
-      }])
-      .select()
-      .single();
+    const newRecord = {
+      employee_id: body.employeeId || null,
+      candidate_id: body.candidateId || body.recruitmentCandidateId || null,
+      employee_name: employeeName,
+      email,
+      phone: body.phone || '',
+      department: body.department || '',
+      position: body.position || '',
+      start_date: body.startDate || body.joiningDate || null,
+      manager: body.manager || '',
+      buddy: body.buddy || '',
+      location: body.location || '',
+      status: toDbStatus(body.status),
+      progress: 0,
+      completed_tasks: 0,
+      total_tasks: DEFAULT_TASKS.length,
+      notes: body.notes || '',
+      personal_email: body.personalEmail || body.personal_email || '',
+      employment_type: body.employmentType || body.employment_type || 'Full-time',
+      work_mode: body.workMode || body.work_mode || 'On-site',
+      gender: body.gender || '',
+      nationality: body.nationality || '',
+      offered_ctc: body.offeredCTC || body.offered_ctc || '',
+      probation_days: body.probationDays ?? body.probation_days ?? 90,
+      source: body.source || 'Direct',
+      date_of_birth: body.dateOfBirth || body.date_of_birth || null,
+      ...auditCreate(c),
+    };
+    const { data: record, error } = await writeWithSchemaCompatibility(
+      newRecord,
+      compatibleRecord => supabase
+        .from('onboarding_records')
+        .insert([compatibleRecord])
+        .select()
+        .single(),
+    );
 
     if (error) return c.json({ success: false, error: error.message }, 500);
 
@@ -352,12 +357,15 @@ app.post('/employees/:id', async (c) => {
     assign('probation_days', ['probationDays', 'probation_days']);
     assign('source', ['source']);
     assign('date_of_birth', ['dateOfBirth', 'date_of_birth'], value => value || null);
-    const { data, error } = await supabase
-      .from('onboarding_records')
-      .update(updates)
-      .eq('id', id)
-      .select('*, onboarding_tasks(*), onboarding_documents(*), onboarding_welcome_kits(*)')
-      .single();
+    const { data, error } = await writeWithSchemaCompatibility(
+      updates,
+      compatibleUpdates => supabase
+        .from('onboarding_records')
+        .update(compatibleUpdates)
+        .eq('id', id)
+        .select('*, onboarding_tasks(*), onboarding_documents(*), onboarding_welcome_kits(*)')
+        .single(),
+    );
 
     if (error) return c.json({ success: false, error: error.message }, 404);
     return c.json({ success: true, data: shapeRecord(data) });
@@ -639,36 +647,40 @@ app.post('/bulk-upload', async (c) => {
         continue;
       }
 
-      const { data: record, error } = await supabase
-        .from('onboarding_records')
-        .insert([{
-          employee_name: cd.employeeName,
-          email: cd.email,
-          phone: cd.phone || '',
-          department: cd.department,
-          position: cd.position || 'Not specified',
-          start_date: cd.startDate,
-          manager: cd.manager || 'TBD',
-          buddy: cd.buddy || '',
-          location: cd.location || '',
-          status: 'not-started',
-          progress: 0,
-          completed_tasks: 0,
-          total_tasks: DEFAULT_TASKS.length,
-          notes: cd.notes || '',
-          personal_email: cd.personalEmail || cd.personal_email || '',
-          employment_type: cd.employmentType || cd.employment_type || 'Full-time',
-          work_mode: cd.workMode || cd.work_mode || 'On-site',
-          gender: cd.gender || '',
-          nationality: cd.nationality || '',
-          offered_ctc: cd.offeredCTC || cd.offered_ctc || '',
-          probation_days: cd.probationDays ?? cd.probation_days ?? 90,
-          source: cd.source || 'Bulk Upload',
-          date_of_birth: cd.dateOfBirth || cd.date_of_birth || null,
-          ...auditCreate(c),
-        }])
-        .select('id')
-        .single();
+      const newRecord = {
+        employee_name: cd.employeeName,
+        email: cd.email,
+        phone: cd.phone || '',
+        department: cd.department,
+        position: cd.position || 'Not specified',
+        start_date: cd.startDate,
+        manager: cd.manager || 'TBD',
+        buddy: cd.buddy || '',
+        location: cd.location || '',
+        status: 'not-started',
+        progress: 0,
+        completed_tasks: 0,
+        total_tasks: DEFAULT_TASKS.length,
+        notes: cd.notes || '',
+        personal_email: cd.personalEmail || cd.personal_email || '',
+        employment_type: cd.employmentType || cd.employment_type || 'Full-time',
+        work_mode: cd.workMode || cd.work_mode || 'On-site',
+        gender: cd.gender || '',
+        nationality: cd.nationality || '',
+        offered_ctc: cd.offeredCTC || cd.offered_ctc || '',
+        probation_days: cd.probationDays ?? cd.probation_days ?? 90,
+        source: cd.source || 'Bulk Upload',
+        date_of_birth: cd.dateOfBirth || cd.date_of_birth || null,
+        ...auditCreate(c),
+      };
+      const { data: record, error } = await writeWithSchemaCompatibility(
+        newRecord,
+        compatibleRecord => supabase
+          .from('onboarding_records')
+          .insert([compatibleRecord])
+          .select('id')
+          .single(),
+      );
 
       if (error) {
         results.failed.push({ row, error: error.message, data: cd });
