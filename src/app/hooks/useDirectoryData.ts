@@ -28,11 +28,16 @@ async function api(path: string, options: RequestInit = {}, userEmail?: string) 
  * snake_case (what the type and form use) while keeping both for safety.
  */
 function normalizeEmployee(emp: any): DirectoryEmployee {
+  const rawManagerId = emp.manager_id ?? emp.managerId;
+  const managerId = typeof rawManagerId === 'object' ? rawManagerId?.id : rawManagerId;
   return {
     ...emp,
     // Canonical snake_case fields (form state uses these)
-    manager_id: emp.manager_id || emp.managerId || '',
+    employee_code: emp.employee_code || emp.employeeCode || '',
+    manager_id: String(managerId || '').trim(),
     manager_name: emp.manager_name || emp.managerName || '',
+    department: emp.department || '',
+    location: emp.location || '',
     join_date: emp.join_date || emp.joinDate || '',
     profile_picture: emp.profile_picture || emp.profilePicture || '',
     lifecycleStatus: emp.lifecycle_status || emp.lifecycleStatus || 'Active',
@@ -74,6 +79,7 @@ export const EMERGENCY_RELATIONSHIPS = ['Spouse', 'Parent', 'Sibling', 'Friend',
 
 export interface DirectoryEmployee {
   id: string;
+  employee_code?: string;
   name: string;
   email: string;
   phone: string;
@@ -95,11 +101,63 @@ export interface DirectoryEmployee {
 
 export interface OrgNode {
   id: string;
+  employee_code?: string;
   name: string;
   designation: string;
   department: string;
   profile_picture?: string;
   reports: OrgNode[];
+}
+
+export function buildOrgTree(list: DirectoryEmployee[]): OrgNode[] {
+  const nodeMap = new Map<string, OrgNode>();
+  const parentById = new Map<string, string>();
+
+  list.forEach(employee => nodeMap.set(employee.id, {
+    id: employee.id,
+    employee_code: employee.employee_code,
+    name: employee.name,
+    designation: employee.designation,
+    department: employee.department,
+    profile_picture: employee.profile_picture,
+    reports: [],
+  }));
+
+  list.forEach(employee => {
+    const managerId = String(employee.manager_id || '').trim();
+    if (managerId && managerId !== employee.id && nodeMap.has(managerId)) {
+      parentById.set(employee.id, managerId);
+    }
+  });
+
+  // Break invalid circular reporting chains so at least one employee in each
+  // cycle becomes a root and the hierarchy remains renderable.
+  for (const employeeId of parentById.keys()) {
+    const seen = new Set([employeeId]);
+    let managerId: string | undefined = parentById.get(employeeId);
+    while (managerId) {
+      if (seen.has(managerId)) {
+        parentById.delete(employeeId);
+        break;
+      }
+      seen.add(managerId);
+      managerId = parentById.get(managerId);
+    }
+  }
+
+  const roots: OrgNode[] = [];
+  list.forEach(employee => {
+    const node = nodeMap.get(employee.id);
+    if (!node) return;
+    const managerId = parentById.get(employee.id);
+    if (managerId) {
+      nodeMap.get(managerId)?.reports.push(node);
+    } else {
+      roots.push(node);
+    }
+  });
+
+  return roots;
 }
 
 export function useDirectoryData(userEmail?: string) {
@@ -252,29 +310,6 @@ export function useDirectoryData(userEmail?: string) {
       toast.error(err.message ?? 'Failed to delete employee');
       throw err;
     }
-  };
-
-  // Build org chart tree from flat list
-  const buildOrgTree = (list: DirectoryEmployee[]): OrgNode[] => {
-    const nodeMap = new Map<string, OrgNode>();
-    list.forEach(e => nodeMap.set(e.id, {
-      id: e.id,
-      name: e.name,
-      designation: e.designation,
-      department: e.department,
-      profile_picture: e.profile_picture,
-      reports: [],
-    }));
-    const roots: OrgNode[] = [];
-    list.forEach(e => {
-      const node = nodeMap.get(e.id)!;
-      if (e.manager_id && nodeMap.has(e.manager_id)) {
-        nodeMap.get(e.manager_id)!.reports.push(node);
-      } else {
-        roots.push(node);
-      }
-    });
-    return roots;
   };
 
   // CSV export — columns per spec: Employee ID, Name, Email, Designation, Department, Location, Join Date, Status, Manager

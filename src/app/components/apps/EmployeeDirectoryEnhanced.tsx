@@ -1593,7 +1593,9 @@ function OrgChartNode({ node, depth = 0, isMobile }: { node: OrgNode; depth?: nu
         <div className="flex items-center gap-2 py-2">
           <Avatar name={node.name} size="sm" />
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-medium text-foreground leading-tight">{node.name}</p>
+            <p className="text-sm font-medium text-foreground leading-tight">
+              {node.name}{node.employee_code ? ` (${node.employee_code})` : ''}
+            </p>
             <p className="text-xs text-muted-foreground">{node.designation} · {node.department}</p>
           </div>
           {node.reports.length > 0 && (
@@ -1613,7 +1615,9 @@ function OrgChartNode({ node, depth = 0, isMobile }: { node: OrgNode; depth?: nu
         {depth > 0 && <div className="w-px h-6 bg-border" />}
         <div className="bg-card border border-border rounded-xl px-4 py-3 text-center min-w-[140px] max-w-[180px] shadow-sm hover:shadow-md hover:border-primary/40 transition-all">
           <div className="flex justify-center"><Avatar name={node.name} size="md" /></div>
-          <p className="mt-2 text-xs font-semibold text-foreground leading-tight">{node.name}</p>
+          <p className="mt-2 text-xs font-semibold text-foreground leading-tight">
+            {node.name}{node.employee_code ? ` (${node.employee_code})` : ''}
+          </p>
           <p className="text-xs text-muted-foreground truncate">{node.designation}</p>
           <p className="text-xs text-primary/70 truncate">{node.department}</p>
           {node.reports.length > 0 && (
@@ -2466,20 +2470,14 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
               </div>
             ) : (
               <div className="bg-card border border-border rounded-xl overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border bg-muted/40">
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Employee</th>
-                        {visibleCols.has('employee_code') && <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Code</th>}
-                        {visibleCols.has('department') && <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Department</th>}
-                        {visibleCols.has('email') && <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden md:table-cell">Contact</th>}
-                        {visibleCols.has('location') && <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Location</th>}
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Status</th>
-                        {(canEdit || canDelete) && <th className="text-right px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">Actions</th>}
-                      </tr>
-                    </thead>
-                  </table>
+                <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  <div className="flex-1 min-w-48">Employee</div>
+                  {visibleCols.has('employee_code') && <div className="hidden sm:block w-24 shrink-0">Code</div>}
+                  {visibleCols.has('department') && <div className="hidden sm:block w-40 shrink-0">Department</div>}
+                  {visibleCols.has('email') && <div className="hidden md:block w-52 shrink-0">Contact</div>}
+                  {visibleCols.has('location') && <div className="hidden lg:block w-32 shrink-0">Location</div>}
+                  <div className="w-24 shrink-0">Status</div>
+                  {(canEdit || canDelete) && <div className="w-16 shrink-0 text-right">Actions</div>}
                 </div>
                 {/* Virtual scroll container for list rows */}
                 <div ref={listParentRef} style={{ height: Math.min(dir.filtered.length * 64, 600), overflowY: 'auto' }}>
@@ -2490,7 +2488,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                         <div
                           key={emp.id}
                           style={{ position: 'absolute', top: virtualRow.start, left: 0, right: 0, height: virtualRow.size }}
-                          className="flex items-center px-4 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer group"
+                          className="flex items-center gap-3 px-4 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer group"
                           onClick={() => openDetail(emp)}
                           onMouseEnter={e => handleHoverStart(e as any, emp)}
                           onMouseLeave={handleHoverEnd}
@@ -2498,22 +2496,40 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                           <div className="flex items-center gap-3 flex-1 min-w-0">
                             <Avatar name={emp.name} size="sm" />
                             <div className="min-w-0">
-                              <p className="font-medium text-foreground truncate">{emp.name}</p>
+                              <p className="font-medium text-foreground truncate">
+                                {emp.name}{emp.employee_code ? ` (${emp.employee_code})` : ''}
+                              </p>
                               <p className="text-xs text-muted-foreground truncate">{emp.designation}</p>
                             </div>
                           </div>
+                          {visibleCols.has('employee_code') && (
+                            <div className="hidden sm:block w-24 shrink-0 text-xs font-mono text-muted-foreground truncate">
+                              {emp.employee_code || '—'}
+                            </div>
+                          )}
                           {visibleCols.has('department') && (
                             <div className="hidden sm:block w-40 shrink-0 text-xs text-muted-foreground">
                               <div className="flex items-center gap-1"><Building2 size={11} /><span className="truncate">{emp.department}</span></div>
                             </div>
                           )}
-                          <div className="flex flex-wrap gap-1 ml-2">
+                          {visibleCols.has('email') && (
+                            <div className="hidden md:block w-52 shrink-0 text-xs text-muted-foreground truncate">
+                              {emp.email || '—'}
+                            </div>
+                          )}
+                          {visibleCols.has('location') && (
+                            <div className="hidden lg:flex w-32 shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                              <MapPin size={11} className="shrink-0" />
+                              <span className="truncate">{emp.location || '—'}</span>
+                            </div>
+                          )}
+                          <div className="flex w-24 shrink-0 flex-wrap gap-1">
                             <StatusBadge status={emp.status} />
                             {onLeaveIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">🌴</span>}
                             {wfhIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">🏠</span>}
                           </div>
                           {(canEdit || canDelete) && (
-                            <div className="flex gap-1 ml-2 sm:opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
+                            <div className="flex w-16 shrink-0 justify-end gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
                               {canEdit && <button onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors">
                                 <Edit2 size={13} className="text-muted-foreground" />
