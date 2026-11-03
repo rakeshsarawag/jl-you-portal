@@ -39,6 +39,11 @@ app.get('/employees', async (c) => {
       profilePicture: emp.profile_picture || '',
       skills: emp.skills || [],
       employee_code: emp.employee_code || '',
+      date_of_birth: emp.date_of_birth || '',
+      lifecycle_status: emp.lifecycle_status || 'Active',
+      lifecycleStatus: emp.lifecycle_status || 'Active',
+      emergency_contact: emp.emergency_contact || null,
+      emergencyContact: emp.emergency_contact || null,
       status: emp.status || 'Active',
       authUserId: emp.auth_user_id,
       createdAt: emp.created_at,
@@ -76,6 +81,8 @@ app.post('/employees', async (c) => {
       status: body.status || 'Active',
       auth_user_id: body.authUserId || null,
       onboarding_id: body.onboardingId || null,
+      lifecycle_status: body.lifecycleStatus || body.lifecycle_status || 'Active',
+      date_of_birth: body.dateOfBirth || body.date_of_birth || null,
     };
     if (ec !== null) record.emergency_contact = ec;
 
@@ -120,24 +127,28 @@ app.put('/employees/:id', async (c) => {
     const pv = requireParam(c, 'id');
     if (!pv.ok) return pv.response;
     const id = pv.value;
-    const v = await requireFields(c, ['name']);
-    if (!v.ok) return v.response;
-    const body = v.body;
+    const body = await c.req.json<Record<string, any>>();
 
     const putEc = body.emergencyContact ?? body.emergency_contact;
-    const putRecord: Record<string, any> = {
-      name: body.name,
-      email: body.email,
-      phone: body.phone,
-      department: body.department,
-      job_title: body.designation || body.jobTitle,
-      location: body.location,
-      join_date: body.joinDate || body.join_date,
-      manager_id: body.managerId || null,
-      skills: body.skills,
-      status: body.status,
-      ...auditUpdate(c),
+    const putRecord: Record<string, any> = { ...auditUpdate(c) };
+    const assign = (column: string, keys: string[], transform?: (value: any) => any) => {
+      const key = keys.find(candidate => body[candidate] !== undefined);
+      if (!key) return;
+      putRecord[column] = transform ? transform(body[key]) : body[key];
     };
+    assign('name', ['name']);
+    assign('email', ['email']);
+    assign('phone', ['phone']);
+    assign('department', ['department']);
+    assign('job_title', ['designation', 'jobTitle', 'job_title']);
+    assign('location', ['location']);
+    assign('join_date', ['joinDate', 'join_date'], value => value || null);
+    assign('manager_id', ['managerId', 'manager_id'], value => value || null);
+    assign('profile_picture', ['profilePicture', 'profile_picture']);
+    assign('skills', ['skills']);
+    assign('status', ['status']);
+    assign('lifecycle_status', ['lifecycleStatus', 'lifecycle_status']);
+    assign('date_of_birth', ['dateOfBirth', 'date_of_birth'], value => value || null);
     if (putEc !== undefined) putRecord.emergency_contact = putEc;
 
     const { data, error } = await supabase

@@ -39,6 +39,7 @@ import { uploadEntityAttachments } from "../../services/attachments";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { Checkbox } from "../ui/checkbox";
+import ConfirmDialog from "../ui/ConfirmDialog";
 
 // ── Utility functions ─────────────────────────────────────────────────────────
 
@@ -1210,7 +1211,7 @@ function AllDefectsScreen({
   onNavigateDetail,
   canLog = true,
   canUpdate = true,
-  canDelete = true,
+  canDelete = false,
   canExport = true,
 }: {
   initialFilters?: Partial<DefectFilters & { myDefects?: boolean }>;
@@ -1260,6 +1261,8 @@ function AllDefectsScreen({
   const [bulkAssignee, setBulkAssignee] = useState<{ id: string; name: string }>({ id: "", name: "" });
   const [bulkSeverity, setBulkSeverity] = useState<DefectSeverity | "">("");
   const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [defectPendingDelete, setDefectPendingDelete] = useState<Defect | null>(null);
+  const [deletingDefect, setDeletingDefect] = useState(false);
 
   const PAGE_SIZE = 50;
   const isMyDefects = Boolean(initialFilters?.myDefects);
@@ -1411,10 +1414,21 @@ function AllDefectsScreen({
     }
   };
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
+  const requestDelete = (defect: Defect, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm("Delete this defect?")) return;
-    await deleteDefect(id);
+    if (!canDelete) return;
+    setDefectPendingDelete(defect);
+  };
+
+  const confirmDelete = async () => {
+    if (!canDelete || !defectPendingDelete || deletingDefect) return;
+    setDeletingDefect(true);
+    try {
+      await deleteDefect(defectPendingDelete.id);
+      setDefectPendingDelete(null);
+    } finally {
+      setDeletingDefect(false);
+    }
   };
 
   const applyBulkUpdate = async () => {
@@ -1853,7 +1867,7 @@ function AllDefectsScreen({
             </button>
             {canDelete && (
               <button
-                onClick={(e) => handleDelete(d.id, e)}
+                onClick={(e) => requestDelete(d, e)}
                 className="p-1 text-gray-400 hover:text-red-600 rounded"
                 aria-label={`Delete ${d.defectId}`}
               >
@@ -2575,6 +2589,19 @@ function AllDefectsScreen({
             </div>
           </div>
         </div>
+      )}
+
+      {defectPendingDelete && (
+        <ConfirmDialog
+          title="Delete defect?"
+          message={`${defectPendingDelete.defectId} will be permanently deleted. This action cannot be undone.`}
+          confirmLabel={deletingDefect ? "Deleting..." : "Delete defect"}
+          danger
+          onConfirm={() => void confirmDelete()}
+          onCancel={() => {
+            if (!deletingDefect) setDefectPendingDelete(null);
+          }}
+        />
       )}
     </div>
   );
@@ -4981,7 +5008,7 @@ export function DefectTrackerApp({ accessToken, onLogout }: Props) {
             onNavigateDetail={handleNavigateDetail}
             canLog={secLogDefect}
             canUpdate={secUpdateDefects}
-            canDelete={secDeleteDefects}
+            canDelete={Boolean(hasAdminAccess && secDeleteDefects)}
             canExport={secExport}
           />
         )}

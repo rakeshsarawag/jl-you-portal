@@ -18,6 +18,7 @@ export const RECRUITMENT_SOURCES = [
   "Email",
   "Walk-in",
   "Excel Upload",
+  "Agency",
   "Other",
 ] as const;
 

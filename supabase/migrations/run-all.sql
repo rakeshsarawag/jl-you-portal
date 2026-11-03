@@ -11778,6 +11778,122 @@ BEGIN
 END;
 $$;
 
+-- Persist every field exposed by the HR record dialogs while retaining UUID
+-- foreign keys for employee relationships.
+ALTER TABLE employees
+  ADD COLUMN IF NOT EXISTS bio TEXT;
+
+ALTER TABLE job_requisitions
+  ADD COLUMN IF NOT EXISTS requested_by_name TEXT;
+
+ALTER TABLE recruitment_communication_log
+  ADD COLUMN IF NOT EXISTS sent_by_name TEXT;
+
+ALTER TABLE offboarding_tasks
+  ADD COLUMN IF NOT EXISTS assigned_to_name TEXT;
+
+ALTER TABLE onboarding_signature_requests
+  ADD COLUMN IF NOT EXISTS signature_data TEXT;
+
+-- Compensation inputs intentionally accept formatted values such as "12 LPA".
+-- Convert legacy numeric columns to text without losing existing values.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'job_requisitions'
+      AND column_name = 'budget_min' AND data_type <> 'text'
+  ) THEN
+    ALTER TABLE job_requisitions ALTER COLUMN budget_min TYPE TEXT USING budget_min::TEXT;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'job_requisitions'
+      AND column_name = 'budget_max' AND data_type <> 'text'
+  ) THEN
+    ALTER TABLE job_requisitions ALTER COLUMN budget_max TYPE TEXT USING budget_max::TEXT;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'recruitment_offers'
+      AND column_name = 'offered_ctc' AND data_type <> 'text'
+  ) THEN
+    ALTER TABLE recruitment_offers ALTER COLUMN offered_ctc TYPE TEXT USING offered_ctc::TEXT;
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'recruitment_offers'
+      AND column_name = 'negotiated_ctc' AND data_type <> 'text'
+  ) THEN
+    ALTER TABLE recruitment_offers ALTER COLUMN negotiated_ctc TYPE TEXT USING negotiated_ctc::TEXT;
+  END IF;
+END;
+$$;
+
+ALTER TABLE recruitment_communication_log
+  DROP CONSTRAINT IF EXISTS recruitment_communication_log_channel_check;
+ALTER TABLE recruitment_communication_log
+  ADD CONSTRAINT recruitment_communication_log_channel_check
+  CHECK (channel IN ('email','phone','sms','linkedin','whatsapp','in-person','video-call','other'));
+
+ALTER TABLE recruitment_interviews
+  DROP CONSTRAINT IF EXISTS recruitment_interviews_status_check;
+ALTER TABLE recruitment_interviews
+  ADD CONSTRAINT recruitment_interviews_status_check
+  CHECK (status IN ('Scheduled','Completed','Cancelled','Rescheduled','No-show'));
+
+ALTER TABLE recruitment_feedback
+  DROP CONSTRAINT IF EXISTS recruitment_feedback_recommendation_check;
+ALTER TABLE recruitment_feedback
+  ADD CONSTRAINT recruitment_feedback_recommendation_check
+  CHECK (recommendation IN (
+    'Strong Hire','Hire','Maybe','Neutral','No Hire','Strong No Hire','Reject',
+    'strong_hire','hire','neutral','no_hire','strong_no_hire'
+  ));
+
+-- ============================================================
+-- HR APP FIELD PERSISTENCE
+-- Keep Directory, Recruitment, and Onboarding form fields aligned
+-- with their relational tables and dropdown values.
+-- ============================================================
+
+ALTER TABLE employees
+  ADD COLUMN IF NOT EXISTS lifecycle_status TEXT DEFAULT 'Active';
+
+ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_status_check;
+ALTER TABLE employees
+  ADD CONSTRAINT employees_status_check
+  CHECK (status IN ('Active', 'Inactive', 'On Leave', 'Remote', 'Terminated'));
+
+ALTER TABLE recruitment_candidates
+  ADD COLUMN IF NOT EXISTS agency_name TEXT,
+  ADD COLUMN IF NOT EXISTS agency_email TEXT,
+  ADD COLUMN IF NOT EXISTS agency_fee NUMERIC(12,2);
+
+ALTER TABLE recruitment_candidates DROP CONSTRAINT IF EXISTS recruitment_candidates_source_check;
+ALTER TABLE recruitment_candidates
+  ADD CONSTRAINT recruitment_candidates_source_check
+  CHECK (source IN ('Email', 'Job Portal', 'Referral', 'LinkedIn', 'Walk-in', 'Excel Upload', 'Agency', 'Other'));
+
+ALTER TABLE recruitment_jobs DROP CONSTRAINT IF EXISTS recruitment_jobs_type_check;
+ALTER TABLE recruitment_jobs
+  ADD CONSTRAINT recruitment_jobs_type_check
+  CHECK (type IN ('Full-time', 'Part-time', 'Contract', 'Internship', 'Freelance'));
+
+ALTER TABLE onboarding_records
+  ADD COLUMN IF NOT EXISTS employment_type TEXT DEFAULT 'Full-time',
+  ADD COLUMN IF NOT EXISTS work_mode TEXT DEFAULT 'On-site',
+  ADD COLUMN IF NOT EXISTS gender TEXT,
+  ADD COLUMN IF NOT EXISTS nationality TEXT,
+  ADD COLUMN IF NOT EXISTS offered_ctc TEXT,
+  ADD COLUMN IF NOT EXISTS probation_days INTEGER DEFAULT 90,
+  ADD COLUMN IF NOT EXISTS date_of_birth DATE;
+
+ALTER TABLE onboarding_records DROP CONSTRAINT IF EXISTS onboarding_records_status_check;
+ALTER TABLE onboarding_records
+  ADD CONSTRAINT onboarding_records_status_check
+  CHECK (status IN ('not-started', 'in-progress', 'completed', 'on-hold', 'Pending', 'In Progress', 'Completed', 'On Hold'));
+
 DROP TRIGGER IF EXISTS trg_temp_grants_updated_at ON temporary_access_grants;
 CREATE TRIGGER trg_temp_grants_updated_at
   BEFORE UPDATE ON temporary_access_grants

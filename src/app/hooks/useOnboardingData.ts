@@ -34,6 +34,8 @@ export interface OnboardingCandidate {
   probationDays?: number;
   source?: 'Recruitment' | 'Direct' | 'Referral' | 'Bulk Upload' | 'Other';
   recruitmentCandidateId?: string;
+  employeeId?: string | null;
+  employeeCode?: string;
   notes?: string;
   dateOfBirth?: string;
 }
@@ -137,7 +139,7 @@ export function useOnboardingData(userEmail?: string) {
 
   const updateEmployee = useCallback(async (id: string, data: Partial<OnboardingCandidate>) => {
     const result = await api(`/employees/${id}`, {
-      method: 'PATCH',
+      method: 'POST',
       body: JSON.stringify(data),
     }, userEmail);
     const emp: OnboardingCandidate = result.data ?? result;
@@ -153,9 +155,9 @@ export function useOnboardingData(userEmail?: string) {
   // ==================== TASK / CHECKLIST ====================
 
   const updateTask = useCallback(async (employeeId: string, taskId: string, completed: boolean) => {
-    const result = await api(`/employees/${employeeId}/tasks/${taskId}`, {
-      method: 'PATCH',
-      body: JSON.stringify({ completed }),
+    const result = await api('/tasks/update', {
+      method: 'POST',
+      body: JSON.stringify({ employeeId, taskId, completed }),
     }, userEmail);
     const emp: OnboardingCandidate = result.data ?? result;
     setEmployees(prev => prev.map(e => e.id === employeeId ? emp : e));

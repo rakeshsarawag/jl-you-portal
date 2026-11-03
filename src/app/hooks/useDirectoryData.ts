@@ -35,6 +35,8 @@ function normalizeEmployee(emp: any): DirectoryEmployee {
     manager_name: emp.manager_name || emp.managerName || '',
     join_date: emp.join_date || emp.joinDate || '',
     profile_picture: emp.profile_picture || emp.profilePicture || '',
+    lifecycleStatus: emp.lifecycle_status || emp.lifecycleStatus || 'Active',
+    date_of_birth: emp.date_of_birth || emp.dateOfBirth || '',
     // Backend returns emergencyContact (camelCase from GET serialization); DB column is emergency_contact
     emergencyContact: emp.emergencyContact ?? emp.emergency_contact ?? undefined,
     designation: emp.designation || emp.job_title || '',
@@ -113,7 +115,12 @@ export function useDirectoryData(userEmail?: string) {
     setError(null);
     try {
       const res = await api('/employees', {}, userEmail);
-      const normalized: DirectoryEmployee[] = (res.data ?? []).map(normalizeEmployee);
+      const normalizedRows: DirectoryEmployee[] = (res.data ?? []).map(normalizeEmployee);
+      const employeeNames = new Map(normalizedRows.map(employee => [employee.id, employee.name]));
+      const normalized = normalizedRows.map(employee => ({
+        ...employee,
+        manager_name: employee.manager_id ? employeeNames.get(employee.manager_id) ?? '' : '',
+      }));
 
       // The deployed edge function's GET doesn't always return emergencyContact.
       // Supplement by reading emergency_contact directly from PostgREST (anon SELECT is allowed).
@@ -217,6 +224,11 @@ export function useDirectoryData(userEmail?: string) {
           date_of_birth: (r['Date of Birth'] ?? r.date_of_birth ?? '').trim() || undefined,
           skills,
           manager_id,
+          emergencyContact: {
+            name: (r['Emergency Contact Name'] ?? r.emergency_contact_name ?? '').trim(),
+            relationship: (r['Emergency Contact Relationship'] ?? r.emergency_contact_relationship ?? 'Spouse').trim() || 'Spouse',
+            phone: (r['Emergency Contact Phone'] ?? r.emergency_contact_phone ?? '').trim(),
+          },
         };
 
         await api('/employees', { method: 'POST', body: JSON.stringify(toApiPayload(payload)) }, userEmail);

@@ -118,7 +118,7 @@ const ALL_COLUMNS = [
   { key: 'status', label: 'Status' },
   { key: 'join_date', label: 'Join Date' },
 ];
-const DEFAULT_COLUMNS = ['name', 'department', 'designation', 'manager', 'location', 'status'];
+const DEFAULT_COLUMNS = ['name', 'employee_code', 'department', 'designation', 'manager', 'location', 'status'];
 
 // ── Proficiency colors ─────────────────────────────────────────────────────
 const PROFICIENCY_COLORS: Record<string, string> = {
@@ -348,17 +348,22 @@ function EmployeeForm({
             <F label="Join Date">
               <input type="date" value={form.join_date ?? ''} onChange={e => setForm(f => ({ ...f, join_date: e.target.value }))} className={inp} />
             </F>
+            <F label="Date of Birth">
+              <input type="date" value={form.date_of_birth ?? ''} onChange={e => setForm(f => ({ ...f, date_of_birth: e.target.value }))} className={inp} />
+            </F>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
             <F label="Status">
               <select value={form.status ?? 'Active'} onChange={e => setForm(f => ({ ...f, status: e.target.value as any }))} className={inp}>
                 <SelectOptions entity="employee" field="status" fallback={['Active', 'Inactive', 'On Leave', 'Terminated']} />
               </select>
             </F>
+            <F label="Lifecycle Status">
+              <select value={form.lifecycleStatus ?? 'Active'} onChange={e => setForm(f => ({ ...f, lifecycleStatus: e.target.value as any }))} className={inp}>
+                {LIFECYCLE_STATUSES.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </F>
           </div>
-          <F label="Lifecycle Status">
-            <select value={form.lifecycleStatus ?? 'Active'} onChange={e => setForm(f => ({ ...f, lifecycleStatus: e.target.value as any }))} className={inp}>
-              {LIFECYCLE_STATUSES.map(s => <option key={s}>{s}</option>)}
-            </select>
-          </F>
           <F label="Reporting Manager">
             <ManagerPicker
               value={form.manager_id}
@@ -1230,10 +1235,10 @@ function SelfEditModal({
   const [form, setForm] = useState<SelfEditForm>({
     phone: emp.phone ?? '',
     personal_email: emp.personal_email ?? '',
-    address: emp.address ?? '',
-    emergency_contact_name: emp.emergency_contact_name ?? emp.emergencyContact?.name ?? '',
-    emergency_contact_phone: emp.emergency_contact_phone ?? emp.emergencyContact?.phone ?? '',
-    emergency_contact_relationship: emp.emergency_contact_relationship ?? emp.emergencyContact?.relationship ?? '',
+    address: emp.current_address?.formatted ?? emp.current_address ?? emp.address ?? '',
+    emergency_contact_name: emp.emergency_contact?.name ?? emp.emergencyContact?.name ?? '',
+    emergency_contact_phone: emp.emergency_contact?.phone ?? emp.emergencyContact?.phone ?? '',
+    emergency_contact_relationship: emp.emergency_contact?.relationship ?? emp.emergencyContact?.relationship ?? '',
     linkedin_url: emp.linkedin_url ?? '',
     bio: emp.bio ?? emp.about ?? '',
   });
@@ -1247,10 +1252,12 @@ function SelfEditModal({
       const updates = {
         phone: form.phone,
         personal_email: form.personal_email,
-        address: form.address,
-        emergency_contact_name: form.emergency_contact_name,
-        emergency_contact_phone: form.emergency_contact_phone,
-        emergency_contact_relationship: form.emergency_contact_relationship,
+        current_address: { formatted: form.address },
+        emergency_contact: {
+          name: form.emergency_contact_name,
+          phone: form.emergency_contact_phone,
+          relationship: form.emergency_contact_relationship,
+        },
         linkedin_url: form.linkedin_url,
         bio: form.bio,
       };
@@ -1890,7 +1897,7 @@ const EMP_TEMPLATE_HEADERS = [
   'Emergency Contact Relationship', 'Emergency Contact Phone',
 ];
 const EMP_REQUIRED_COLS = ['Name', 'Email', 'Department', 'Designation'];
-const VALID_STATUSES = ['Active', 'On Leave', 'Inactive', 'Remote'];
+const VALID_STATUSES = ['Active', 'On Leave', 'Inactive', 'Remote', 'Terminated'];
 const VALID_LIFECYCLE = ['Active', 'On Notice', 'Resigned', 'On Leave'];
 
 function parseEmpCSVLine(line: string): string[] {
@@ -2203,9 +2210,11 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
 
   // Column visibility
   const storedCols = currentUser?.id ? localStorage.getItem(`directory_columns_${currentUser.id}`) : null;
-  const [visibleCols, setVisibleCols] = useState<Set<string>>(
-    storedCols ? new Set(JSON.parse(storedCols)) : new Set(DEFAULT_COLUMNS)
-  );
+  const [visibleCols, setVisibleCols] = useState<Set<string>>(() => {
+    const columns = storedCols ? new Set<string>(JSON.parse(storedCols)) : new Set(DEFAULT_COLUMNS);
+    columns.add('employee_code');
+    return columns;
+  });
 
   // Virtual scrolling for list view
   const listParentRef = useRef<HTMLDivElement>(null);

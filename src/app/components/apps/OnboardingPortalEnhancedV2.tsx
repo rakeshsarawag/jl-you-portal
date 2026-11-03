@@ -48,15 +48,17 @@ interface SignatureRequest {
 
 const PROBATION_DAYS = 90;
 
-function getProbationInfo(joiningDate: string) {
+function getProbationInfo(joiningDate: string, probationDays = PROBATION_DAYS) {
   const start = new Date(joiningDate);
   const end = new Date(start);
-  end.setDate(end.getDate() + PROBATION_DAYS);
+  end.setDate(end.getDate() + probationDays);
   const today = new Date();
   const daysElapsed = Math.floor((today.getTime() - start.getTime()) / 86400000);
   const daysRemaining = Math.floor((end.getTime() - today.getTime()) / 86400000);
   const isComplete = today >= end;
-  const progress = Math.min(100, Math.max(0, Math.round((daysElapsed / PROBATION_DAYS) * 100)));
+  const progress = probationDays === 0
+    ? 100
+    : Math.min(100, Math.max(0, Math.round((daysElapsed / probationDays) * 100)));
   return { end, daysElapsed, daysRemaining, isComplete, progress };
 }
 
@@ -418,6 +420,7 @@ function AssignBuddyModal({ employees, currentBuddy, onAssign, onClose }: Assign
                   <div>
                     <p className="text-sm font-medium text-foreground">{emp.name}</p>
                     <p className="text-xs text-muted-foreground">{emp.department} &bull; {emp.position}</p>
+                    {emp.employeeCode && <p className="text-xs text-muted-foreground">Employee ID: {emp.employeeCode}</p>}
                   </div>
                 </div>
               </button>
@@ -822,7 +825,7 @@ function DetailModal({ employee, canManage, canViewDocuments, canGrantPortalAcce
     }
   };
 
-  const probation = employee.joiningDate ? getProbationInfo(employee.joiningDate) : null;
+  const probation = employee.joiningDate ? getProbationInfo(employee.joiningDate, employee.probationDays) : null;
   const showProbationConfirm = canManage && probation?.isComplete && (employee as any).status !== 'Confirmed' && !(employee as any).probation_confirmed;
 
   const tabs: { id: DetailTab; label: string; icon: React.ReactNode }[] = [
@@ -840,6 +843,7 @@ function DetailModal({ employee, canManage, canViewDocuments, canGrantPortalAcce
             <div>
               <h2 className="text-lg font-semibold text-foreground">{employee.name}</h2>
               <p className="text-sm text-muted-foreground">{employee.position} &bull; {employee.department}</p>
+              {employee.employeeCode && <p className="text-xs text-muted-foreground mt-0.5">Employee ID: {employee.employeeCode}</p>}
               <div className="flex items-center gap-3 mt-2">
                 <StatusBadge status={employee.status} />
                 <span className="text-xs text-muted-foreground">Joining: {employee.joiningDate}</span>
@@ -851,6 +855,29 @@ function DetailModal({ employee, canManage, canViewDocuments, canGrantPortalAcce
           {/* Progress */}
           <div className="px-6 py-3 border-b border-border">
             <ProgressBar value={employee.progress} />
+          </div>
+
+          {/* Joiner information */}
+          <div className="grid grid-cols-1 gap-x-6 gap-y-3 border-b border-border px-6 py-4 sm:grid-cols-2">
+            {[
+              ['Work Email', employee.email],
+              ['Personal Email', employee.personalEmail],
+              ['Phone', employee.phone],
+              ['Location', employee.location],
+              ['Reporting Manager', employee.manager],
+              ['Employment Type', employee.employmentType],
+              ['Work Mode', employee.workMode],
+              ['Source', employee.source],
+              ['Gender', employee.gender],
+              ['Nationality', employee.nationality],
+              ['Date of Birth', employee.dateOfBirth],
+              ['Offered CTC', employee.offeredCTC],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <p className="text-xs text-muted-foreground">{label}</p>
+                <p className="mt-0.5 text-sm font-medium text-foreground">{value || '—'}</p>
+              </div>
+            ))}
           </div>
 
           {/* Probation */}
@@ -1148,6 +1175,7 @@ function KanbanCard({ employee, canManage, onView, onEnableAccess }: KanbanCardP
         )}
       </div>
       <p className="text-xs text-muted-foreground truncate">{employee.position}</p>
+      {employee.employeeCode && <p className="text-xs text-muted-foreground truncate">ID: {employee.employeeCode}</p>}
       <p className="text-xs text-muted-foreground mt-1">Joins: {employee.joiningDate}</p>
       <div className="mt-2">
         <ProgressBar value={employee.progress} />
@@ -1171,6 +1199,7 @@ interface OffboardingRecord {
   id: string;
   employee_id: string;
   employee_name?: string;
+  employee_code?: string;
   resignation_date?: string;
   last_working_date?: string;
   exit_type: 'Resignation' | 'Termination' | 'Retirement' | 'Contract End';
@@ -1179,7 +1208,7 @@ interface OffboardingRecord {
   fnf_status: 'pending' | 'in_progress' | 'completed';
   fnf_amount?: number;
   fnf_paid_at?: string;
-  status: 'active' | 'completed';
+  status: 'initiated' | 'in_progress' | 'completed' | 'cancelled';
   created_at: string;
 }
 
@@ -1189,10 +1218,11 @@ interface OffboardingTask {
   task_name: string;
   task_category: 'IT' | 'Finance' | 'HR' | 'Manager';
   assigned_to?: string;
+  assigned_to_name?: string;
   due_date?: string;
   status: 'Not Started' | 'In Progress' | 'Completed';
   notes?: string;
-  completed_at?: string;
+  completed_at?: string | null;
 }
 
 // ==================== OFFBOARDING HELPERS ====================
@@ -1229,10 +1259,40 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 const TASK_STATUS_COLS: OffboardingTask['status'][] = ['Not Started', 'In Progress', 'Completed'];
 
+const OFFBOARDING_EXIT_TO_DB: Record<OffboardingRecord['exit_type'], string> = {
+  Resignation: 'resignation',
+  Termination: 'termination',
+  Retirement: 'retirement',
+  'Contract End': 'contract_end',
+};
+const OFFBOARDING_EXIT_TO_UI: Record<string, OffboardingRecord['exit_type']> = {
+  resignation: 'Resignation',
+  termination: 'Termination',
+  retirement: 'Retirement',
+  contract_end: 'Contract End',
+};
+const OFFBOARDING_STATUS_TO_DB: Record<OffboardingTask['status'], string> = {
+  'Not Started': 'pending',
+  'In Progress': 'in_progress',
+  Completed: 'completed',
+};
+const OFFBOARDING_STATUS_TO_UI: Record<string, OffboardingTask['status']> = {
+  pending: 'Not Started',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  skipped: 'Completed',
+};
+const OFFBOARDING_CATEGORY_TO_UI: Record<string, OffboardingTask['task_category']> = {
+  it: 'IT',
+  finance: 'Finance',
+  hr: 'HR',
+  manager: 'Manager',
+};
+
 // ==================== INITIATE OFFBOARDING MODAL ====================
 
 interface InitiateOffboardingModalProps {
-  employees: { id: string; name: string; department: string; position?: string }[];
+  employees: { id: string; name: string; department: string; position?: string; employeeCode?: string }[];
   onCreated: () => void;
   onClose: () => void;
 }
@@ -1266,11 +1326,11 @@ function InitiateOffboardingModal({ employees, onCreated, onClose }: InitiateOff
       const { data: record, error: recErr } = await import('../../utils/constants').then(m =>
         m.supabase.from('offboarding_records').insert([{
           employee_id: employeeId,
-          exit_type: exitType,
+          exit_type: OFFBOARDING_EXIT_TO_DB[exitType],
           resignation_date: resignationDate || null,
           last_working_date: lastWorkingDate,
           fnf_status: 'pending',
-          status: 'active',
+          status: 'initiated',
         }]).select().single()
       );
       if (recErr) throw recErr;
@@ -1283,13 +1343,14 @@ function InitiateOffboardingModal({ employees, onCreated, onClose }: InitiateOff
       const tasks = taskTemplates.map(t => ({
         offboarding_id: record.id,
         task_name: t.task_name,
-        task_category: t.task_category,
-        status: 'Not Started' as const,
+        task_category: t.task_category.toLowerCase(),
+        status: 'pending',
         due_date: lastWorkingDate,
       }));
-      await import('../../utils/constants').then(m =>
+      const { error: taskError } = await import('../../utils/constants').then(m =>
         m.supabase.from('offboarding_tasks').insert(tasks)
       );
+      if (taskError) throw taskError;
 
       toast.success(`Offboarding initiated for ${selectedEmp?.name ?? 'employee'}`);
       onCreated();
@@ -1319,7 +1380,9 @@ function InitiateOffboardingModal({ employees, onCreated, onClose }: InitiateOff
               <div className="flex items-center justify-between p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <div>
                   <p className="text-sm font-medium text-foreground">{selectedEmp.name}</p>
-                  <p className="text-xs text-muted-foreground">{selectedEmp.department}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {selectedEmp.employeeCode ? `${selectedEmp.employeeCode} · ` : ''}{selectedEmp.department}
+                  </p>
                 </div>
                 <button type="button" onClick={() => setEmployeeId('')} className="text-muted-foreground hover:text-foreground">
                   <X size={14} />
@@ -1340,7 +1403,9 @@ function InitiateOffboardingModal({ employees, onCreated, onClose }: InitiateOff
                       onClick={() => { setEmployeeId(e.id); setEmpSearch(''); }}
                       className="w-full text-left px-3 py-2 text-sm hover:bg-muted flex items-center justify-between border-b border-border last:border-0">
                       <span>{e.name}</span>
-                      <span className="text-xs text-muted-foreground">{e.department}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {e.employeeCode ? `${e.employeeCode} · ` : ''}{e.department}
+                      </span>
                     </button>
                   ))}
                   {filteredEmps.length === 0 && <p className="px-3 py-2 text-sm text-muted-foreground">No employees found</p>}
@@ -1416,8 +1481,8 @@ function OffboardingTaskModal({
       await onSave({
         notes,
         status,
-        assigned_to: assignedTo,
-        completed_at: status === 'Completed' ? new Date().toISOString() : undefined,
+        assigned_to_name: assignedTo,
+        completed_at: status === 'Completed' ? new Date().toISOString() : null,
       });
       onClose();
     } catch (err: any) {
@@ -1588,7 +1653,7 @@ function FnFTracker({
         m.supabase.from('offboarding_records').update({
           fnf_status: 'completed',
           fnf_amount: parseFloat(amount) || 0,
-          fnf_paid_at: new Date().toISOString(),
+          fnf_paid_at: new Date().toISOString().slice(0, 10),
         }).eq('id', record.id)
       );
       if (error) throw error;
@@ -1667,7 +1732,7 @@ function OffboardingBoard({
     try {
       const { error } = await import('../../utils/constants').then(m =>
         m.supabase.from('offboarding_tasks').update({
-          status: newStatus,
+          status: OFFBOARDING_STATUS_TO_DB[newStatus],
           completed_at: newStatus === 'Completed' ? new Date().toISOString() : null,
         }).eq('id', taskId)
       );
@@ -1679,8 +1744,13 @@ function OffboardingBoard({
   };
 
   const handleTaskSave = async (taskId: string, updates: Partial<OffboardingTask>) => {
+    const dbUpdates = {
+      ...updates,
+      status: updates.status ? OFFBOARDING_STATUS_TO_DB[updates.status] : undefined,
+      assigned_to: undefined,
+    };
     const { error } = await import('../../utils/constants').then(m =>
-      m.supabase.from('offboarding_tasks').update(updates).eq('id', taskId)
+      m.supabase.from('offboarding_tasks').update(dbUpdates).eq('id', taskId)
     );
     if (error) throw error;
     onTaskUpdated();
@@ -1796,7 +1866,7 @@ function OffboardingBoard({
 
 interface OffboardingTabProps {
   canManage: boolean;
-  employees: { id: string; name: string; department: string; position?: string }[];
+  employees: { id: string; name: string; department: string; position?: string; employeeCode?: string }[];
 }
 
 function OffboardingTab({ canManage, employees }: OffboardingTabProps) {
@@ -1819,7 +1889,12 @@ function OffboardingTab({ canManage, employees }: OffboardingTabProps) {
       // Enrich with employee names
       const enriched = (recs ?? []).map((r: OffboardingRecord) => {
         const emp = employees.find(e => e.id === r.employee_id);
-        return { ...r, employee_name: emp?.name ?? r.employee_id };
+        return {
+          ...r,
+          employee_name: emp?.name ?? r.employee_id,
+          employee_code: emp?.employeeCode,
+          exit_type: OFFBOARDING_EXIT_TO_UI[r.exit_type] ?? r.exit_type,
+        };
       });
       setRecords(enriched);
 
@@ -1831,7 +1906,13 @@ function OffboardingTab({ canManage, employees }: OffboardingTabProps) {
           .select('*')
           .in('offboarding_id', ids);
         const taskMap: Record<string, OffboardingTask[]> = {};
-        (taskData ?? []).forEach((t: OffboardingTask) => {
+        (taskData ?? []).forEach((raw: OffboardingTask) => {
+          const t = {
+            ...raw,
+            task_category: OFFBOARDING_CATEGORY_TO_UI[raw.task_category] ?? raw.task_category,
+            status: OFFBOARDING_STATUS_TO_UI[raw.status] ?? raw.status,
+            assigned_to: raw.assigned_to_name || raw.assigned_to || '',
+          } as OffboardingTask;
           if (!taskMap[t.offboarding_id]) taskMap[t.offboarding_id] = [];
           taskMap[t.offboarding_id].push(t);
         });
@@ -1888,7 +1969,8 @@ function OffboardingTab({ canManage, employees }: OffboardingTabProps) {
             <div className="flex items-center gap-2 mb-4">
               <UserMinus size={18} className="text-red-500" />
               <h3 className="font-semibold text-foreground">{selectedRecord.employee_name}</h3>
-              <StatusBadge status={selectedRecord.status === 'active' ? 'In Progress' : 'Completed'} />
+              {selectedRecord.employee_code && <span className="text-xs text-muted-foreground">{selectedRecord.employee_code}</span>}
+              <StatusBadge status={selectedRecord.status === 'completed' ? 'Completed' : 'In Progress'} />
             </div>
             <OffboardingBoard
               record={selectedRecord}
@@ -1927,6 +2009,7 @@ function OffboardingTab({ canManage, employees }: OffboardingTabProps) {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <p className="font-medium text-foreground text-sm">{rec.employee_name}</p>
+                          {rec.employee_code && <span className="text-xs text-muted-foreground">{rec.employee_code}</span>}
                           <span className="text-xs px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200">
                             {rec.exit_type}
                           </span>
@@ -1990,9 +2073,9 @@ const BULK_COLUMNS = [
   { key: 'notes',           label: 'Notes',           required: false, example: 'Referred by CEO' },
 ];
 
-const VALID_EMPLOYMENT_TYPES = ['Full-time', 'Part-time', 'Contract', 'Intern', 'Consultant'];
+const VALID_EMPLOYMENT_TYPES = ['Full-time', 'Part-time', 'Contract', 'Internship', 'Intern', 'Consultant'];
 const VALID_WORK_MODES = ['On-site', 'Remote', 'Hybrid'];
-const VALID_GENDERS = ['Male', 'Female', 'Other', 'Prefer not to say'];
+const VALID_GENDERS = ['Male', 'Female', 'Non-binary', 'Other', 'Prefer not to say'];
 const VALID_SOURCES = ['Recruitment', 'Direct', 'Referral', 'Bulk Upload', 'Other'];
 
 interface BulkRow {
@@ -2725,7 +2808,15 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
         {mainTab === 'offboarding' && (
           <OffboardingTab
             canManage={permManageOnboarding}
-            employees={employees.map(e => ({ id: e.id, name: e.name, department: e.department, position: e.position }))}
+            employees={employees
+              .filter(e => Boolean(e.employeeId))
+              .map(e => ({
+                id: e.employeeId!,
+                name: e.name,
+                department: e.department,
+                position: e.position,
+                employeeCode: e.employeeCode,
+              }))}
           />
         )}
 
@@ -2925,6 +3016,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground">{emp.position}</p>
+                      {emp.employeeCode && <p className="text-xs text-muted-foreground">ID: {emp.employeeCode}</p>}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{emp.department}</td>
                     <td className="px-4 py-3 text-muted-foreground">{emp.joiningDate}</td>

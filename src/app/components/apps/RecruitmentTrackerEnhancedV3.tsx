@@ -119,7 +119,8 @@ interface Requisition {
   number_of_positions: number;
   justification: string;
   priority: typeof REQUISITION_PRIORITIES[number];
-  requested_by: string;
+  requested_by: string | null;
+  requested_by_name?: string;
   approved_by?: string;
   status: typeof REQUISITION_STATUSES[number];
   rejection_reason?: string;
@@ -142,6 +143,7 @@ interface Offer {
   status: "draft" | "sent" | "accepted" | "negotiating" | "declined" | "expired" | "revoked";
   candidate_response?: string;
   negotiated_ctc?: string;
+  offer_letter_template_id?: string;
   created_at?: string;
 }
 
@@ -153,6 +155,7 @@ interface CommunicationLog {
   subject: string;
   body: string;
   sent_by?: string;
+  sent_by_name?: string;
   sent_at: string;
   attachments?: string[];
 }
@@ -550,7 +553,13 @@ const EXPERTISE_OPTIONS = [
   "Business Analysis", "Other"
 ];
 
-const TEMPLATE_HEADERS = ["Name", "Email", "Phone", "Position", "Department", "Experience", "Expected Salary", "Current Company", "Notice Period", "Source", "Skills", "Expertise", "Nationality", "Previous Company", "Notes"];
+const TEMPLATE_HEADERS = [
+  "Name", "Email", "Phone", "Position", "Department", "Experience",
+  "Expected Salary", "Current Company", "Current Salary", "Notice Period",
+  "Serving Notice Period", "Notice Period End Date", "Hiring Manager",
+  "Source", "Skills", "Expertise", "Nationality", "Previous Company",
+  "Agency Name", "Agency Email", "Agency Fee", "Notes",
+];
 const REQUIRED_COLS = ["Name", "Email", "Position", "Department"];
 
 interface ParsedRow { data: Record<string, string>; errors: string[] }
@@ -580,7 +589,12 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const downloadTemplate = () => {
-    const example = "John Doe,john.doe@example.com,+1-555-0100,Software Engineer,Engineering,5,75000,Acme Corp,30 days,Job Portal,\"React,TypeScript\",American,,Initial screening completed";
+    const example = [
+      "John Doe", "john.doe@example.com", "+1-555-0100", "Software Engineer",
+      "Engineering", "5", "75000", "Acme Corp", "65000", "30 days", "Yes",
+      "2026-06-30", "Jane Manager", "Job Portal", '"React,TypeScript"',
+      "React", "American", "Acme Corp", "", "", "", "Initial screening completed",
+    ].join(",");
     const csv = TEMPLATE_HEADERS.join(",") + "\n" + example;
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -1581,6 +1595,10 @@ function CandidateDrawer({
                   [t("noticePeriodEndDate"), candidate.noticePeriodEndDate],
                   [t("appliedDate"), candidate.appliedDate],
                   [t("hiringManager"), candidate.hiringManager],
+                  ["Expertise / Profile", candidate.expertise],
+                  ["Agency", candidate.agency_name],
+                  ["Agency Email", candidate.agency_email],
+                  ["Agency Fee", candidate.agency_fee != null ? String(candidate.agency_fee) : null],
                 ] as [string, string | null | undefined][]).filter(([, v]) => v).map(([label, val]) => (
                   <div key={label}>
                     <p className="text-xs text-muted-foreground">{label}</p>
@@ -2054,7 +2072,9 @@ function CandidateDrawer({
                   </div>
                   <p className="text-xs font-medium text-foreground">{comm.subject}</p>
                   <p className="text-xs text-muted-foreground line-clamp-2">{comm.body}</p>
-                  {comm.sent_by && <p className="text-xs text-muted-foreground">By: {comm.sent_by}</p>}
+                  {(comm.sent_by_name || comm.sent_by) && (
+                    <p className="text-xs text-muted-foreground">By: {comm.sent_by_name || comm.sent_by}</p>
+                  )}
                 </div>
               ))}
             </div>
@@ -2076,7 +2096,8 @@ function CandidateDrawer({
       {showCommModal && (
         <CommunicationLogModal
           candidateId={candidate.id}
-          sentBy={currentUser?.name ?? currentUser?.email ?? ""}
+          sentById={currentUser?.employeeId ?? null}
+          sentByName={currentUser?.name ?? currentUser?.email ?? ""}
           onClose={() => setShowCommModal(false)}
           onSaved={() => setCommRefresh((n) => n + 1)}
         />
@@ -2145,7 +2166,8 @@ function RequisitionForm({ initial, onSave, onClose }: RequisitionFormProps) {
       await onSave({
         ...form,
         number_of_positions: Number(form.number_of_positions) || 1,
-        requested_by: currentUser?.name ?? currentUser?.email ?? "Unknown",
+        requested_by: currentUser?.employeeId ?? null,
+        requested_by_name: currentUser?.name ?? currentUser?.email ?? "Unknown",
         status: "submitted",
       });
       onClose();
@@ -2328,7 +2350,7 @@ function OfferModal({ candidate, existingOffer, onClose, onSaved }: OfferModalPr
     offered_ctc: existingOffer?.offered_ctc ?? "",
     joining_date: existingOffer?.joining_date ?? "",
     offer_expiry_date: existingOffer?.offer_expiry_date ?? "",
-    template_id: "standard",
+    template_id: existingOffer?.offer_letter_template_id ?? "standard",
     negotiated_ctc: existingOffer?.negotiated_ctc ?? "",
     candidate_response: existingOffer?.candidate_response ?? "",
   });
@@ -2357,9 +2379,11 @@ function OfferModal({ candidate, existingOffer, onClose, onSaved }: OfferModalPr
           offered_ctc: form.offered_ctc,
           joining_date: form.joining_date,
           offer_expiry_date: form.offer_expiry_date,
+          offer_letter_template_id: form.template_id,
           status: "sent",
           negotiated_ctc: form.negotiated_ctc || null,
           candidate_response: form.candidate_response || null,
+          sent_at: new Date().toISOString(),
         }).eq("id", existingOffer.id);
         if (offerUpdateErr) throw new Error(offerUpdateErr.message);
       } else {
@@ -2369,7 +2393,11 @@ function OfferModal({ candidate, existingOffer, onClose, onSaved }: OfferModalPr
           offered_ctc: form.offered_ctc,
           joining_date: form.joining_date,
           offer_expiry_date: form.offer_expiry_date,
+          offer_letter_template_id: form.template_id,
           status: "sent",
+          negotiated_ctc: form.negotiated_ctc || null,
+          candidate_response: form.candidate_response || null,
+          sent_at: new Date().toISOString(),
           offer_letter_url: null,
           signature_data: null,
           signed_pdf_url: null,
@@ -2421,7 +2449,7 @@ function OfferModal({ candidate, existingOffer, onClose, onSaved }: OfferModalPr
             assigned_to: task.assignedTo || task.assigned_to || "HR",
             status: "Pending",
             due_date: null,
-            order: idx,
+            task_order: idx,
           }));
           void supabase.from("onboarding_tasks").insert(taskRows);
         }
@@ -2576,7 +2604,13 @@ function BlacklistModal({ candidate, onConfirm, onCancel }: { candidate: Candida
 
 // ==================== COMMUNICATION LOG MODAL ====================
 
-function CommunicationLogModal({ candidateId, sentBy, onClose, onSaved }: { candidateId: string; sentBy: string; onClose: () => void; onSaved: () => void }) {
+function CommunicationLogModal({ candidateId, sentById, sentByName, onClose, onSaved }: {
+  candidateId: string;
+  sentById: string | null;
+  sentByName: string;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
   const [form, setForm] = useState({ channel: "email", direction: "outbound" as "inbound" | "outbound", subject: "", body: "" });
   const [saving, setSaving] = useState(false);
 
@@ -2591,7 +2625,8 @@ function CommunicationLogModal({ candidateId, sentBy, onClose, onSaved }: { cand
         direction: form.direction,
         subject: form.subject,
         body: form.body,
-        sent_by: sentBy,
+        sent_by: sentById,
+        sent_by_name: sentByName,
         sent_at: new Date().toISOString(),
       }]);
       if (commErr) throw new Error(commErr.message);
@@ -3239,7 +3274,9 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                               {req.priority}
                             </span>
                           </td>
-                          <td className="px-4 py-3 hidden lg:table-cell text-muted-foreground">{req.requested_by}</td>
+                          <td className="px-4 py-3 hidden lg:table-cell text-muted-foreground">
+                            {req.requested_by_name || req.requested_by || 'Unknown'}
+                          </td>
                           <td className="px-4 py-3">
                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                               req.status === "approved" ? "bg-green-100 text-green-700" :

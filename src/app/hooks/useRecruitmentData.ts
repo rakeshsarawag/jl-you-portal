@@ -266,6 +266,9 @@ function shapedCandidate(c: any): Candidate {
     noticePeriodEndDate: c.notice_period_end_date ?? meta.noticePeriodEndDate,
     attachments: c.attachments ?? meta.attachments ?? [],
     userNotes: c.user_notes ?? meta.userNotes,
+    agency_name: c.agency_name ?? "",
+    agency_email: c.agency_email ?? "",
+    agency_fee: c.agency_fee ?? undefined,
   };
 }
 
@@ -551,7 +554,15 @@ export function useRecruitmentData(userEmail?: string) {
       expertise: r.Expertise ?? r.expertise ?? "",
       nationality: r.Nationality ?? r.nationality ?? "",
       previousCompany: r["Previous Company"] ?? r.previousCompany ?? "",
-      notes: r.Notes ?? r.notes ?? "",
+      userNotes: r.Notes ?? r.notes ?? "",
+      currentCompany: r["Current Company"] ?? r.currentCompany ?? r.current_company ?? "",
+      currentSalary: r["Current Salary"] ?? r.currentSalary ?? r.current_salary ?? "",
+      hiringManager: r["Hiring Manager"] ?? r.hiringManager ?? r.hiring_manager ?? "",
+      servingNoticePeriod: ["yes", "true", "1"].includes(String(r["Serving Notice Period"] ?? r.servingNoticePeriod ?? "").toLowerCase()),
+      noticePeriodEndDate: r["Notice Period End Date"] ?? r.noticePeriodEndDate ?? r.notice_period_end_date ?? "",
+      agency_name: r["Agency Name"] ?? r.agency_name ?? "",
+      agency_email: r["Agency Email"] ?? r.agency_email ?? "",
+      agency_fee: Number(r["Agency Fee"] ?? r.agency_fee ?? 0) || undefined,
     }));
 
     const res = await api(`${RECRUIT_URL}/bulk-upload`, {

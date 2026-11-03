@@ -116,7 +116,50 @@ async function updateOnboardingStatus(supabase: any, onboardingId: string) {
   return { progress, status, completedTasks, totalTasks };
 }
 
+function toDbStatus(status: unknown) {
+  const normalized = String(status ?? '').trim().toLowerCase().replace(/\s+/g, '-');
+  if (normalized === 'completed') return 'completed';
+  if (normalized === 'in-progress') return 'in-progress';
+  if (normalized === 'on-hold') return 'on-hold';
+  return 'not-started';
+}
+
+function toUiStatus(status: unknown) {
+  const normalized = String(status ?? '').trim().toLowerCase().replace(/\s+/g, '-');
+  if (normalized === 'completed') return 'Completed';
+  if (normalized === 'in-progress') return 'In Progress';
+  if (normalized === 'on-hold') return 'On Hold';
+  return 'Pending';
+}
+
 function shapeRecord(record: any) {
+  const tasks = (record.onboarding_tasks || []).map((task: any) => ({
+    id: task.id,
+    title: task.title,
+    description: task.description || '',
+    assignedTo: task.assigned_to || task.category || '',
+    status: toUiStatus(task.status),
+    dueDate: task.due_date || '',
+    completedDate: task.completed_date || undefined,
+    order: task.task_order || 0,
+  }));
+  const documents = (record.onboarding_documents || []).map((document: any) => ({
+    id: document.id,
+    name: document.name,
+    type: document.type || 'Other',
+    status: document.status || 'Pending',
+    uploadedDate: document.uploaded_date || document.created_at || '',
+    signedDate: document.signed_date || undefined,
+    url: document.url || undefined,
+  }));
+  const rawWelcomeKit = record.onboarding_welcome_kits?.[0];
+  const welcomeKit = rawWelcomeKit ? {
+    status: rawWelcomeKit.status || 'Not Ordered',
+    items: rawWelcomeKit.items || [],
+    trackingNumber: rawWelcomeKit.tracking_number || undefined,
+    deliveryDate: rawWelcomeKit.delivery_date || undefined,
+  } : { status: 'Not Ordered', items: [] };
+
   return {
     id: record.id,
     name: record.employee_name,
@@ -130,7 +173,7 @@ function shapeRecord(record: any) {
     manager: record.manager || '',
     buddy: record.buddy || '',
     location: record.location || '',
-    status: record.status || 'not-started',
+    status: toUiStatus(record.status),
     progress: record.progress || 0,
     completedTasks: record.completed_tasks || 0,
     totalTasks: record.total_tasks || 0,
@@ -139,11 +182,22 @@ function shapeRecord(record: any) {
     authUserId: record.auth_user_id || null,
     accountCreatedDate: record.account_created_date || null,
     employeeId: record.employee_id || null,
+    employeeCode: record.employee?.employee_code || '',
     recruitmentCandidateId: record.candidate_id || null,
     candidateId: record.candidate_id || null,
-    tasks: record.onboarding_tasks || [],
-    documents: record.onboarding_documents || [],
-    welcomeKit: record.onboarding_welcome_kits?.[0] || null,
+    checklist: tasks,
+    tasks,
+    documents,
+    welcomeKit,
+    personalEmail: record.personal_email || '',
+    employmentType: record.employment_type || 'Full-time',
+    workMode: record.work_mode || 'On-site',
+    gender: record.gender || '',
+    nationality: record.nationality || '',
+    offeredCTC: record.offered_ctc || '',
+    probationDays: record.probation_days ?? 90,
+    source: record.source || 'Direct',
+    dateOfBirth: record.date_of_birth || '',
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };
@@ -159,6 +213,7 @@ app.get('/employees', async (c) => {
       .from('onboarding_records')
       .select(`
         *,
+        employee:employees!onboarding_records_employee_id_fkey(employee_code),
         onboarding_tasks (*),
         onboarding_documents (*),
         onboarding_welcome_kits (*)
@@ -208,11 +263,20 @@ app.post('/employees', async (c) => {
         manager: body.manager || '',
         buddy: body.buddy || '',
         location: body.location || '',
-        status: 'not-started',
+        status: toDbStatus(body.status),
         progress: 0,
         completed_tasks: 0,
         total_tasks: DEFAULT_TASKS.length,
         notes: body.notes || '',
+        personal_email: body.personalEmail || body.personal_email || '',
+        employment_type: body.employmentType || body.employment_type || 'Full-time',
+        work_mode: body.workMode || body.work_mode || 'On-site',
+        gender: body.gender || '',
+        nationality: body.nationality || '',
+        offered_ctc: body.offeredCTC || body.offered_ctc || '',
+        probation_days: body.probationDays ?? body.probation_days ?? 90,
+        source: body.source || 'Direct',
+        date_of_birth: body.dateOfBirth || body.date_of_birth || null,
         ...auditCreate(c),
       }])
       .select()
@@ -257,26 +321,40 @@ app.post('/employees/:id', async (c) => {
     const supabase = getSupabase();
     const id = c.req.param('id');
     const body = await c.req.json();
-
+    const updates: Record<string, any> = { ...auditUpdate(c) };
+    const assign = (column: string, keys: string[], transform?: (value: any) => any) => {
+      const key = keys.find(candidate => body[candidate] !== undefined);
+      if (!key) return;
+      updates[column] = transform ? transform(body[key]) : body[key];
+    };
+    assign('employee_name', ['employeeName', 'name']);
+    assign('email', ['email']);
+    assign('phone', ['phone']);
+    assign('department', ['department']);
+    assign('position', ['position']);
+    assign('start_date', ['startDate', 'joiningDate'], value => value || null);
+    assign('manager', ['manager']);
+    assign('buddy', ['buddy']);
+    assign('location', ['location']);
+    assign('status', ['status'], toDbStatus);
+    assign('notes', ['notes']);
+    assign('portal_access_enabled', ['portalAccessEnabled', 'portal_access_enabled']);
+    assign('auth_user_id', ['authUserId', 'auth_user_id'], value => value || null);
+    assign('account_created_date', ['accountCreatedDate', 'account_created_date'], value => value || null);
+    assign('employee_id', ['employeeId', 'employee_id'], value => value || null);
+    assign('candidate_id', ['candidateId', 'recruitmentCandidateId', 'candidate_id'], value => value || null);
+    assign('personal_email', ['personalEmail', 'personal_email']);
+    assign('employment_type', ['employmentType', 'employment_type']);
+    assign('work_mode', ['workMode', 'work_mode']);
+    assign('gender', ['gender']);
+    assign('nationality', ['nationality']);
+    assign('offered_ctc', ['offeredCTC', 'offered_ctc']);
+    assign('probation_days', ['probationDays', 'probation_days']);
+    assign('source', ['source']);
+    assign('date_of_birth', ['dateOfBirth', 'date_of_birth'], value => value || null);
     const { data, error } = await supabase
       .from('onboarding_records')
-      .update({
-        employee_name: body.employeeName || body.name,
-        email: body.email,
-        phone: body.phone,
-        department: body.department,
-        position: body.position,
-        start_date: body.startDate || body.joiningDate,
-        manager: body.manager,
-        buddy: body.buddy,
-        location: body.location,
-        notes: body.notes,
-        portal_access_enabled: body.portalAccessEnabled,
-        auth_user_id: body.authUserId,
-        account_created_date: body.accountCreatedDate,
-        employee_id: body.employeeId || null,
-        ...auditUpdate(c),
-      })
+      .update(updates)
       .eq('id', id)
       .select('*, onboarding_tasks(*), onboarding_documents(*), onboarding_welcome_kits(*)')
       .single();
@@ -566,16 +644,27 @@ app.post('/bulk-upload', async (c) => {
         .insert([{
           employee_name: cd.employeeName,
           email: cd.email,
+          phone: cd.phone || '',
           department: cd.department,
           position: cd.position || 'Not specified',
           start_date: cd.startDate,
           manager: cd.manager || 'TBD',
           buddy: cd.buddy || '',
+          location: cd.location || '',
           status: 'not-started',
           progress: 0,
           completed_tasks: 0,
           total_tasks: DEFAULT_TASKS.length,
           notes: cd.notes || '',
+          personal_email: cd.personalEmail || cd.personal_email || '',
+          employment_type: cd.employmentType || cd.employment_type || 'Full-time',
+          work_mode: cd.workMode || cd.work_mode || 'On-site',
+          gender: cd.gender || '',
+          nationality: cd.nationality || '',
+          offered_ctc: cd.offeredCTC || cd.offered_ctc || '',
+          probation_days: cd.probationDays ?? cd.probation_days ?? 90,
+          source: cd.source || 'Bulk Upload',
+          date_of_birth: cd.dateOfBirth || cd.date_of_birth || null,
           ...auditCreate(c),
         }])
         .select('id')
@@ -680,6 +769,11 @@ app.post('/enable-account', async (c) => {
           job_title: onbRecord?.position || '',
           location: onbRecord?.location || '',
           join_date: onbRecord?.start_date || null,
+          personal_email: onbRecord?.personal_email || null,
+          employment_type: onbRecord?.employment_type || 'Full-Time',
+          gender: onbRecord?.gender || null,
+          nationality: onbRecord?.nationality || null,
+          date_of_birth: onbRecord?.date_of_birth || null,
           auth_user_id: authUserId,
           onboarding_id: employeeId,
           ...auditCreate(c),
@@ -793,6 +887,11 @@ app.post('/sync-to-directory', async (c) => {
           job_title: rec.position || '',
           location: rec.location || '',
           join_date: rec.start_date || null,
+          personal_email: rec.personal_email || null,
+          employment_type: rec.employment_type || 'Full-Time',
+          gender: rec.gender || null,
+          nationality: rec.nationality || null,
+          date_of_birth: rec.date_of_birth || null,
           auth_user_id: rec.auth_user_id || null,
           ...auditUpdate(c),
         }).eq('id', existing.id);
@@ -808,6 +907,11 @@ app.post('/sync-to-directory', async (c) => {
           job_title: rec.position || '',
           location: rec.location || '',
           join_date: rec.start_date || null,
+          personal_email: rec.personal_email || null,
+          employment_type: rec.employment_type || 'Full-Time',
+          gender: rec.gender || null,
+          nationality: rec.nationality || null,
+          date_of_birth: rec.date_of_birth || null,
           auth_user_id: rec.auth_user_id || null,
           onboarding_id: rec.id,
           ...auditCreate(c),
@@ -936,8 +1040,10 @@ app.put('/signature-requests/:id', async (c) => {
   const { id } = c.req.param();
   const body = await c.req.json();
   try {
+    const { signed_at, ...updates } = body;
     const { data, error } = await supabase.from('onboarding_signature_requests').update({
-      ...body,
+      ...updates,
+      ...(signed_at !== undefined ? { signed_date: signed_at } : {}),
       updated_at: new Date().toISOString(),
       ...auditUpdate(c),
     }).eq('id', id).select().single();
