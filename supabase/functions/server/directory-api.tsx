@@ -12,6 +12,12 @@ function getSupabase() {
   );
 }
 
+function isMissingLifecycleStatusColumn(error: unknown): boolean {
+  const message = String((error as { message?: string })?.message ?? '');
+  return message.includes('lifecycle_status')
+    && ((error as { code?: string })?.code === 'PGRST204' || message.includes('schema cache'));
+}
+
 // Get all employees from the employees table
 app.get('/employees', async (c) => {
   try {
@@ -93,20 +99,23 @@ app.post('/employees', async (c) => {
       .eq('email', body.email)
       .maybeSingle();
 
-    let result;
-    if (existing) {
-      result = await supabase
+    const saveEmployee = (employee: Record<string, any>) => existing
+      ? supabase
         .from('employees')
-        .update({...record, ...auditUpdate(c)})
+        .update({ ...employee, ...auditUpdate(c) })
         .eq('id', existing.id)
         .select()
-        .single();
-    } else {
-      result = await supabase
+        .single()
+      : supabase
         .from('employees')
-        .insert([{...record, ...auditCreate(c)}])
+        .insert([{ ...employee, ...auditCreate(c) }])
         .select()
         .single();
+
+    let result = await saveEmployee(record);
+    if (isMissingLifecycleStatusColumn(result.error)) {
+      const { lifecycle_status: _lifecycleStatus, ...compatibleRecord } = record;
+      result = await saveEmployee(compatibleRecord);
     }
 
     if (result.error) {
@@ -151,15 +160,25 @@ app.put('/employees/:id', async (c) => {
     assign('date_of_birth', ['dateOfBirth', 'date_of_birth'], value => value || null);
     if (putEc !== undefined) putRecord.emergency_contact = putEc;
 
-    const { data, error } = await supabase
+    let result = await supabase
       .from('employees')
       .update(putRecord)
       .eq('id', id)
       .select()
       .single();
 
-    if (error) return c.json({ success: false, error: error.message }, 404);
-    return c.json({ success: true, data });
+    if (isMissingLifecycleStatusColumn(result.error)) {
+      delete putRecord.lifecycle_status;
+      result = await supabase
+        .from('employees')
+        .update(putRecord)
+        .eq('id', id)
+        .select()
+        .single();
+    }
+
+    if (result.error) return c.json({ success: false, error: result.error.message }, 404);
+    return c.json({ success: true, data: result.data });
   } catch (error) {
     return c.json({ success: false, error: 'Failed to update employee' }, 500);
   }
