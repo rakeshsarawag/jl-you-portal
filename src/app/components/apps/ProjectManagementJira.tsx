@@ -5562,11 +5562,14 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
 interface ProjectDetailProps {
   project: Project;
   canManage: boolean;
+  canEditProject: boolean;
   isAdmin: boolean;
   currentUserId: string;
   userEmail: string;
   onBack: () => void;
   onGoToDashboard?: () => void;
+  onEditProject: () => void;
+  onDeleteProject: () => void;
   onUpdateRAG: (ragStatus: string) => Promise<void>;
   currentUser?: { id?: string; name?: string };
   // Section-level permission flags (passed from top-level sec* values)
@@ -6513,12 +6516,15 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
 function ProjectDetailPanel({
   project,
   canManage,
+  canEditProject,
   isAdmin: isAdminUser,
   currentUserId,
   currentUser,
   userEmail,
   onBack,
   onGoToDashboard,
+  onEditProject,
+  onDeleteProject,
   onUpdateRAG,
   secCreateTasks,
   secDeleteTasks,
@@ -6670,6 +6676,18 @@ function ProjectDetailPanel({
           featureName={project.name}
           projectId={project.id}
         />
+        {canEditProject && (
+          <Button type="button" size="sm" variant="outline" onClick={onEditProject}>
+            <Edit2 />
+            <span className="hidden sm:inline">{t("common.edit")}</span>
+          </Button>
+        )}
+        {isAdminUser && (
+          <Button type="button" size="sm" variant="outline" className="text-red-600 hover:text-red-700" onClick={onDeleteProject}>
+            <Trash2 />
+            <span className="hidden sm:inline">{t("common.delete")}</span>
+          </Button>
+        )}
         {canManage && (
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">{t("project.rag")}:</span>
@@ -7237,16 +7255,37 @@ const CATEGORY_ACCENTS: Record<string, string> = {
   operations: 'bg-teal-500', client_delivery: 'bg-orange-500', internal_tools: 'bg-slate-500',
 };
 
-function ProjectCard({ project, onSelect }: { project: Project; onSelect: () => void }) {
+function ProjectCard({
+  project,
+  onSelect,
+  canEdit = false,
+  canDelete = false,
+  onEdit,
+  onDelete,
+}: {
+  project: Project;
+  onSelect: () => void;
+  canEdit?: boolean;
+  canDelete?: boolean;
+  onEdit?: () => void;
+  onDelete?: () => void;
+}) {
   const health = computeHealthScore(project);
   const hl = healthLabel(health);
   const categoryAccent = CATEGORY_ACCENTS[project.category ?? ''] ?? 'bg-primary';
   const progress = project.progress ?? 0;
   return (
-    <Button
-      variant="ghost"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
-      className="h-auto w-full flex-col items-stretch gap-0 overflow-hidden rounded-xl border border-border bg-card p-0 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:bg-card hover:shadow-md"
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+      className="h-auto w-full cursor-pointer overflow-hidden rounded-xl border border-border bg-card p-0 text-left shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
     >
       <div className={`h-1.5 w-full ${categoryAccent}`} />
       <div className="p-4 space-y-3">
@@ -7275,8 +7314,50 @@ function ProjectCard({ project, onSelect }: { project: Project; onSelect: () => 
           <span className="flex items-center gap-1"><Users size={11} />{project.members?.length ?? 0}</span>
           <span className="flex items-center gap-1"><CheckSquare size={11} />{project.tasks?.length ?? 0} tasks</span>
         </div>
+        <div className="flex items-center justify-end gap-1 border-t border-border pt-3">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect();
+            }}
+          >
+            {t("common.view")}
+          </Button>
+          {canEdit && onEdit && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={(event) => {
+                event.stopPropagation();
+                onEdit();
+              }}
+            >
+              <Edit2 />
+              {t("common.edit")}
+            </Button>
+          )}
+          {canDelete && onDelete && (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="text-red-600 hover:text-red-700"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDelete();
+              }}
+            >
+              <Trash2 />
+              {t("common.delete")}
+            </Button>
+          )}
+        </div>
       </div>
-    </Button>
+    </div>
   );
 }
 
@@ -8218,6 +8299,7 @@ export function ProjectManagementJira({
 
   const role = currentUser?.primaryRole as string | undefined;
   const canManage = secManageTeam || secCreateTasks || secManageBacklog || secManageSprints;
+  const canEditProject = secCreateProject;
   const canAdminDelete = secDeleteProject;
   const userId = currentUser?.id ?? "";
   const userEmail = currentUser?.email ?? "";
@@ -8300,6 +8382,10 @@ export function ProjectManagementJira({
     if (!deleteConfirmProject || deleteNameInput !== deleteConfirmProject.name) return;
     try {
       await deleteProject(deleteConfirmProject.id);
+      if (selectedProject?.id === deleteConfirmProject.id) {
+        setSelectedProject(null);
+        setProjectOpenedFromDashboard(false);
+      }
       toast.success(t("project.projectDeleted"));
     } catch {
       toast.error(t("project.projectDeleteFailed"));
@@ -8459,7 +8545,15 @@ export function ProjectManagementJira({
         {projectsViewMode === 'grid' && view === 'list' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {projects.map((p) => (
-              <ProjectCard key={p.id} project={p} onSelect={() => setSelectedProject(p)} />
+              <ProjectCard
+                key={p.id}
+                project={p}
+                onSelect={() => setSelectedProject(p)}
+                canEdit={canEditProject}
+                canDelete={canAdminDelete}
+                onEdit={() => setEditingProject(p)}
+                onDelete={() => void handleDeleteProject(p.id, p.name)}
+              />
             ))}
             {projects.length === 0 && <p className="text-sm text-muted-foreground col-span-3 text-center py-8">{t("projects.noProjects")}</p>}
           </div>
@@ -8477,7 +8571,7 @@ export function ProjectManagementJira({
                   <th className="text-left py-2 px-3 font-medium">Manager</th>
                   <th className="text-left py-2 px-3 font-medium">Progress</th>
                   <th className="text-left py-2 px-3 font-medium">Budget %</th>
-                  <th className="py-2 px-3"></th>
+                  <th className="py-2 px-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -8496,7 +8590,21 @@ export function ProjectManagementJira({
                       <td className="py-2 px-3 w-28"><ProgressBar value={p.progress ?? 0} /></td>
                       <td className="py-2 px-3 text-muted-foreground">{budgetPct !== null ? `${budgetPct}%` : '—'}</td>
                       <td className="py-2 px-3">
-                        <button onClick={(e) => { e.stopPropagation(); setSelectedProject(p); }} className="text-xs text-indigo-600 hover:text-indigo-800">Open</button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button type="button" size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); setSelectedProject(p); }}>
+                            {t("common.view")}
+                          </Button>
+                          {canEditProject && (
+                            <Button type="button" size="icon" variant="ghost" title={t("common.edit")} onClick={(e) => { e.stopPropagation(); setEditingProject(p); }}>
+                              <Edit2 />
+                            </Button>
+                          )}
+                          {canAdminDelete && (
+                            <Button type="button" size="icon" variant="ghost" className="text-red-600 hover:text-red-700" title={t("common.delete")} onClick={(e) => { e.stopPropagation(); void handleDeleteProject(p.id, p.name); }}>
+                              <Trash2 />
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -8633,7 +8741,7 @@ export function ProjectManagementJira({
                               >
                                 <Circle className="w-4 h-4" />
                               </button>
-                              {canManage && (
+                              {canEditProject && (
                                 <>
                                   <button
                                     onClick={() => setEditingProject(project)}
@@ -8856,6 +8964,7 @@ export function ProjectManagementJira({
         <ProjectDetailPanel
           project={projects.find(p => p.id === selectedProject.id) ?? selectedProject}
           canManage={canManage}
+          canEditProject={canEditProject}
           isAdmin={canAdminDelete}
           currentUserId={userId}
           userEmail={userEmail}
@@ -8869,6 +8978,8 @@ export function ProjectManagementJira({
           secManageMilestones={secManageMilestones}
           onBack={() => { setSelectedProject(null); setProjectOpenedFromDashboard(false); }}
           onGoToDashboard={projectOpenedFromDashboard ? () => { setSelectedProject(null); setMainView("dashboard"); setProjectOpenedFromDashboard(false); } : undefined}
+          onEditProject={() => setEditingProject(projects.find(p => p.id === selectedProject.id) ?? selectedProject)}
+          onDeleteProject={() => void handleDeleteProject(selectedProject.id, selectedProject.name)}
           onUpdateRAG={(ragStatus) => updateRAG(selectedProject.id, ragStatus)}
           onCreateTask={async (data) => {
             await createTask(selectedProject.id, data);
