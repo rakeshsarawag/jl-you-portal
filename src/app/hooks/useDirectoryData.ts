@@ -343,15 +343,29 @@ export function useDirectoryData(userEmail?: string) {
     toast.success(`Exported ${list.length} employees to CSV`);
   };
 
-  // Filtered view
-  const filtered = employees.filter(e => {
-    const matchSearch = !search || [e.name, e.email, e.designation, e.department].some(f =>
-      f.toLowerCase().includes(search.toLowerCase())
-    );
-    const matchDept = !filterDept || e.department === filterDept;
-    const matchStatus = !filterStatus || e.status === filterStatus;
-    return matchSearch && matchDept && matchStatus;
-  });
+  // Filtered view — employee codes define the default directory order.
+  const filtered = employees
+    .filter(e => {
+      const matchSearch = !search || [e.employee_code, e.name, e.email, e.designation, e.department].some(f =>
+        (f ?? '').toLowerCase().includes(search.toLowerCase())
+      );
+      const matchDept = !filterDept || e.department === filterDept;
+      const matchStatus = !filterStatus || e.status === filterStatus;
+      return matchSearch && matchDept && matchStatus;
+    })
+    .sort((a, b) => {
+      const aCode = a.employee_code?.trim();
+      const bCode = b.employee_code?.trim();
+      if (aCode && bCode) {
+        const codeComparison = aCode.localeCompare(bCode, undefined, { numeric: true, sensitivity: 'base' });
+        if (codeComparison !== 0) return codeComparison;
+      } else if (aCode) {
+        return -1;
+      } else if (bCode) {
+        return 1;
+      }
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
 
   const departments = [...new Set(employees.map(e => e.department).filter(Boolean))].sort();
   const orgTree = buildOrgTree(employees);

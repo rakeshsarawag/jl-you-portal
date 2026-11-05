@@ -599,7 +599,7 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
     const example = [
       "John Doe", "john.doe@example.com", "+1-555-0100", "Software Engineer",
       "Engineering", "5", "75000", "Acme Corp", "65000", "30 days", "Yes",
-      "2026-06-30", "Jane Manager", "Job Portal", '"React,TypeScript"',
+      "2026-06-30", "JL001", "Job Portal", '"React,TypeScript"',
       "React", "American", "Acme Corp", "", "", "", "Initial screening completed",
     ].join(",");
     const csv = TEMPLATE_HEADERS.join(",") + "\n" + example;
@@ -738,6 +738,7 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
               </div>
               <p className="text-xs text-muted-foreground">
                 Experience uses <strong>years.months</strong>: enter 6.2 for 6 years 2 months, or 0 for a fresher.
+                Enter the Hiring Manager using their employee code, for example <strong>JL001</strong>.
               </p>
 
               {fileName && (

@@ -252,6 +252,27 @@ app.post('/bulk-upload', async (c) => {
       .select('email');
     const existingEmails = new Set((existing || []).map((e: any) => e.email.toLowerCase()));
 
+    // Bulk-upload templates use employee codes (for example JL001) rather than
+    // exposing internal UUIDs. Names and UUIDs remain accepted for compatibility.
+    const employeeByReference = new Map<string, any>();
+    const hasHiringManagers = candidatesData.some(candidate =>
+      String(candidate.hiringManager || candidate.hiring_manager || '').trim()
+    );
+    if (hasHiringManagers) {
+      const { data: employees, error: employeesError } = await supabase
+        .from('employees')
+        .select('id, employee_code, name');
+      if (employeesError) {
+        return c.json({ success: false, error: 'Could not validate hiring manager employee codes' }, 500);
+      }
+      for (const employee of employees || []) {
+        for (const reference of [employee.id, employee.employee_code, employee.name]) {
+          const normalizedReference = String(reference || '').trim().toLocaleLowerCase();
+          if (normalizedReference) employeeByReference.set(normalizedReference, employee);
+        }
+      }
+    }
+
     for (let i = 0; i < candidatesData.length; i++) {
       const cd = candidatesData[i];
       const row = i + 2;
@@ -264,6 +285,19 @@ app.post('/bulk-upload', async (c) => {
 
       if (existingEmails.has(cd.email.toLowerCase())) {
         results.failed.push({ row, error: `Email ${cd.email} already exists`, data: cd });
+        continue;
+      }
+
+      const hiringManagerReference = String(cd.hiringManager || cd.hiring_manager || '').trim();
+      const hiringManager = hiringManagerReference
+        ? employeeByReference.get(hiringManagerReference.toLocaleLowerCase())
+        : null;
+      if (hiringManagerReference && !hiringManager) {
+        results.failed.push({
+          row,
+          error: `Hiring Manager "${hiringManagerReference}" was not found. Use an employee code such as JL001.`,
+          data: cd,
+        });
         continue;
       }
 
@@ -284,7 +318,7 @@ app.post('/bulk-upload', async (c) => {
         applied_date: cd.appliedDate || new Date().toISOString().split('T')[0],
         skills: cd.skills || [],
         status: 'Active',
-        hiring_manager: cd.hiringManager || '',
+        hiring_manager: hiringManager?.name || '',
         notes: '',
         user_notes: cd.userNotes || cd.user_notes || cd.notes || '',
         expertise: cd.expertise || cd.Expertise || '',

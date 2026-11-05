@@ -2471,13 +2471,18 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
             ) : (
               <div className="bg-card border border-border rounded-xl overflow-hidden">
                 <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  <div className="flex-1 min-w-48">Employee</div>
-                  {visibleCols.has('employee_code') && <div className="hidden sm:block w-24 shrink-0">Code</div>}
-                  {visibleCols.has('department') && <div className="hidden sm:block w-40 shrink-0">Department</div>}
+                  <div className="w-64 shrink-0">Employee</div>
+                  {visibleCols.has('employee_code') && <div className="hidden sm:block w-28 shrink-0">Code</div>}
+                  {visibleCols.has('department') && <div className="hidden sm:block w-36 shrink-0">Department</div>}
+                  {visibleCols.has('manager') && <div className="hidden xl:block w-40 shrink-0">Manager</div>}
                   {visibleCols.has('email') && <div className="hidden md:block w-52 shrink-0">Contact</div>}
                   {visibleCols.has('location') && <div className="hidden lg:block w-32 shrink-0">Location</div>}
-                  <div className="w-24 shrink-0">Status</div>
-                  {(canEdit || canDelete) && <div className="w-16 shrink-0 text-right">Actions</div>}
+                  {visibleCols.has('status') && <div className="w-24 shrink-0">Status</div>}
+                  {(canEdit || canDelete) && (
+                    <div className="w-20 shrink-0 text-right">
+                      {canEdit && canDelete ? 'Edit / Delete' : canEdit ? 'Edit' : 'Delete'}
+                    </div>
+                  )}
                 </div>
                 {/* Virtual scroll container for list rows */}
                 <div ref={listParentRef} style={{ height: Math.min(dir.filtered.length * 64, 600), overflowY: 'auto' }}>
@@ -2493,23 +2498,26 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                           onMouseEnter={e => handleHoverStart(e as any, emp)}
                           onMouseLeave={handleHoverEnd}
                         >
-                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                          <div className="flex w-64 shrink-0 items-center gap-3 min-w-0">
                             <Avatar name={emp.name} size="sm" />
                             <div className="min-w-0">
-                              <p className="font-medium text-foreground truncate">
-                                {emp.name}{emp.employee_code ? ` (${emp.employee_code})` : ''}
-                              </p>
-                              <p className="text-xs text-muted-foreground truncate">{emp.designation}</p>
+                              <p className="font-medium text-foreground truncate">{emp.name}</p>
+                              {visibleCols.has('designation') && <p className="text-xs text-muted-foreground truncate">{emp.designation}</p>}
                             </div>
                           </div>
                           {visibleCols.has('employee_code') && (
-                            <div className="hidden sm:block w-24 shrink-0 text-xs font-mono text-muted-foreground truncate">
+                            <div className="hidden sm:block w-28 shrink-0 text-xs font-mono text-muted-foreground truncate">
                               {emp.employee_code || '—'}
                             </div>
                           )}
                           {visibleCols.has('department') && (
-                            <div className="hidden sm:block w-40 shrink-0 text-xs text-muted-foreground">
+                            <div className="hidden sm:block w-36 shrink-0 text-xs text-muted-foreground">
                               <div className="flex items-center gap-1"><Building2 size={11} /><span className="truncate">{emp.department}</span></div>
+                            </div>
+                          )}
+                          {visibleCols.has('manager') && (
+                            <div className="hidden xl:block w-40 shrink-0 truncate text-xs text-muted-foreground">
+                              {emp.manager_name || '—'}
                             </div>
                           )}
                           {visibleCols.has('email') && (
@@ -2523,18 +2531,20 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                               <span className="truncate">{emp.location || '—'}</span>
                             </div>
                           )}
-                          <div className="flex w-24 shrink-0 flex-wrap gap-1">
-                            <StatusBadge status={emp.status} />
-                            {onLeaveIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">🌴</span>}
-                            {wfhIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">🏠</span>}
-                          </div>
+                          {visibleCols.has('status') && (
+                            <div className="flex w-24 shrink-0 flex-wrap gap-1">
+                              <StatusBadge status={emp.status} />
+                              {onLeaveIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">🌴</span>}
+                              {wfhIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">🏠</span>}
+                            </div>
+                          )}
                           {(canEdit || canDelete) && (
-                            <div className="flex w-16 shrink-0 justify-end gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-                              {canEdit && <button onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
+                            <div className="flex w-20 shrink-0 justify-end gap-1" onClick={e => e.stopPropagation()}>
+                              {canEdit && <button title={`Edit ${emp.name}`} aria-label={`Edit ${emp.name}`} onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors">
                                 <Edit2 size={13} className="text-muted-foreground" />
                               </button>}
-                              {canDelete && <button onClick={() => setDeletingId(emp.id)}
+                              {canDelete && <button title={`Delete ${emp.name}`} aria-label={`Delete ${emp.name}`} onClick={() => setDeletingId(emp.id)}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 transition-colors">
                                 <Trash2 size={13} className="text-red-400" />
                               </button>}
