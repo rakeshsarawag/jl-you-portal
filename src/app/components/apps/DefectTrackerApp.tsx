@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { InlineLoader } from "../ui/PageLoader";
 import { useNavigate } from "react-router";
 import { API_BASE, apiHeaders, supabase } from "../../utils/constants";
@@ -627,14 +627,16 @@ function LogDefectModal({
   onClose,
   onCreate,
   masterData,
+  projectContext,
 }: {
   onClose: () => void;
   onCreate: (data: any) => Promise<Defect | null>;
   masterData?: any;
+  projectContext?: { id: string; name: string };
 }) {
   const { currentUser: user } = useUser();
   const [form, setForm] = useState<any>({
-    projectId: "", projectName: "General", title: "", severity: "Medium", priority: "P3", status: "Open",
+    projectId: projectContext?.id ?? "", projectName: projectContext?.name ?? "General", title: "", severity: "Medium", priority: "P3", status: "Open",
     description: "", stepsToReproduce: [""], expectedResult: "", actualResult: "",
     environment: "Development", systemName: "", clientName: "", externalTicketNo: "", transportRequest: "",
     os: "", browser: "", buildVersion: "", foundInVersion: "", introducedInSprint: "",
@@ -662,6 +664,10 @@ function LogDefectModal({
     window.addEventListener("keydown", handleKey);
     const loadAccessibleProjects = async () => {
       if (!user) return;
+      if (projectContext) {
+        setProjects([projectContext]);
+        return;
+      }
       if (isAdmin) {
         const { data } = await supabase.from("projects").select("id,name").order("name");
         setProjects((data ?? []).filter((project: any) => project.name));
@@ -685,7 +691,7 @@ function LogDefectModal({
     };
     void loadAccessibleProjects();
     return () => window.removeEventListener("keydown", handleKey);
-  }, [isAdmin, onClose, user]);
+  }, [isAdmin, onClose, projectContext, user]);
 
   // Load sprints when project changes
   useEffect(() => {
@@ -795,6 +801,7 @@ function LogDefectModal({
               </label>
               <select
                 value={form.projectId}
+                disabled={Boolean(projectContext)}
                 onChange={(e) => {
                   const proj = projects.find(p => p.id === e.target.value);
                   set("projectId", e.target.value);
@@ -802,14 +809,16 @@ function LogDefectModal({
                   set("sprintId", "");
                   set("sprintName", "");
                 }}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200 disabled:bg-gray-50 disabled:text-gray-700"
               >
                 {isAdmin && <option value="">General / Not project-specific</option>}
                 {!isAdmin && <option value="">Select an assigned project</option>}
                 {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
               <p className="text-xs text-gray-400 mt-1">
-                {isAdmin
+                {projectContext
+                  ? `This defect will be linked to ${projectContext.name}.`
+                  : isAdmin
                   ? "Leave this as General for issues outside a project."
                   : "Only projects where you are an assigned team member are available."}
               </p>
@@ -1213,6 +1222,7 @@ function AllDefectsScreen({
   canUpdate = true,
   canDelete = false,
   canExport = true,
+  projectContext,
 }: {
   initialFilters?: Partial<DefectFilters & { myDefects?: boolean }>;
   onNavigateDetail: (id: string) => void;
@@ -1220,6 +1230,7 @@ function AllDefectsScreen({
   canUpdate?: boolean;
   canDelete?: boolean;
   canExport?: boolean;
+  projectContext?: { id: string; name: string };
 }) {
   const { defects, loading, loadDefects, createDefect, bulkUpdateDefects, deleteDefect, masterData, loadMasterData } = useDefectTrackerData();
   const { currentUser: user } = useUser();
@@ -1279,11 +1290,13 @@ function AllDefectsScreen({
       filters.assigneeNames = [user.name, user.email].filter(Boolean);
     }
     if (initialFilters?.severity) filters.severity = initialFilters.severity;
+    if (initialFilters?.projectId) filters.projectId = initialFilters.projectId;
     loadDefects(filters);
     loadMasterData();
   }, [
     isMyDefects,
     initialFilters?.severity,
+    initialFilters?.projectId,
     user?.employeeId,
     user?.appUserId,
     user?.id,
@@ -1885,7 +1898,11 @@ function AllDefectsScreen({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <h1 className="text-xl font-bold text-gray-900">
-          {isMyDefects ? t("defectTracker.myDefects") : t("defectTracker.allDefects")}
+          {projectContext
+            ? `${projectContext.name} Defects`
+            : isMyDefects
+              ? t("defectTracker.myDefects")
+              : t("defectTracker.allDefects")}
         </h1>
         {canLog && (
           <button
@@ -2383,10 +2400,11 @@ function AllDefectsScreen({
 
       {!loading && filtered.length > 0 && view === "table" && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-          <table className="w-full text-sm min-w-[820px]">
+          <table className="w-full min-w-[1040px] table-auto text-sm">
+            <caption className="sr-only">Defects matching the current filters</caption>
             <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <th className="pl-4 pr-4 py-3 w-12">
+                <th scope="col" className="pl-4 pr-4 py-3 w-12">
                   <button onClick={selectAll} className="text-gray-400 hover:text-red-600">
                     {selectedIds.size === paginated.length && paginated.length > 0
                       ? <CheckSquare className="h-4 w-4 text-red-600" />
@@ -2394,11 +2412,11 @@ function AllDefectsScreen({
                   </button>
                 </th>
                 {DEFECT_TABLE_COLUMNS.filter((column) => isColumnVisible(column.key)).map((column) => (
-                  <th key={column.key} className="text-left py-3 pr-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  <th scope="col" key={column.key} className="text-left py-3 pr-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                     {column.header}
                   </th>
                 ))}
-                <th className="py-3 pr-3" aria-label="Row actions" />
+                <th scope="col" className="py-3 pr-3" aria-label="Row actions" />
               </tr>
             </thead>
             <tbody>
@@ -2519,6 +2537,7 @@ function AllDefectsScreen({
           onClose={() => setShowLogModal(false)}
           onCreate={createDefect}
           masterData={masterData}
+          projectContext={projectContext}
         />
       )}
 
@@ -4931,6 +4950,45 @@ function SettingsScreen({ canManageSla }: { canManageSla: boolean }) {
 }
 
 // ── Main Export ───────────────────────────────────────────────────────────────
+
+export function ProjectDefectWorkspace({
+  projectId,
+  projectName,
+  canManage,
+}: {
+  projectId: string;
+  projectName: string;
+  canManage: boolean;
+}) {
+  const [detailDefectId, setDetailDefectId] = useState<string | null>(null);
+  const projectContext = useMemo(
+    () => ({ id: projectId, name: projectName }),
+    [projectId, projectName],
+  );
+  const initialFilters = useMemo(() => ({ projectId }), [projectId]);
+
+  if (detailDefectId) {
+    return (
+      <DefectDetailScreen
+        defectId={detailDefectId}
+        onBack={() => setDetailDefectId(null)}
+        canUpdate={canManage}
+      />
+    );
+  }
+
+  return (
+    <AllDefectsScreen
+      initialFilters={initialFilters}
+      onNavigateDetail={setDetailDefectId}
+      canLog={canManage}
+      canUpdate={canManage}
+      canDelete={false}
+      canExport
+      projectContext={projectContext}
+    />
+  );
+}
 
 export function DefectTrackerApp({ accessToken, onLogout }: Props) {
   const { currentUser } = useUser();

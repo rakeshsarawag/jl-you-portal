@@ -1,0 +1,354 @@
+/workspaces/default/code
+
+-- files --
+vitest.config.ts
+index.html
+MASTER_PROGRESS.md
+public/vite.svg
+public/manifest.json
+public/sw.js
+CLAUDE.md
+pnpm-lock.yaml
+default_shadcn_theme.css
+utils/supabase/info.tsx
+guidelines/Guidelines.md
+guidelines/FEATURES_STATUS.md
+guidelines/DATA_ARCHITECTURE.md
+guidelines/ATTRIBUTIONS.md
+guidelines/ROADMAP.md
+vite.config.ts
+README.md
+playwright.config.ts
+AGENTS.md
+supabase/config.toml
+test-results/audit-logs-audit-logs-Audi-363da-ew-security-compliance-page-chromium-retry1/error-context.md
+supabase/migrations/01_schema.sql
+supabase/migrations/12_jl_sequences.sql
+supabase/migrations/26_allow_general_defects.sql
+supabase/migrations/08_communications_columns.sql
+supabase/migrations/21_auth_hook_and_row_rls.sql
+supabase/migrations/23_close_remaining_anon_surfaces.sql
+supabase/migrations/25_authenticated_permission_reads.sql
+supabase/migrations/22_deny_anon_rest_api.sql
+supabase/migrations/05_rls_security.sql
+supabase/migrations/17_recruitment_expertise.sql
+supabase/migrations/14_temp_access_grants.sql
+supabase/migrations/run-all.sql
+supabase/migrations/06_rls_fix.sql
+supabase/migrations/02_seed_data.sql
+supabase/migrations/20_enforce_auth_rls.sql
+supabase/migrations/04_analytics_anomalies.sql
+supabase/migrations/10_chat_messages_sender_fk.sql
+supabase/migrations/19_project_tasks_timestamps.sql
+supabase/migrations/24_fix_app_user_role_resolution.sql
+supabase/migrations/18_task_comments.sql
+supabase/migrations/07_project_tasks_columns.sql
+supabase/migrations/16_employee_code_jl.sql
+supabase/migrations/03_notifications_and_push.sql
+supabase/migrations/11_drop_chat_tables.sql
+supabase/migrations/09_chat_members_user_id.sql
+supabase/migrations/13_tds_slabs.sql
+supabase/migrations/15_notifications_rls_fix.sql
+tests/e2e/defect-tracker/defect-tracker.spec.ts
+test-results/permissions-permission-man-e4ba6-d-active-when-changes-exist-chromium-retry1/error-context.md
+tests/e2e/projects/project-management.spec.ts
+tests/e2e/projects/project-management-expanded.spec.ts
+supabase/functions/make-server/index.ts
+tests/e2e/permissions/permission-manager.spec.ts
+test-results/projects-project-managemen-dda6a-m-list-or-add-member-button-chromium-retry1/error-context.md
+test-results/permissions-permission-man-e4ba6-d-active-when-changes-exist-chromium/error-context.md
+test-results/master-data-master-data-Ma-688ba--or-pay-grade-section-loads-chromium/error-context.md
+tests/e2e/it-services/it-services-expanded.spec.ts
+tests/e2e/it-services/tickets.spec.ts
+supabase/functions/server/project-api.tsx
+supabase/functions/server/project-backlog-api.tsx
+supabase/functions/server/notify-helpers.tsx
+supabase/functions/server/asset-api.tsx
+supabase/functions/server/invoice-api.tsx
+supabase/functions/server/communications-api.tsx
+supabase/functions/server/linkedin-api.tsx
+supabase/functions/server/knowledge-api.tsx
+supabase/functions/server/project-defects-api.tsx
+supabase/functions/server/directory-api.tsx
+supabase/functions/server/performance-api.tsx
+supabase/functions/server/kv_store.tsx
+supabase/functions/server/master-data-api.tsx
+supabase/functions/server/scheduled-reports-api.tsx
+supabase/functions/server/users.ts
+supabase/functions/server/project-management-api.tsx
+supabase/functions/server/training-api.tsx
+supabase/functions/server/push-utils.tsx
+supabase/functions/server/validate.ts
+supabase/functions/server/permissions.ts
+supabase/functions/server/audit-helpers.ts
+supabase/functions/server/audit-logs-api.tsx
+supabase/functions/server/lifecycle-api.tsx
+supabase/functions/server/notifications-api.tsx
+supabase/functions/server/index.tsx
+supabase/functions/server/onboarding-api.tsx
+supabase/functions/server/index.ts
+supabase/functions/server/it-services-api.tsx
+supabase/functions/server/workflow-api.tsx
+supabase/functions/server/role-guard.ts
+supabase/functions/server/okr-api.tsx
+supabase/functions/server/demo-data-api.tsx
+supabase/functions/server/push-api.tsx
+supabase/functions/server/employee-api.tsx
+supabase/functions/server/recruitment-api.tsx
+supabase/functions/server/payroll-api.tsx
+supabase/functions/server/defect-tracker-api.tsx
+supabase/functions/server/employee-dashboard-api.tsx
+tests/e2e/assets/asset-management.spec.ts
+tests/e2e/assets/asset-management-expanded.spec.ts
+test-results/permissions-permission-man-8ba3f-nd-shows-grant-form-trigger-chromium/error-context.md
+tests/e2e/linkedin/linkedin-post-manager.spec.ts
+test-results/projects-project-managemen-31deb-s-On-Track-At-Risk-Delayed--chromium-retry1/error-context.md
+test-results/permissions-permission-man-cf971-t-access-permission-manager-chromium/error-context.md
+tests/e2e/employee-dashboard/employee-dashboard.spec.ts
+test-results/master-data-master-data-Ma-a8aef-s-Job-Titles-section-exists-chromium-retry1/error-context.md
+tests/e2e/knowledge-base/knowledge-base.spec.ts
+test-results/audit-logs-audit-logs-Audi-62ef8-y-opens-detail-if-available-chromium-retry1/error-context.md
+tests/e2e/recruitment/recruitment-expanded.spec.ts
+test-results/assets-asset-management-As-5ceae-m-validates-required-fields-chromium/error-context.md
+tests/e2e/invoice/invoice-management.spec.ts
+tests/e2e/recruitment/candidate-crud.spec.ts
+test-results/permissions-permission-man-9292c-ssions-tab-renders-sections-chromium-retry1/error-context.md
+tests/e2e/payroll/payroll-run.spec.ts
+tests/e2e/payroll/payroll-process.spec.ts
+tests/e2e/payroll/payroll-slabs.spec.ts
+test-results/audit-logs-audit-logs-Audi-8d66e-ee-cannot-access-audit-logs-chromium-retry1/error-context.md
+tests/e2e/shared/fixtures.ts
+supabase/functions/make-server-1fe2c468/project-api.tsx
+test-results/master-data-master-data-Ma-a8aef-s-Job-Titles-section-exists-chromium/error-context.md
+tests/e2e/collaboration/chat-message.spec.ts
+supabase/functions/make-server-1fe2c468/project-backlog-api.tsx
+supabase/functions/make-server-1fe2c468/notify-helpers.tsx
+supabase/functions/make-server-1fe2c468/asset-api.tsx
+supabase/functions/make-server-1fe2c468/invoice-api.tsx
+supabase/functions/make-server-1fe2c468/communications-api.tsx
+supabase/functions/make-server-1fe2c468/linkedin-api.tsx
+supabase/functions/make-server-1fe2c468/knowledge-api.tsx
+supabase/functions/make-server-1fe2c468/project-defects-api.tsx
+supabase/functions/make-server-1fe2c468/directory-api.tsx
+supabase/functions/make-server-1fe2c468/performance-api.tsx
+supabase/functions/make-server-1fe2c468/admin-api.tsx
+supabase/functions/make-server-1fe2c468/kv_store.tsx
+supabase/functions/make-server-1fe2c468/master-data-api.tsx
+supabase/functions/make-server-1fe2c468/users.ts
+supabase/functions/make-server-1fe2c468/project-management-api.tsx
+supabase/functions/make-server-1fe2c468/training-api.tsx
+supabase/functions/make-server-1fe2c468/push-utils.tsx
+supabase/functions/make-server-1fe2c468/permissions.ts
+supabase/functions/make-server-1fe2c468/audit-helpers.ts
+supabase/functions/make-server-1fe2c468/lifecycle-api.tsx
+supabase/functions/make-server-1fe2c468/notifications-api.tsx
+supabase/functions/make-server-1fe2c468/onboarding-api.tsx
+supabase/functions/make-server-1fe2c468/index.ts
+supabase/functions/make-server-1fe2c468/it-services-api.tsx
+supabase/functions/make-server-1fe2c468/workflow-api.tsx
+supabase/functions/make-server-1fe2c468/okr-api.tsx
+supabase/functions/make-server-1fe2c468/demo-data-api.tsx
+supabase/functions/make-server-1fe2c468/push-api.tsx
+supabase/functions/make-server-1fe2c468/employee-api.tsx
+supabase/functions/make-server-1fe2c468/recruitment-api.tsx
+supabase/functions/make-server-1fe2c468/payroll-api.tsx
+supabase/functions/make-server-1fe2c468/defect-tracker-api.tsx
+supabase/functions/make-server-1fe2c468/employee-dashboard-api.tsx
+test-results/assets-asset-management-As-9b031-ble-Available-Assigned-etc--chromium/error-context.md
+amplify.yml
+tests/e2e/communications/post-announcement.spec.ts
+postcss.config.mjs
+tests/e2e/communications/communications-expanded.spec.ts
+deploy.sh
+test-results/projects-project-managemen-36dec-m-validates-required-fields-chromium-retry1/error-context.md
+test-results/master-data-master-data-Ma-940cd-nt-Can-add-a-new-department-chromium-retry1/error-context.md
+test-results/assets-asset-management-As-88587-min-can-open-Add-Asset-form-chromium/error-context.md
+test-results/projects-project-managemen-6ab5c-t-Manager-can-view-projects-chromium/error-context.md
+docs/SECURITY_FEATURES.md
+docs/API_HOOKS_REFERENCE.md
+docs/PRODUCT_FEATURES.md
+docs/QUICK_REFERENCE.md
+test-results/projects-project-managemen-36dec-m-validates-required-fields-chromium/error-context.md
+tests/e2e/workflow/workflow-dashboard.spec.ts
+test-results/assets-asset-management-As-895ea-h-filter-reduces-asset-list-chromium/error-context.md
+tests/unit/hooks/usePagination.test.ts
+tests/unit/hooks/useRBAC-extended.test.ts
+tests/unit/hooks/useRBAC.test.ts
+test-results/master-data-master-data-Ma-30230-ment-name-field-is-required-chromium/error-context.md
+docs/guides/EMPLOYEE_DASHBOARD_USER_GUIDE.md
+test-results/assets-asset-management-As-895ea-h-filter-reduces-asset-list-chromium-retry1/error-context.md
+test-results/master-data-master-data-Ma-17314-partment-section-is-visible-chromium-retry1/error-context.md
+test-results/permissions-permission-man-e4580-m-validates-required-fields-chromium-retry1/error-context.md
+tests/e2e/invoice/invoice-expanded.spec.ts
+test-results/projects-project-managemen-31deb-s-On-Track-At-Risk-Delayed--chromium/error-context.md
+tests/e2e/rbac/access-control.spec.ts
+test-results/projects-project-managemen-e2710-role-cannot-create-projects-chromium-retry1/error-context.md
+tests/unit/utils/sharedDataUtils.test.ts
+tests/unit/utils/logger.test.ts
+tests/unit/utils/invoiceUtils.test.ts
+tests/unit/utils/auditLog.test.ts
+docs/architecture/ARCHITECTURE.md
+tests/unit/utils/roleDefinitions.test.ts
+tests/unit/utils/leaveBalance.test.ts
+tests/unit/utils/invoiceCalculations.test.ts
+tests/unit/utils/rbacPermissions.test.ts
+tests/unit/utils/tempAccessGrants.test.ts
+tests/unit/utils/sessionTimeoutExtended.test.ts
+tests/unit/utils/profileCompleteness.test.ts
+tests/unit/utils/zodSchemas.test.ts
+tests/unit/utils/permissionConfig.test.ts
+tests/unit/utils/payrollCalculations.test.ts
+tests/unit/utils/leaveBalanceExtended.test.ts
+tests/unit/utils/dateHelpers.test.ts
+tests/unit/utils/projectUtils.test.ts
+tests/unit/utils/permissionChecker.test.ts
+docs/APP_BLUEPRINTS_EXTENDED.md
+tests/e2e/master-data/master-data.spec.ts
+tests/unit/utils/workflowEngine.test.ts
+docs/APP_BLUEPRINTS.md
+tests/unit/utils/okrUtils.test.ts
+tests/unit/utils/constants.test.ts
+tests/unit/utils/payrollTDS.test.ts
+tests/unit/utils/sessionTimeout.test.ts
+tests/README.md
+test-results/permissions-permission-man-0aee1--app-list-with-role-toggles-chromium-retry1/error-context.md
+tests/e2e/okr/okr-management.spec.ts
+tests/e2e/okr/okr-expanded.spec.ts
+test-results/audit-logs-audit-logs-Audi-4fe48-y-filter-reduces-result-set-chromium/error-context.md
+test-results/master-data-master-data-Ma-c8612-Payroll-policy-config-loads-chromium-retry1/error-context.md
+tests/e2e/auth/access-control.spec.ts
+tests/e2e/auth/login.spec.ts
+scripts/_db.mjs
+scripts/verify-no-anon-access.mjs
+scripts/seed-value-helps.mjs
+scripts/generate-sql.mjs
+scripts/seed-permissions.mjs
+scripts/migrate-all.mjs
+scripts/migrate-onboarding-source.mjs
+scripts/merge-i18n-additions.mjs
+package.json
+test-results/projects-project-managemen-34b2a--with-name-dates-and-budget-chromium/error-context.md
+tests/e2e/audit-logs/audit-logs.spec.ts
+test-results/permissions-permission-man-a32b0-nges-are-flagged-as-unsaved-chromium-retry1/error-context.md
+tests/e2e/performance/performance-expanded.spec.ts
+tests/e2e/performance/performance-review.spec.ts
+test-results/master-data-master-data-Ma-c8612-Payroll-policy-config-loads-chromium/error-context.md
+tests/e2e/leaves/leave-management-expanded.spec.ts
+test-results/projects-project-managemen-094b6-nd-access-milestone-section-chromium/error-context.md
+tests/e2e/leaves/leave-flow.spec.ts
+test-results/assets-asset-management-As-9b031-ble-Available-Assigned-etc--chromium-retry1/error-context.md
+test-results/projects-project-managemen-3807b-m-validates-required-fields-chromium/error-context.md
+tests/e2e/onboarding/onboarding-expanded.spec.ts
+tests/e2e/onboarding/onboarding-flow.spec.ts
+test-results/audit-logs-audit-logs-Audi-eb2c0--export-triggers-a-download-chromium/error-context.md
+
+-- package --
+{
+  "name": "@figma/my-make-file",
+  "private": true,
+  "version": "0.0.1",
+  "packageManager": "pnpm@10.34.3",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test:unit": "vitest run tests/unit --config vitest.config.ts",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "SKIP_WEBSERVER=1 playwright test --ui",
+    "test:e2e:headed": "HEADED=1 SKIP_WEBSERVER=1 playwright test --workers=1",
+    "test:e2e:auto": "playwright test --workers=1",
+    "test:e2e:slow": "HEADED=1 SLOW_MO=500 SKIP_WEBSERVER=1 playwright test --workers=1",
+    "test:security:no-anon": "node scripts/verify-no-anon-access.mjs",
+    "migrate:all": "node scripts/migrate-all.mjs",
+    "migrate:onboarding-source": "node scripts/migrate-onboarding-source.mjs",
+    "seed:permissions": "node scripts/seed-permissions.mjs",
+    "seed:value-helps": "node scripts/seed-value-helps.mjs",
+    "generate:sql": "node scripts/generate-sql.mjs"
+  },
+  "dependencies": {
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@popperjs/core": "2.11.8",
+    "@radix-ui/react-accordion": "1.2.3",
+    "@radix-ui/react-alert-dialog": "1.1.6",
+    "@radix-ui/react-aspect-ratio": "1.1.2",
+    "@radix-ui/react-avatar": "1.1.3",
+    "@radix-ui/react-checkbox": "1.1.4",
+    "@radix-ui/react-collapsible": "1.1.3",
+    "@radix-ui/react-context-menu": "2.2.6",
+    "@radix-ui/react-dialog": "1.1.6",
+    "@radix-ui/react-dropdown-menu": "2.1.6",
+    "@radix-ui/react-hover-card": "1.1.6",
+    "@radix-ui/react-label": "2.1.2",
+    "@radix-ui/react-menubar": "1.1.6",
+    "@radix-ui/react-navigation-menu": "1.2.5",
+    "@radix-ui/react-popover": "1.1.6",
+    "@radix-ui/react-progress": "1.1.2",
+    "@radix-ui/react-radio-group": "1.2.3",
+    "@radix-ui/react-scroll-area": "1.2.3",
+    "@radix-ui/react-select": "2.1.6",
+    "@radix-ui/react-separator": "1.1.2",
+    "@radix-ui/react-slider": "1.2.3",
+    "@radix-ui/react-slot": "1.1.2",
+    "@radix-ui/react-switch": "1.1.3",
+    "@radix-ui/react-tabs": "1.1.3",
+    "@radix-ui/react-toggle": "1.1.2",
+    "@radix-ui/react-toggle-group": "1.1.2",
+    "@radix-ui/react-tooltip": "1.1.8",
+    "@supabase/supabase-js": "^2.99.1",
+    "@tanstack/react-query": "^5.103.1",
+    "canvas-confetti": "1.9.4",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "cmdk": "1.1.1",
+    "date-fns": "3.6.0",
+    "embla-carousel-react": "8.6.0",
+    "exceljs": "^4.4.0",
+    "html2canvas": "^1.4.1",
+    "input-otp": "1.4.2",
+    "jspdf": "^4.2.0",
+    "jspdf-autotable": "^5.0.7",
+    "lucide-react": "0.487.0",
+    "motion": "12.23.24",
+    "next-themes": "0.4.6",
+    "react": "18.3.1",
+    "react-day-picker": "8.10.1",
+    "react-dom": "18.3.1",
+    "react-grid-layout": "^2.2.4",
+    "react-hook-form": "7.55.0",
+    "react-popper": "2.3.0",
+    "react-resizable-panels": "2.1.7",
+    "react-responsive-masonry": "2.7.1",
+    "react-router": "7.13.0",
+    "react-slick": "0.31.0",
+    "recharts": "2.15.2",
+    "sonner": "2.0.3",
+    "tailwind-merge": "3.2.0",
+    "tw-animate-css": "1.3.8",
+    "vaul": "1.1.2",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "@tailwindcss/vite": "4.1.12",
+    "@tanstack/react-virtual": "^3.14.13",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "4.7.0",
+    "tailwindcss": "4.1.12",
+    "typescript": "^7.0.2",
+    "vite": "6.3.5",
+    "vitest": "^2.1.9",
+    "zod": "^4.6.5"
+  },
+  "pnpm": {
+    "overrides": {
+      "vite": "6.3.5"
+    }
+  }
+}
+
+-- instructions --
+../code/CLAUDE.md

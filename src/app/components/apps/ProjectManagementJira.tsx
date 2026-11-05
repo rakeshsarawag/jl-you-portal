@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo, type TextareaHTMLAttributes } from "react";
+import { lazy, Suspense, useState, useEffect, useRef, useCallback, useMemo, useId, type TextareaHTMLAttributes } from "react";
 import { InlineLoader } from "../ui/PageLoader";
 import { useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -61,7 +61,6 @@ import {
   TIME_LOG_TYPES,
   PM_METHODOLOGIES,
   SPRINT_DURATIONS,
-  DEFAULT_SPRINT_DURATION,
 } from "../../../constants/apps/projects";
 import { SelectOptions } from "../../context/ValueHelpsContext";
 import ReportDefectButton from "../ReportDefectButton";
@@ -74,6 +73,10 @@ import { Card, CardContent } from "../ui/card";
 import { uploadEntityAttachments } from "../../services/attachments";
 import { AttachmentSection } from "../shared/AttachmentSection";
 
+const ProjectDefectWorkspace = lazy(() =>
+  import("./DefectTrackerApp").then((module) => ({ default: module.ProjectDefectWorkspace }))
+);
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isManagerOrAdmin(role?: string) {
@@ -82,6 +85,89 @@ function isManagerOrAdmin(role?: string) {
 
 function isAdmin(role?: string) {
   return role === "admin";
+}
+
+function csvCell(value: unknown): string {
+  let text = String(value ?? "").replace(/\r\n?/g, "\n");
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function csvRow(values: unknown[]): string {
+  return values.map(csvCell).join(",");
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function useDialogFocus(onClose: () => void, active = true) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    if (!active) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    dialog?.querySelector<HTMLElement>(focusableSelector)?.focus();
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const focusable = [...dialog.querySelectorAll<HTMLElement>(focusableSelector)];
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previouslyFocused?.focus();
+    };
+  }, [active]);
+  return dialogRef;
+}
+
+function useAccessibleFormLabels() {
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let sequence = 0;
+    const associateLabels = () => {
+      rootRef.current?.querySelectorAll<HTMLLabelElement>("label:not([for])").forEach((label) => {
+        const container = label.parentElement;
+        const control = label.querySelector<HTMLElement>("input, select, textarea, button, [role='combobox'], [role='switch']")
+          ?? container?.querySelector<HTMLElement>("input, select, textarea, button, [role='combobox'], [role='switch']");
+        if (!control) return;
+        if (!control.id) control.id = `pm-field-${++sequence}`;
+        label.htmlFor = control.id;
+      });
+    };
+    associateLabels();
+    const observer = new MutationObserver(associateLabels);
+    if (rootRef.current) observer.observe(rootRef.current, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+  return rootRef;
 }
 
 async function notifyPM(opts: {
@@ -94,16 +180,23 @@ async function notifyPM(opts: {
   entityId?: string;
 }) {
   try {
-    void supabase.from("project_notifications").insert([{
-      project_id: opts.projectId,
-      recipient_id: opts.recipientId,
-      event_type: opts.eventType,
-      title: opts.title,
-      body: opts.body ?? "",
-      entity_type: opts.entityType ?? null,
-      entity_id: opts.entityId ?? null,
-    }]);
-  } catch { /* fire and forget */ }
+    const response = await fetch(`${PM_API}/notifications`, {
+      method: "POST",
+      headers: apiHeaders(),
+      body: JSON.stringify({
+        projectId: opts.projectId,
+        recipientId: opts.recipientId,
+        eventType: opts.eventType,
+        title: opts.title,
+        body: opts.body ?? "",
+        entityType: opts.entityType ?? null,
+        entityId: opts.entityId ?? null,
+      }),
+    });
+    if (!response.ok) console.error("Project notification failed", await safeJson(response));
+  } catch (error) {
+    console.error("Project notification failed", error);
+  }
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -291,6 +384,12 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
     const errs: Record<string, string> = {};
     if (!form.startDate) errs.startDate = t("project.startDateRequired");
     if (!form.endDate) errs.endDate = t("project.endDateRequired");
+    if (form.startDate && form.endDate && form.endDate < form.startDate) {
+      errs.endDate = "End date must be on or after the start date";
+    }
+    if (form.budget !== undefined && form.budget !== null && Number(form.budget) < 0) {
+      errs.budget = "Budget cannot be negative";
+    }
     return errs;
   }
 
@@ -308,6 +407,18 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
   }
 
   async function handleSubmit() {
+    const step1Errors = validateStep1();
+    const step2Errors = validateStep2();
+    if (Object.keys(step1Errors).length) {
+      setErrors(step1Errors);
+      setStep(1);
+      return;
+    }
+    if (Object.keys(step2Errors).length) {
+      setErrors(step2Errors);
+      setStep(2);
+      return;
+    }
     setSaving(true);
     try {
       await onSubmit({ ...form, members: wizardMembers.map(m => ({ employeeName: m.name, employeeId: m.employeeId, employeeCode: m.employeeCode, role: m.role })) } as Partial<Project>);
@@ -360,7 +471,7 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
               onChange={(e) => set("description", e.target.value)}
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">{t("project.category")}</label>
               <select
@@ -382,7 +493,7 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">{t("common.status")}</label>
               <select
@@ -425,7 +536,7 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
       {/* Step 2 — Dates & Budget */}
       {step === 2 && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">{t("project.startDate")} *</label>
               <input
@@ -447,15 +558,17 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
               {errors.endDate && <p className="text-red-500 text-xs mt-1">{errors.endDate}</p>}
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">{t("project.budgetLabel")}</label>
               <input
                 type="number"
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                min={0}
+                className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${errors.budget ? "border-red-400" : "border-border"}`}
                 value={form.budget ?? ""}
                 onChange={(e) => set("budget", e.target.value ? Number(e.target.value) : undefined)}
               />
+              {errors.budget && <p className="text-red-500 text-xs mt-1">{errors.budget}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">Currency</label>
@@ -476,8 +589,8 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
                 min={1}
                 max={30}
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                value={(form as any).sprintLength ?? DEFAULT_SPRINT_DURATION}
-                onChange={(e) => set("sprintLength", e.target.value ? Number(e.target.value) : DEFAULT_SPRINT_DURATION)}
+                value={form.sprintLength ?? 14}
+                onChange={(e) => set("sprintLength", e.target.value ? Number(e.target.value) : 14)}
               />
             </div>
           )}
@@ -535,6 +648,14 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
                 type="button"
                 onClick={() => {
                   if (!newMemberName.trim()) return;
+                  const duplicate = wizardMembers.some((member) =>
+                    (newMemberId && member.employeeId === newMemberId)
+                    || member.name.toLocaleLowerCase() === newMemberName.trim().toLocaleLowerCase()
+                  );
+                  if (duplicate) {
+                    toast.error("This employee is already a project member");
+                    return;
+                  }
                   setWizardMembers(m => [...m, { name: newMemberName.trim(), employeeId: newMemberId || undefined, employeeCode: newMemberCode || undefined, role: newMemberRole }]);
                   setNewMemberName(""); setNewMemberId(""); setNewMemberCode("");
                 }}
@@ -752,6 +873,9 @@ function TaskForm({ onSubmit, onCancel, sprintOptions = [], initialData }: TaskF
     if (!form.title?.trim()) errs.title = "Title is required";
     if (!form.assigneeName?.trim()) errs.assigneeName = "Assignee is required";
     if (!form.dueDate) errs.dueDate = "Due date is required";
+    if (form.startDate && form.dueDate && form.dueDate < form.startDate) {
+      errs.dueDate = "Due date must be on or after the start date";
+    }
     if (!form.estimatedHours) {
       errs.estimatedHours = "Estimated hours is required";
     } else if (form.estimatedHours > 8) {
@@ -795,7 +919,7 @@ function TaskForm({ onSubmit, onCancel, sprintOptions = [], initialData }: TaskF
       </div>
 
       {/* Type + Priority */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-foreground mb-1">Task Type *</label>
           <select
@@ -831,7 +955,7 @@ function TaskForm({ onSubmit, onCancel, sprintOptions = [], initialData }: TaskF
       </div>
 
       {/* Start Date + Due Date */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-foreground mb-1">Start Date</label>
           <input
@@ -905,6 +1029,8 @@ interface LogTimeModalProps {
 }
 
 function LogTimeModal({ onSubmit, onClose, task }: LogTimeModalProps) {
+  const titleId = useId();
+  const dialogRef = useDialogFocus(onClose);
   const today = new Date().toISOString().split('T')[0];
   const [hours, setHours] = useState("");
   const [type, setType] = useState(TIME_LOG_TYPES[0]);
@@ -939,13 +1065,20 @@ function LogTimeModal({ onSubmit, onClose, task }: LogTimeModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-card rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="bg-card rounded-xl shadow-xl w-full max-w-md mx-4 p-6"
+      >
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-lg font-semibold">{t("projects.logTime")}</h3>
+            <h3 id={titleId} className="text-lg font-semibold">{t("projects.logTime")}</h3>
             <p className="text-xs text-muted-foreground mt-0.5">Record time spent on this task</p>
           </div>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
+          <button onClick={onClose} aria-label="Close log time dialog" className="text-muted-foreground hover:text-foreground">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -975,7 +1108,7 @@ function LogTimeModal({ onSubmit, onClose, task }: LogTimeModalProps) {
             </div>
           )}
           {/* Hours + Log Date */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">{t("project.hours")} * <span className="text-muted-foreground font-normal">(max 8h)</span></label>
               <input
@@ -1004,7 +1137,7 @@ function LogTimeModal({ onSubmit, onClose, task }: LogTimeModalProps) {
           </div>
 
           {/* Type + Billable */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">{t("project.logType")}</label>
               <select
@@ -1016,15 +1149,19 @@ function LogTimeModal({ onSubmit, onClose, task }: LogTimeModalProps) {
               </select>
             </div>
             <div className="flex flex-col justify-end pb-1">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <div
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={billable}
+                  aria-label="Billable time"
                   onClick={() => setBillable(b => !b)}
                   className={`w-10 h-5 rounded-full transition-colors flex items-center px-0.5 ${billable ? "bg-blue-600" : "bg-muted-foreground/40"}`}
                 >
                   <span className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${billable ? "translate-x-5" : "translate-x-0"}`} />
-                </div>
+                </button>
                 <span className="text-sm font-medium text-foreground">Billable</span>
-              </label>
+              </div>
             </div>
           </div>
 
@@ -1066,12 +1203,21 @@ function Modal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const titleId = useId();
+  const dialogRef = useDialogFocus(onClose);
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 overflow-y-auto py-8">
-      <div className="bg-card rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="bg-card rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto"
+      >
         <div className="flex items-center justify-between p-6 border-b">
-          <h3 className="text-lg font-semibold">{title}</h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-muted-foreground">
+          <h3 id={titleId} className="text-lg font-semibold">{title}</h3>
+          <button onClick={onClose} aria-label={`Close ${title}`} className="text-muted-foreground hover:text-muted-foreground">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -1183,6 +1329,22 @@ function TaskDetailModal({
   }
 
   async function handleSave() {
+    if (!title.trim()) {
+      toast.error("Task title is required");
+      return;
+    }
+    if (!assigneeId && !assigneeName.trim()) {
+      toast.error("Task assignee is required");
+      return;
+    }
+    if (estimatedHours === undefined || estimatedHours <= 0 || estimatedHours > 8) {
+      toast.error("Estimated hours must be greater than 0 and no more than 8");
+      return;
+    }
+    if (startDate && dueDate && dueDate < startDate) {
+      toast.error("Due date must be on or after the start date");
+      return;
+    }
     if (sprintId !== originalSprintId && !sprintChangeReason.trim()) {
       toast.error("Sprint change reason is required");
       return;
@@ -1235,7 +1397,7 @@ function TaskDetailModal({
                   onChange={(e) => setDescription(e.target.value)}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-1">Task Type</label>
                   <select className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={taskType} onChange={(e) => setTaskType(e.target.value)}>
@@ -1260,7 +1422,7 @@ function TaskDetailModal({
                   placeholder="Search assignee…"
                 />
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-1">Start Date</label>
                   <input type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
@@ -1554,9 +1716,18 @@ function TaskCard({ task, canDrag, isDragging, showAssignee = true, onDragStart,
   return (
     <div
       draggable={canDrag}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open task ${task.title}`}
       onDragStart={canDrag ? onDragStart : undefined}
       onDragEnd={onDragEnd}
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick();
+        }
+      }}
       className={`bg-card rounded-lg p-3 shadow-sm border border-border hover:shadow-md transition-shadow ${canDrag ? (isDragging ? "cursor-grabbing opacity-50" : "cursor-grab") : "cursor-pointer"}`}
     >
       <p className="text-sm font-medium text-foreground mb-2 line-clamp-2">{task.title}</p>
@@ -1583,7 +1754,7 @@ function TaskCard({ task, canDrag, isDragging, showAssignee = true, onDragStart,
           </span>
         </div>
       )}
-      {canDrag && currentCol !== "Done" && (
+      {canDrag && (
         <div className="mt-2 pt-2 border-t border-border flex gap-1 flex-wrap">
           {KANBAN_COLUMNS.filter((c) => c !== currentCol).map((c) => (
             <button
@@ -2188,6 +2359,7 @@ interface Milestone {
   due_date: string;
   status: "Pending" | "Achieved" | "Missed" | "At Risk";
   milestone_type?: "Phase" | "Release" | "Review" | "Contract" | "Internal";
+  owner_id?: string;
   owner_name?: string;
   linked_backlog_items?: unknown[];
   completion_date?: string;
@@ -2207,6 +2379,7 @@ interface ProjectRisk {
   impact_value: number;
   risk_score: number;
   status: "Identified" | "Assessed" | "Mitigated" | "Accepted" | "Closed" | "Triggered";
+  owner_id?: string;
   owner_name?: string;
   mitigation_plan?: string;
   contingency_plan?: string;
@@ -2283,6 +2456,8 @@ interface ProjectEpic {
   status: 'Not Started' | 'In Progress' | 'Done' | 'On Hold';
   start_date?: string;
   end_date?: string;
+  acceptance_criteria?: string;
+  owner_id?: string;
   owner_name?: string;
   created_at?: string;
 }
@@ -2305,10 +2480,12 @@ interface Defect {
   stepsToReproduce?: string[];
   expectedBehavior?: string;
   actualBehavior?: string;
+  rootCause?: string;
+  resolutionNotes?: string;
   regressionFlag?: boolean;
   createdAt: string;
   age?: number;
-  screenshotFile?: File;
+  screenshotFiles?: File[];
 }
 
 const PM_API = `${API_BASE}/projects`;
@@ -2344,6 +2521,7 @@ type MilestoneFormState = {
   title: string;
   milestone_type: string;
   due_date: string;
+  owner_id: string;
   owner_name: string;
   description: string;
   notes: string;
@@ -2354,6 +2532,7 @@ const DEFAULT_MILESTONE_FORM: MilestoneFormState = {
   title: "",
   milestone_type: "Phase",
   due_date: "",
+  owner_id: "",
   owner_name: "",
   description: "",
   notes: "",
@@ -2369,6 +2548,8 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
   const [selectedMilestone, setSelectedMilestone] = useState<Milestone | null>(null);
   const [form, setForm] = useState<MilestoneFormState>(DEFAULT_MILESTONE_FORM);
   const [saving, setSaving] = useState(false);
+  const slideOverTitleId = useId();
+  const slideOverRef = useDialogFocus(() => setShowSlideOver(false), showSlideOver);
 
   const pmH = { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` };
   const pmUrl = (path: string) => `${API_BASE}/projects${path}`;
@@ -2411,6 +2592,7 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
       title: m.title,
       milestone_type: m.milestone_type ?? "Phase",
       due_date: m.due_date,
+      owner_id: m.owner_id ?? "",
       owner_name: m.owner_name ?? "",
       description: m.description ?? "",
       notes: m.notes ?? "",
@@ -2432,6 +2614,7 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
         title: form.title.trim(),
         milestone_type: form.milestone_type,
         due_date: form.due_date,
+        owner_id: form.owner_id,
         owner_name: form.owner_name,
         description: form.description,
         notes: form.notes,
@@ -2527,7 +2710,7 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
           <p className="text-sm">{t("project.noMilestones")}</p>
         </div>
       ) : view === "timeline" ? (
-        <div className="flex gap-4">
+        <div className="flex flex-col gap-4 lg:flex-row">
           <div className="flex-1 bg-card rounded-xl border p-4 overflow-x-auto">
             <div className="relative h-16 min-w-[600px]">
               {/* Track */}
@@ -2552,6 +2735,7 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
                 return (
                   <button
                     key={m.id}
+                    aria-label={`View milestone ${m.title}`}
                     className={`absolute top-4 -translate-x-1/2 -translate-y-1/2 text-lg ${colors[status]} hover:scale-125 transition-transform z-20`}
                     style={{ left: `${p}%` }}
                     onClick={() => setSelectedMilestone(selectedMilestone?.id === m.id ? null : m)}
@@ -2580,10 +2764,10 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
           </div>
           {/* Side panel */}
           {selectedMilestone && (
-            <div className="w-72 bg-card rounded-xl border p-4 space-y-3 flex-shrink-0">
+            <div className="w-full bg-card rounded-xl border p-4 space-y-3 flex-shrink-0 lg:w-72">
               <div className="flex items-start justify-between">
                 <h3 className="font-semibold text-foreground text-sm">{selectedMilestone.title}</h3>
-                <button onClick={() => setSelectedMilestone(null)} className="text-muted-foreground hover:text-foreground">
+                <button onClick={() => setSelectedMilestone(null)} aria-label="Close milestone details" className="text-muted-foreground hover:text-foreground">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -2621,18 +2805,19 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
           )}
         </div>
       ) : (
-        <div className="bg-card rounded-xl border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-card rounded-xl border overflow-x-auto">
+          <table className="w-full min-w-[760px] table-auto text-sm">
+            <caption className="sr-only">Project management data table</caption>
             <thead>
               <tr className="border-b bg-muted text-xs text-muted-foreground">
-                <th className="text-left px-4 py-2 font-medium">Milestone</th>
-                <th className="text-left px-4 py-2 font-medium">Type</th>
-                <th className="text-left px-4 py-2 font-medium">Due Date</th>
-                <th className="text-left px-4 py-2 font-medium">Status</th>
-                <th className="text-left px-4 py-2 font-medium">Owner</th>
-                <th className="text-left px-4 py-2 font-medium">Notes</th>
-                <th className="text-left px-4 py-2 font-medium">Days</th>
-                {canManage && <th className="px-4 py-2" />}
+                <th scope="col" className="text-left px-4 py-2 font-medium">Milestone</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Type</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Due Date</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Status</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Owner</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Notes</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Days</th>
+                {canManage && <th scope="col" aria-label="Actions" className="px-4 py-2" />}
               </tr>
             </thead>
             <tbody>
@@ -2659,10 +2844,10 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
                     {canManage && (
                       <td className="px-4 py-2">
                         <div className="flex gap-1 justify-end">
-                          <button onClick={() => openEdit(m)} className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted">
+                          <button onClick={() => openEdit(m)} aria-label={`Edit milestone ${m.title}`} className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted">
                             <Edit className="w-3.5 h-3.5" />
                           </button>
-                          <button onClick={() => handleDelete(m.id)} className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50">
+                          <button onClick={() => handleDelete(m.id)} aria-label={`Delete milestone ${m.title}`} className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
@@ -2680,10 +2865,17 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
       {showSlideOver && (
         <div className="fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/30" onClick={() => setShowSlideOver(false)} />
-          <div className="w-[360px] bg-card border-l shadow-xl flex flex-col">
+          <div
+            ref={slideOverRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={slideOverTitleId}
+            tabIndex={-1}
+            className="w-full sm:max-w-[360px] bg-card border-l shadow-xl flex flex-col"
+          >
             <div className="flex items-center justify-between px-5 py-4 border-b">
-              <h3 className="font-semibold text-foreground">{editingMilestone ? "Edit Milestone" : t("project.addMilestone")}</h3>
-              <button onClick={() => setShowSlideOver(false)} className="text-muted-foreground hover:text-foreground">
+              <h3 id={slideOverTitleId} className="font-semibold text-foreground">{editingMilestone ? "Edit Milestone" : t("project.addMilestone")}</h3>
+              <button onClick={() => setShowSlideOver(false)} aria-label="Close milestone form" className="text-muted-foreground hover:text-foreground">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -2720,7 +2912,7 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
                 <label className="block text-sm font-medium text-foreground mb-1">Owner</label>
                 <EmployeeSearchDropdown
                   value={form.owner_name}
-                  onChange={(name) => setForm(f => ({ ...f, owner_name: name }))}
+                  onChange={(name, id) => setForm(f => ({ ...f, owner_name: name, owner_id: id ?? "" }))}
                   placeholder="Search employee…"
                 />
               </div>
@@ -2802,10 +2994,12 @@ type RiskFormState = {
   likelihood: string;
   impact: string;
   status: string;
+  owner_id: string;
   owner_name: string;
   mitigation_plan: string;
   contingency_plan: string;
   due_date: string;
+  resolution_notes: string;
 };
 
 const DEFAULT_RISK_FORM: RiskFormState = {
@@ -2815,10 +3009,12 @@ const DEFAULT_RISK_FORM: RiskFormState = {
   likelihood: "Medium",
   impact: "Medium",
   status: "Identified",
+  owner_id: "",
   owner_name: "",
   mitigation_plan: "",
   contingency_plan: "",
   due_date: "",
+  resolution_notes: "",
 };
 
 function RisksTab({ projectId, canManage }: { projectId: string; canManage: boolean }) {
@@ -2830,16 +3026,16 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
   const [form, setForm] = useState<RiskFormState>(DEFAULT_RISK_FORM);
   const [saving, setSaving] = useState(false);
   const [matrixFilter, setMatrixFilter] = useState<{ likelihood: string; impact: string } | null>(null);
+  const slideOverTitleId = useId();
+  const slideOverRef = useDialogFocus(() => setShowSlideOver(false), showSlideOver);
 
   async function load() {
     setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from("project_risks")
-        .select("*")
-        .eq("project_id", projectId)
-        .order("risk_score", { ascending: false });
-      if (!error) setRisks(data ?? []);
+      const response = await fetch(`${PM_API}/risks?projectId=${encodeURIComponent(projectId)}`, { headers: apiHeaders() });
+      const json = await safeJson(response) ?? {};
+      if (!response.ok || !json.success) throw new Error(json.error ?? "Failed to load risks");
+      setRisks(json.data ?? []);
     } finally {
       setLoading(false);
     }
@@ -2866,10 +3062,12 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
       likelihood: r.likelihood,
       impact: r.impact,
       status: r.status,
+      owner_id: r.owner_id ?? "",
       owner_name: r.owner_name ?? "",
       mitigation_plan: r.mitigation_plan ?? "",
       contingency_plan: r.contingency_plan ?? "",
       due_date: r.due_date ?? "",
+      resolution_notes: r.resolution_notes ?? "",
     });
     setShowSlideOver(true);
   }
@@ -2883,23 +3081,24 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
     setSaving(true);
     try {
       const payload = {
-        project_id: projectId,
+        projectId,
         title: form.title.trim(),
         category: form.category,
         description: form.description,
         likelihood: form.likelihood,
-        likelihood_value: lv,
         impact: form.impact,
-        impact_value: iv,
         status: form.status,
-        owner_name: form.owner_name,
-        mitigation_plan: form.mitigation_plan,
-        contingency_plan: form.contingency_plan,
-        due_date: form.due_date || null,
+        ownerId: form.owner_id,
+        ownerName: form.owner_name,
+        mitigationPlan: form.mitigation_plan,
+        contingencyPlan: form.contingency_plan,
+        dueDate: form.due_date || null,
+        resolutionNotes: form.resolution_notes,
       };
       if (editingRisk) {
-        const { error } = await supabase.from("project_risks").update(payload).eq("id", editingRisk.id);
-        if (error) throw error;
+        const response = await fetch(`${PM_API}/risks/${editingRisk.id}`, { method: "PUT", headers: apiHeaders(), body: JSON.stringify(payload) });
+        const json = await safeJson(response) ?? {};
+        if (!response.ok || !json.success) throw new Error(json.error ?? "Failed to update risk");
         if (form.status === "Triggered") {
           void notifyPM({
             projectId,
@@ -2912,8 +3111,10 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
         }
         toast.success("Risk updated");
       } else {
-        const { error, data: inserted } = await supabase.from("project_risks").insert([payload]).select().single();
-        if (error) throw error;
+        const response = await fetch(`${PM_API}/risks`, { method: "POST", headers: apiHeaders(), body: JSON.stringify(payload) });
+        const json = await safeJson(response) ?? {};
+        if (!response.ok || !json.success) throw new Error(json.error ?? "Failed to create risk");
+        const inserted = json.data;
         // Auto-notify PM on high-severity risk (score >= 6)
         if (score >= 6) {
           void notifyPM({
@@ -2939,8 +3140,9 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
   async function handleDelete(id: string) {
     if (!confirm("Delete this risk?")) return;
     try {
-      const { error } = await supabase.from("project_risks").delete().eq("id", id);
-      if (error) throw error;
+      const response = await fetch(`${PM_API}/risks/${id}`, { method: "DELETE", headers: apiHeaders() });
+      const json = await safeJson(response) ?? {};
+      if (!response.ok || !json.success) throw new Error(json.error ?? "Failed to delete risk");
       setRisks((prev) => prev.filter((r) => r.id !== id));
       toast.success("Risk deleted");
     } catch {
@@ -2964,7 +3166,7 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
   return (
     <div className="space-y-5">
       {/* KPI row */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-card rounded-xl border p-4">
           <div className="text-2xl font-bold text-foreground">{totalRisks}</div>
           <div className="text-sm text-muted-foreground mt-0.5">Total Risks</div>
@@ -2981,7 +3183,7 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
 
       {/* Risk Trend: by category and status breakdown */}
       {risks.length > 0 && (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="bg-card rounded-xl border p-4">
             <h3 className="font-semibold text-sm text-foreground mb-3">Risks by Category</h3>
             <div className="space-y-2">
@@ -3026,9 +3228,9 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
         </div>
       )}
 
-      <div className="flex gap-4 items-start">
+      <div className="flex flex-col gap-4 items-start lg:flex-row">
         {/* Risk Matrix */}
-        <div className="bg-card rounded-xl border p-4" style={{ width: "40%" }}>
+        <div className="w-full bg-card rounded-xl border p-4 lg:w-2/5">
           <div className="flex items-center justify-between mb-3">
             <h3 className="font-semibold text-sm text-foreground">Risk Matrix</h3>
             {matrixFilter && (
@@ -3058,6 +3260,7 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
                     return (
                       <button
                         key={`${l}-${im}`}
+                        aria-label={`${l} likelihood, ${im} impact: ${count} risks`}
                         onClick={() => setMatrixFilter(isActive ? null : { likelihood: l, impact: im })}
                         className={`h-10 rounded flex items-center justify-center text-sm font-semibold border-2 transition-all ${riskScoreCell(score)} ${isActive ? "border-blue-500 scale-105" : "border-transparent hover:border-gray-300"}`}
                       >
@@ -3095,20 +3298,21 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
           <p className="text-sm">{matrixFilter ? "No risks match this cell" : "No risks recorded"}</p>
         </div>
       ) : (
-        <div className="bg-card rounded-xl border overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="bg-card rounded-xl border overflow-x-auto">
+          <table className="w-full min-w-[760px] table-auto text-sm">
+            <caption className="sr-only">Project management data table</caption>
             <thead>
               <tr className="border-b bg-muted text-xs text-muted-foreground">
-                <th className="text-left px-4 py-2 font-medium w-6">#</th>
-                <th className="text-left px-4 py-2 font-medium">Title</th>
-                <th className="text-left px-4 py-2 font-medium">Category</th>
-                <th className="text-left px-4 py-2 font-medium">Score</th>
-                <th className="text-left px-4 py-2 font-medium">Likelihood</th>
-                <th className="text-left px-4 py-2 font-medium">Impact</th>
-                <th className="text-left px-4 py-2 font-medium">Status</th>
-                <th className="text-left px-4 py-2 font-medium">Owner</th>
-                <th className="text-left px-4 py-2 font-medium">Due</th>
-                {canManage && <th className="px-4 py-2" />}
+                <th scope="col" className="text-left px-4 py-2 font-medium w-6">#</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Title</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Category</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Score</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Likelihood</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Impact</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Status</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Owner</th>
+                <th scope="col" className="text-left px-4 py-2 font-medium">Due</th>
+                {canManage && <th scope="col" aria-label="Actions" className="px-4 py-2" />}
               </tr>
             </thead>
             <tbody>
@@ -3138,10 +3342,10 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
                   {canManage && (
                     <td className="px-4 py-2">
                       <div className="flex gap-1 justify-end">
-                        <button onClick={() => openEdit(r)} className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted">
+                        <button onClick={() => openEdit(r)} aria-label={`Edit risk ${r.title}`} className="text-muted-foreground hover:text-foreground p-1 rounded hover:bg-muted">
                           <Edit className="w-3.5 h-3.5" />
                         </button>
-                        <button onClick={() => handleDelete(r.id)} className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50">
+                        <button onClick={() => handleDelete(r.id)} aria-label={`Delete risk ${r.title}`} className="text-red-400 hover:text-red-600 p-1 rounded hover:bg-red-50">
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -3158,10 +3362,17 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
       {showSlideOver && (
         <div className="fixed inset-0 z-50 flex">
           <div className="flex-1 bg-black/30" onClick={() => setShowSlideOver(false)} />
-          <div className="w-[400px] bg-card border-l shadow-xl flex flex-col">
+          <div
+            ref={slideOverRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={slideOverTitleId}
+            tabIndex={-1}
+            className="w-full sm:max-w-[400px] bg-card border-l shadow-xl flex flex-col"
+          >
             <div className="flex items-center justify-between px-5 py-4 border-b">
-              <h3 className="font-semibold text-foreground">{editingRisk ? "Edit Risk" : "Add Risk"}</h3>
-              <button onClick={() => setShowSlideOver(false)} className="text-muted-foreground hover:text-foreground">
+              <h3 id={slideOverTitleId} className="font-semibold text-foreground">{editingRisk ? "Edit Risk" : "Add Risk"}</h3>
+              <button onClick={() => setShowSlideOver(false)} aria-label="Close risk form" className="text-muted-foreground hover:text-foreground">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -3241,11 +3452,10 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground mb-1">Owner</label>
-                <input
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                <EmployeeSearchDropdown
                   value={form.owner_name}
-                  onChange={(e) => setForm((f) => ({ ...f, owner_name: e.target.value }))}
-                  placeholder="Owner name"
+                  onChange={(name, id) => setForm((f) => ({ ...f, owner_name: name, owner_id: id ?? "" }))}
+                  placeholder="Search owner…"
                 />
               </div>
               <div>
@@ -3264,6 +3474,15 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
                   rows={2}
                   value={form.contingency_plan}
                   onChange={(e) => setForm((f) => ({ ...f, contingency_plan: e.target.value }))}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Resolution Notes</label>
+                <textarea
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows={3}
+                  value={form.resolution_notes}
+                  onChange={(e) => setForm((f) => ({ ...f, resolution_notes: e.target.value }))}
                 />
               </div>
               <div>
@@ -3294,7 +3513,7 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
               {selectedRisk.category && <Badge className="bg-purple-100 text-purple-700">{riskCategoryLabel(selectedRisk.category)}</Badge>}
             </div>
             {selectedRisk.description && <p className="text-muted-foreground whitespace-pre-wrap">{selectedRisk.description}</p>}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div><span className="text-muted-foreground">Likelihood</span><p className="font-medium">{selectedRisk.likelihood}</p></div>
               <div><span className="text-muted-foreground">Impact</span><p className="font-medium">{selectedRisk.impact}</p></div>
               <div><span className="text-muted-foreground">Owner</span><p className="font-medium">{selectedRisk.owner_name || "—"}</p></div>
@@ -3345,6 +3564,8 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
   const [showCompleteModal, setShowCompleteModal] = useState(false);
   const [completeChoices, setCompleteChoices] = useState<Record<string, "backlog" | "next">>({});
   const [completing, setCompleting] = useState(false);
+  const completeTitleId = useId();
+  const completeDialogRef = useDialogFocus(() => setShowCompleteModal(false), showCompleteModal);
 
   // Analytics tab
   const [subTab, setSubTab] = useState<"detail" | "analytics">("detail");
@@ -3456,12 +3677,13 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
         body: JSON.stringify({ backlogItemId: item.id, orderIndex: sprintItems.length }),
       });
       const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error ?? "Failed to add item");
       if (json.data) {
         setSprintItems((prev) => [...prev, json.data as SprintBacklogItem]);
         setAvailableBacklog((prev) => prev.filter((b) => b.id !== item.id));
-        const totalPts = [...sprintItems, json.data].reduce((sum: number, si: any) => sum + ((si.item?.story_points) ?? 0), 0);
-        void fetch(spmUrl(`/sprints/${selectedSprintId}`), { method: "PUT", headers: spmH, body: JSON.stringify({ committed_points: totalPts }) });
-        setSprints((prev) => prev.map((s) => s.id === selectedSprintId ? { ...s, committed_points: totalPts } : s));
+        setSprints((prev) => prev.map((s) => s.id === selectedSprintId
+          ? { ...s, committed_points: json.committedPoints ?? s.committed_points }
+          : s));
       }
     } catch {
       toast.error("Failed to add item");
@@ -3471,13 +3693,14 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
   async function handleRemoveFromSprint(sbi: SprintBacklogItem) {
     if (!selectedSprintId) return;
     try {
-      await fetch(spmUrl(`/sprints/${selectedSprintId}/backlog/${sbi.id}`), { method: "DELETE", headers: spmH });
+      const res = await fetch(spmUrl(`/sprints/${selectedSprintId}/backlog/${sbi.id}`), { method: "DELETE", headers: spmH });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error ?? "Failed to remove item");
       setSprintItems((prev) => prev.filter((si) => si.id !== sbi.id));
       if (sbi.item) setAvailableBacklog((prev) => [...prev, sbi.item!]);
-      const remaining = sprintItems.filter((si) => si.id !== sbi.id);
-      const totalPts = remaining.reduce((sum, si) => sum + ((si.item?.story_points) ?? 0), 0);
-      void fetch(spmUrl(`/sprints/${selectedSprintId}`), { method: "PUT", headers: spmH, body: JSON.stringify({ committed_points: totalPts }) });
-      setSprints((prev) => prev.map((s) => s.id === selectedSprintId ? { ...s, committed_points: totalPts } : s));
+      setSprints((prev) => prev.map((s) => s.id === selectedSprintId
+        ? { ...s, committed_points: json.committedPoints ?? s.committed_points }
+        : s));
     } catch {
       toast.error("Failed to remove item");
     }
@@ -3490,20 +3713,15 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
     const hasActive = sprints.some((s) => s.id !== selectedSprint.id && s.status === "Active");
     if (hasActive) { toast.error("There is already an active sprint. Complete it first."); return; }
     if (!planStart || !planEnd) { toast.error("Start and end dates are required."); return; }
-    const totalPts = sprintItems.reduce((sum, si) => sum + ((si.item?.story_points) ?? 0), 0);
-    const itemIds = sprintItems.map((si) => si.backlog_item_id);
     try {
-      const res = await fetch(spmUrl(`/sprints/${selectedSprint.id}`), {
-        method: "PUT", headers: spmH,
-        body: JSON.stringify({ status: "Active", start_date: planStart, end_date: planEnd, goal: planGoal, name: planName, committed_points: totalPts }),
+      const res = await fetch(spmUrl(`/sprints/${selectedSprint.id}/start`), {
+        method: "POST", headers: spmH,
+        body: JSON.stringify({ start_date: planStart, end_date: planEnd, goal: planGoal, name: planName }),
       });
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
-      if (itemIds.length > 0) {
-        void fetch(spmUrl("/backlog-items"), { method: "PATCH", headers: spmH, body: JSON.stringify({ ids: itemIds, updates: { sprint_id: selectedSprint.id } }) });
-      }
       setSprints((prev) => prev.map((s) => s.id === selectedSprint.id
-        ? { ...s, status: "Active", start_date: planStart, end_date: planEnd, goal: planGoal, name: planName, committed_points: totalPts }
+        ? { ...s, ...json.data }
         : s));
       toast.success("Sprint started!");
     } catch {
@@ -3529,29 +3747,23 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
     setCompleting(true);
     try {
       const incompleteItems = sprintItems.filter((si) => si.item?.status !== "Done");
-      const doneItems = sprintItems.filter((si) => si.item?.status === "Done");
       const nextSprint = sprints.find((s) => s.id !== selectedSprint.id && s.status === "Planning");
-
-      for (const si of incompleteItems) {
+      const moves = incompleteItems.map((si) => {
         const choice = completeChoices[si.backlog_item_id] ?? "backlog";
-        const targetSprintId = choice === "next" ? (nextSprint?.id ?? null) : null;
-        void fetch(spmUrl(`/backlog-items/${si.backlog_item_id}`), { method: "PATCH", headers: spmH, body: JSON.stringify({ sprint_id: targetSprintId }) });
-        await fetch(spmUrl(`/sprints/${selectedSprint.id}/backlog/${si.id}`), { method: "DELETE", headers: spmH });
-        if (choice === "next" && nextSprint) {
-          void fetch(spmUrl(`/sprints/${nextSprint.id}/backlog`), { method: "POST", headers: spmH, body: JSON.stringify({ backlogItemId: si.backlog_item_id }) });
-        }
-      }
-
-      const velocity = doneItems.reduce((sum, si) => sum + ((si.item?.story_points) ?? 0), 0);
-      const res = await fetch(spmUrl(`/sprints/${selectedSprint.id}`), {
-        method: "PUT", headers: spmH,
-        body: JSON.stringify({ status: "Completed", completed_points: velocity, velocity }),
+        return {
+          itemId: si.backlog_item_id,
+          targetSprintId: choice === "next" ? (nextSprint?.id ?? null) : null,
+        };
+      });
+      const res = await fetch(spmUrl(`/sprints/${selectedSprint.id}/complete`), {
+        method: "POST", headers: spmH,
+        body: JSON.stringify({ moves }),
       });
       const json = await res.json();
-      if (!json.success) throw new Error(json.error);
+      if (!res.ok || !json.success) throw new Error(json.error);
 
       setSprints((prev) => prev.map((s) => s.id === selectedSprint.id
-        ? { ...s, status: "Completed", completed_points: velocity, velocity }
+        ? { ...s, ...json.data }
         : s));
       setShowCompleteModal(false);
       setCompleting(false);
@@ -3721,7 +3933,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
                       onChange={(e) => setPlanGoal(e.target.value)}
                     />
                   </div>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <label className="block text-xs font-medium text-foreground mb-1">Start Date</label>
                       <input type="date" className="w-full border border-border rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400" value={planStart} onChange={(e) => setPlanStart(e.target.value)} />
@@ -3854,7 +4066,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
               {(() => {
                 const sprintTasks = tasks.filter(t => t.sprintId === selectedSprintId);
                 return (
-                  <div className="grid grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     {(["To Do", "In Progress", "In Review", "Done"] as const).map((col) => {
                       const colItems = sprintItems.filter((si) => {
                         const s = si.item?.status ?? "Open";
@@ -3928,7 +4140,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
                     <CheckCircle className="w-4 h-4 text-green-600" />
                     <span className="font-semibold text-green-800 text-sm">{selectedSprint.name} — Completed</span>
                   </div>
-                  <div className="grid grid-cols-4 gap-3 text-center">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
                     {[
                       { label: "Committed", value: `${selectedSprint.committed_points ?? 0} pts` },
                       { label: "Completed", value: `${selectedSprint.completed_points ?? 0} pts` },
@@ -3970,7 +4182,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase">Velocity Chart</h4>
                 {/* Simple SVG bar chart */}
                 <div className="bg-card border rounded-xl p-4 overflow-x-auto">
-                  <svg width={Math.max(300, sprints.filter((s) => s.status === "Completed").length * 80)} height={160}>
+                  <svg role="img" aria-label="Sprint velocity chart comparing committed and completed story points" width={Math.max(300, sprints.filter((s) => s.status === "Completed").length * 80)} height={160}>
                     {(() => {
                       const completedSprints = sprints.filter((s) => s.status === "Completed");
                       const maxVal = Math.max(1, ...completedSprints.map((s) => Math.max(s.committed_points ?? 0, s.completed_points ?? 0)));
@@ -3999,11 +4211,12 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
 
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase mt-2">Sprint Comparison</h4>
                 <div className="overflow-x-auto rounded-xl border">
-                  <table className="w-full text-xs">
+                  <table className="w-full min-w-[680px] table-auto text-xs">
+                    <caption className="sr-only">Project management data table</caption>
                     <thead className="bg-muted/50">
                       <tr>
                         {["Sprint", "Committed", "Completed", "Velocity", "Carried Over"].map((h) => (
-                          <th key={h} className="px-3 py-2 text-left text-muted-foreground font-medium">{h}</th>
+                          <th key={h} scope="col" className="px-3 py-2 text-left text-muted-foreground font-medium">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -4035,14 +4248,21 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
       {/* Complete Sprint Modal */}
       {showCompleteModal && selectedSprint && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="bg-background rounded-2xl shadow-xl border w-full max-w-md p-6 space-y-4">
+          <div
+            ref={completeDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={completeTitleId}
+            tabIndex={-1}
+            className="bg-background rounded-2xl shadow-xl border w-full max-w-md mx-4 p-6 space-y-4"
+          >
             <div className="flex items-center justify-between">
-              <h3 className="text-base font-semibold text-foreground">Complete Sprint</h3>
-              <button onClick={() => setShowCompleteModal(false)} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+              <h3 id={completeTitleId} className="text-base font-semibold text-foreground">Complete Sprint</h3>
+              <button onClick={() => setShowCompleteModal(false)} aria-label="Close complete sprint dialog" className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
             </div>
 
             {/* Summary row */}
-            <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-center">
               {[
                 { label: "Committed", value: selectedSprint.committed_points ?? 0 },
                 { label: "Completed", value: sprintItems.filter((si) => si.item?.status === "Done").reduce((sum, si) => sum + (si.item?.story_points ?? 0), 0) },
@@ -4139,13 +4359,24 @@ function ConfirmDialog({
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const titleId = useId();
+  const descriptionId = useId();
+  const dialogRef = useDialogFocus(onCancel);
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
-      <div className="relative z-10 w-full max-w-md mx-4 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden">
+      <div
+        ref={dialogRef}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={descriptionId}
+        tabIndex={-1}
+        className="relative z-10 w-full max-w-md mx-4 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
+      >
         <div className="px-6 pt-6 pb-2">
-          <h3 className="text-base font-semibold text-foreground">{title}</h3>
-          <p className="mt-2 text-sm text-muted-foreground leading-relaxed">{message}</p>
+          <h3 id={titleId} className="text-base font-semibold text-foreground">{title}</h3>
+          <p id={descriptionId} className="mt-2 text-sm text-muted-foreground leading-relaxed">{message}</p>
         </div>
         <div className="flex justify-end gap-2 px-6 py-4 border-t border-border bg-muted/30">
           <button
@@ -4182,8 +4413,12 @@ function AddEpicSlideOver({ projectId, initial, onClose, onSave }: {
   const [status, setStatus] = useState<ProjectEpic['status']>(initial?.status ?? 'Not Started');
   const [startDate, setStartDate] = useState(initial?.start_date ?? '');
   const [endDate, setEndDate] = useState(initial?.end_date ?? '');
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState(initial?.acceptance_criteria ?? '');
+  const [ownerId, setOwnerId] = useState(initial?.owner_id ?? '');
   const [ownerName, setOwnerName] = useState(initial?.owner_name ?? '');
   const [saving, setSaving] = useState(false);
+  const titleId = useId();
+  const dialogRef = useDialogFocus(onClose);
 
   const PRESET_COLORS = ['#6366F1','#3B82F6','#8B5CF6','#EC4899','#10B981','#F97316','#EF4444','#0D9488'];
 
@@ -4191,20 +4426,25 @@ function AddEpicSlideOver({ projectId, initial, onClose, onSave }: {
     if (!title.trim()) return;
     setSaving(true);
     try {
-      if (initial?.id) {
-        const { data, error } = await supabase.from('project_epics').update({
-          title, description, color, status, start_date: startDate || null, end_date: endDate || null, owner_name: ownerName
-        }).eq('id', initial.id).select().single();
-        if (error) throw error;
-        onSave(data as ProjectEpic);
-      } else {
-        const { data, error } = await supabase.from('project_epics').insert([{
-          project_id: projectId, title, description, color, status,
-          start_date: startDate || null, end_date: endDate || null, owner_name: ownerName
-        }]).select().single();
-        if (error) throw error;
-        onSave(data as ProjectEpic);
-      }
+      const response = await fetch(initial?.id ? `${PM_API}/epics/${initial.id}` : `${PM_API}/epics`, {
+        method: initial?.id ? "PUT" : "POST",
+        headers: apiHeaders(),
+        body: JSON.stringify({
+          projectId,
+          title,
+          description,
+          color,
+          status,
+          startDate,
+          endDate,
+          acceptanceCriteria,
+          ownerId,
+          ownerName,
+        }),
+      });
+      const json = await safeJson(response) ?? {};
+      if (!response.ok || !json.success) throw new Error(json.error ?? "Failed to save epic");
+      onSave(json.data as ProjectEpic);
       toast.success(initial?.id ? 'Epic updated' : 'Epic created');
       onClose();
     } catch (e: any) {
@@ -4217,10 +4457,17 @@ function AddEpicSlideOver({ projectId, initial, onClose, onSave }: {
   return (
     <>
       <div className="fixed inset-0 bg-black/30 z-40" onClick={onClose} />
-      <div className="fixed right-0 top-0 h-full w-[360px] bg-background border-l shadow-xl z-50 flex flex-col">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="fixed right-0 top-0 h-full w-full sm:max-w-[360px] bg-background border-l shadow-xl z-50 flex flex-col"
+      >
         <div className="flex items-center justify-between p-4 border-b">
-          <h3 className="font-semibold">{initial ? 'Edit Epic' : 'Add Epic'}</h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-muted"><X size={16} /></button>
+          <h3 id={titleId} className="font-semibold">{initial ? 'Edit Epic' : 'Add Epic'}</h3>
+          <button onClick={onClose} aria-label="Close epic form" className="p-1 rounded hover:bg-muted"><X size={16} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           <div>
@@ -4232,7 +4479,7 @@ function AddEpicSlideOver({ projectId, initial, onClose, onSave }: {
             <label className="text-xs font-medium text-muted-foreground">Color</label>
             <div className="flex gap-2 mt-1 flex-wrap">
               {PRESET_COLORS.map(c => (
-                <button key={c} onClick={() => setColor(c)}
+                <button key={c} type="button" aria-label={`Use epic color ${c}`} onClick={() => setColor(c)}
                   className={`w-6 h-6 rounded-full border-2 transition-all ${color === c ? 'border-foreground scale-110' : 'border-transparent'}`}
                   style={{ backgroundColor: c }} />
               ))}
@@ -4250,7 +4497,7 @@ function AddEpicSlideOver({ projectId, initial, onClose, onSave }: {
             <MentionTextarea value={description} onChange={e => setDescription(e.target.value)} rows={3} placeholder={t("pm.mention.placeholder")}
               className="w-full mt-1 border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-medium text-muted-foreground">Start Date</label>
               <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)}
@@ -4263,9 +4510,18 @@ function AddEpicSlideOver({ projectId, initial, onClose, onSave }: {
             </div>
           </div>
           <div>
+            <label className="text-xs font-medium text-muted-foreground">Acceptance Criteria</label>
+            <textarea value={acceptanceCriteria} onChange={e => setAcceptanceCriteria(e.target.value)} rows={3}
+              className="w-full mt-1 border rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
             <label className="text-xs font-medium text-muted-foreground">Owner</label>
-            <input value={ownerName} onChange={e => setOwnerName(e.target.value)} placeholder="Owner name"
-              className="w-full mt-1 border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <EmployeeSearchDropdown
+              value={ownerName}
+              onChange={(name, id) => { setOwnerName(name); setOwnerId(id ?? ""); }}
+              placeholder="Search owner…"
+              className="mt-1"
+            />
           </div>
         </div>
         <div className="p-4 border-t flex gap-2">
@@ -4355,6 +4611,8 @@ function AddBacklogSlideOver({ sprintNames, dbSprints = [], memberNames, epics, 
   const [depSearch, setDepSearch] = useState("");
   const [depType, setDepType] = useState("Blocks");
   const [allProjectItems, setAllProjectItems] = useState<{ id: string; title: string }[]>([]);
+  const titleId = useId();
+  const dialogRef = useDialogFocus(onClose);
 
   useEffect(() => {
     if (!projectId) return;
@@ -4428,11 +4686,18 @@ function AddBacklogSlideOver({ sprintNames, dbSprints = [], memberNames, epics, 
   return (
     <>
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 w-[560px] bg-card border-l border-border shadow-xl z-50 flex flex-col">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="fixed inset-y-0 right-0 w-full sm:max-w-[560px] bg-card border-l border-border shadow-xl z-50 flex flex-col"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
-          <h3 className="text-base font-semibold text-foreground">{initialItem ? `Edit ${initialItem.itemId ?? "Backlog Item"}` : "Add Backlog Item"}</h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+          <h3 id={titleId} className="text-base font-semibold text-foreground">{initialItem ? `Edit ${initialItem.itemId ?? "Backlog Item"}` : "Add Backlog Item"}</h3>
+          <button onClick={onClose} aria-label="Close backlog item form" className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
         </div>
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
@@ -4449,7 +4714,7 @@ function AddBacklogSlideOver({ sprintNames, dbSprints = [], memberNames, epics, 
               />
               {title.length > 0 && title.length < 5 && <p className="text-xs text-red-500 mt-1">Minimum 5 characters</p>}
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-foreground mb-1">Type *</label>
                 <select className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" value={type} onChange={(e) => setType(e.target.value as BacklogItem["type"])}>
@@ -4479,7 +4744,7 @@ function AddBacklogSlideOver({ sprintNames, dbSprints = [], memberNames, epics, 
           {/* Planning */}
           <div className="space-y-4">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Planning</h4>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-foreground mb-1">Story Points</label>
                 <select className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" value={points ?? ""} onChange={(e) => setPoints(e.target.value ? Number(e.target.value) : undefined)}>
@@ -4660,8 +4925,9 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
   }, [projectId]);
 
   const loadEpics = useCallback(async () => {
-    const { data } = await supabase.from('project_epics').select('*').eq('project_id', projectId).order('created_at', { ascending: true });
-    setEpics(data ?? []);
+    const response = await fetch(`${PM_API}/epics?projectId=${encodeURIComponent(projectId)}`, { headers: apiHeaders() });
+    const json = await safeJson(response) ?? {};
+    if (response.ok && json.success) setEpics(json.data ?? []);
   }, [projectId]);
 
   useEffect(() => {
@@ -4716,18 +4982,14 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) { toast.error(json.error ?? "Failed to update backlog item"); return; }
-      await supabase
-        .from("project_backlog_dependencies")
-        .delete()
-        .or(`source_item_id.eq.${item.id},target_item_id.eq.${item.id}`);
-      if ((item.dependencies ?? []).length > 0) {
-        const rows = (item.dependencies ?? []).map((dependency) => ({
-          source_item_id: dependency.type === "Blocked By" ? dependency.targetId : item.id,
-          target_item_id: dependency.type === "Blocked By" ? item.id : dependency.targetId,
-          dependency_type: dependency.type === "Blocked By" ? "Blocks" : dependency.type,
-        }));
-        const { error } = await supabase.from("project_backlog_dependencies").insert(rows);
-        if (error) throw error;
+      const dependencyRes = await fetch(`${API_BASE}/projects/backlog/${item.id}/dependencies`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
+        body: JSON.stringify({ dependencies: item.dependencies ?? [] }),
+      });
+      const dependencyJson = await dependencyRes.json().catch(() => ({}));
+      if (!dependencyRes.ok || !dependencyJson.success) {
+        throw new Error(dependencyJson.error ?? "Failed to update dependencies");
       }
       await loadBacklog();
       toast.success("Backlog item updated");
@@ -4739,24 +5001,20 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
 
   // Load dependency data to identify blocked items
   useEffect(() => {
-    supabase.from("project_backlog_dependencies")
-      .select("target_item_id")
-      .then(({ data }) => {
-        const ids = new Set((data ?? []).map((d: any) => d.target_item_id as string));
+    fetch(`${PM_API}/dependencies?projectId=${encodeURIComponent(projectId)}`, { headers: apiHeaders() })
+      .then((response) => response.json())
+      .then((json) => {
+        const ids = new Set((json.data ?? []).map((d: any) => d.target_item_id as string));
         setBlockedItemIds(ids);
-      });
+      })
+      .catch(() => setBlockedItemIds(new Set()));
   }, [projectId]);
 
   useEffect(() => {
-    supabase.from("pm_saved_views")
-      .select("*")
-      .eq("project_id", projectId)
-      .eq("screen", "backlog")
-      .eq("user_id", userEmail ?? "unknown")
-      .order("created_at")
-      .then(({ data }) => {
-        setSavedViews((data ?? []).map((v: any) => ({ id: v.id, name: v.name, filters: v.filters })));
-      });
+    fetch(`${PM_API}/saved-views?projectId=${encodeURIComponent(projectId)}&screen=backlog`, { headers: apiHeaders() })
+      .then((response) => response.json())
+      .then((json) => setSavedViews((json.data ?? []).map((v: any) => ({ id: v.id, name: v.name, filters: v.filters }))))
+      .catch(() => setSavedViews([]));
   }, [projectId, userEmail]);
 
   const memberNames = members.map((m) => m.employeeName);
@@ -4854,11 +5112,18 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
                     <button onClick={() => setShowSaveViewInput(false)} className="flex-1 text-xs border rounded py-1.5 hover:bg-muted">Cancel</button>
                     <button onClick={async () => {
                       if (!saveViewName.trim()) return;
-                      const { data } = await supabase.from("pm_saved_views").insert([{
-                        project_id: projectId, screen: "backlog", user_id: userEmail ?? "unknown",
-                        name: saveViewName, filters: filter
-                      }]).select().single();
-                      if (data) setSavedViews((sv) => [...sv, { id: data.id, name: data.name, filters: data.filters }]);
+                      const response = await fetch(`${PM_API}/saved-views`, {
+                        method: "POST",
+                        headers: apiHeaders(),
+                        body: JSON.stringify({ projectId, screen: "backlog", name: saveViewName, filters: filter }),
+                      });
+                      const json = await safeJson(response) ?? {};
+                      if (!response.ok || !json.success) {
+                        toast.error(json.error ?? "Failed to save view");
+                        return;
+                      }
+                      const data = json.data;
+                      setSavedViews((sv) => [...sv, { id: data.id, name: data.name, filters: data.filters }]);
                       toast.success("View saved");
                       setSaveViewName(""); setShowSaveViewInput(false);
                     }} className="flex-1 text-xs bg-indigo-600 text-white rounded py-1.5 hover:bg-indigo-700">Save</button>
@@ -4974,19 +5239,20 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
       {viewMode === "table" && !loading && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[760px] table-auto text-sm">
+              <caption className="sr-only">Project management data table</caption>
               <thead className="bg-muted border-b border-border">
                 <tr>
-                  <th className="w-[60px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Type</th>
-                  <th className="w-[80px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">ID</th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-muted-foreground">Title</th>
-                  <th className="w-[100px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Priority</th>
-                  <th className="w-[120px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Status</th>
-                  <th className="w-[70px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Pts</th>
-                  <th className="w-[130px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Sprint</th>
-                  <th className="w-[130px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Assignee</th>
-                  <th className="w-[90px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Links</th>
-                  <th className="w-[40px] px-3 py-3" />
+                  <th scope="col" className="w-[60px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Type</th>
+                  <th scope="col" className="w-[80px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">ID</th>
+                  <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-muted-foreground">Title</th>
+                  <th scope="col" className="w-[100px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Priority</th>
+                  <th scope="col" className="w-[120px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Status</th>
+                  <th scope="col" className="w-[70px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Pts</th>
+                  <th scope="col" className="w-[130px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Sprint</th>
+                  <th scope="col" className="w-[130px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Assignee</th>
+                  <th scope="col" className="w-[90px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Links</th>
+                  <th scope="col" aria-label="Actions" className="w-[40px] px-3 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -5116,12 +5382,14 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
               } else {
                 const savedItemId = json.data?.id;
                 if (savedItemId && (item.dependencies ?? []).length > 0) {
-                  for (const dep of item.dependencies ?? []) {
-                    await supabase.from('project_backlog_dependencies').insert([{
-                      source_item_id: dep.type === 'Blocked By' ? dep.targetId : savedItemId,
-                      target_item_id: dep.type === 'Blocked By' ? savedItemId : dep.targetId,
-                      dependency_type: dep.type === 'Blocked By' ? 'Blocks' : dep.type,
-                    }]);
+                  const dependencyRes = await fetch(`${PM_API}/backlog/${savedItemId}/dependencies`, {
+                    method: 'PUT',
+                    headers: apiHeaders(),
+                    body: JSON.stringify({ dependencies: item.dependencies }),
+                  });
+                  const dependencyJson = await safeJson(dependencyRes) ?? {};
+                  if (!dependencyRes.ok || !dependencyJson.success) {
+                    throw new Error(dependencyJson.error ?? 'Failed to save dependencies');
                   }
                 }
                 await loadBacklog();
@@ -5212,32 +5480,38 @@ function tempDefectId() { return `DEF-tmp-${Date.now()}`; }
 interface AddDefectSlideOverProps {
   sprintNames: string[];
   memberNames: string[];
+  initialDefect?: Defect;
   onClose: () => void;
-  onSave: (defect: Defect) => void | Promise<void>;
+  onSave: (defect: Defect) => Promise<void>;
 }
 
-function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDefectSlideOverProps) {
-  const [title, setTitle] = useState("");
-  const [severity, setSeverity] = useState<Defect["severity"] | "">("");
-  const [status, setStatus] = useState<Defect["status"]>("Open");
-  const [priority, setPriority] = useState<Defect["priority"]>("P2");
-  const [description, setDescription] = useState("");
-  const [steps, setSteps] = useState<string[]>([]);
-  const [expected, setExpected] = useState("");
-  const [actual, setActual] = useState("");
-  const [environment, setEnvironment] = useState("QA");
-  const [version, setVersion] = useState("");
-  const [assigneeName, setAssigneeName] = useState("");
-  const [assigneeId, setAssigneeId] = useState("");
+function AddDefectSlideOver({ sprintNames, memberNames, initialDefect, onClose, onSave }: AddDefectSlideOverProps) {
+  const [title, setTitle] = useState(initialDefect?.title ?? "");
+  const [severity, setSeverity] = useState<Defect["severity"] | "">(initialDefect?.severity ?? "");
+  const [status, setStatus] = useState<Defect["status"]>(initialDefect?.status ?? "Open");
+  const [priority, setPriority] = useState<Defect["priority"]>(initialDefect?.priority ?? "P2");
+  const [description, setDescription] = useState(initialDefect?.description ?? "");
+  const [steps, setSteps] = useState<string[]>(initialDefect?.stepsToReproduce ?? []);
+  const [expected, setExpected] = useState(initialDefect?.expectedBehavior ?? "");
+  const [actual, setActual] = useState(initialDefect?.actualBehavior ?? "");
+  const [rootCause, setRootCause] = useState(initialDefect?.rootCause ?? "");
+  const [resolutionNotes, setResolutionNotes] = useState(initialDefect?.resolutionNotes ?? "");
+  const [environment, setEnvironment] = useState(initialDefect?.environment ?? "QA");
+  const [version, setVersion] = useState(initialDefect?.foundInVersion ?? "");
+  const [assigneeName, setAssigneeName] = useState(initialDefect?.assigneeName ?? "");
+  const [assigneeId, setAssigneeId] = useState(initialDefect?.assigneeId ?? "");
   const { employees: rawEmpDF } = useEmployees();
   const allEmployees = useMemo(
     () => rawEmpDF.filter((e) => e.status !== 'Inactive').map((e) => (e.employee_name as string) ?? (e.fullName as string) ?? e.name ?? "").filter(Boolean),
     [rawEmpDF],
   );
-  const [sprint, setSprint] = useState("Backlog");
+  const [sprint, setSprint] = useState(initialDefect?.sprint ?? "Backlog");
   const [ticketInput, setTicketInput] = useState("");
-  const [linkedTickets, setLinkedTickets] = useState<string[]>([]);
-  const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
+  const [linkedTickets, setLinkedTickets] = useState<string[]>(initialDefect?.linkedTicketIds ?? []);
+  const [screenshotFiles, setScreenshotFiles] = useState<File[]>([]);
+  const [saving, setSaving] = useState(false);
+  const titleId = useId();
+  const dialogRef = useDialogFocus(onClose);
 
   const sprintOptions = ["Backlog", ...sprintNames.filter((s) => s !== "Backlog")];
 
@@ -5251,10 +5525,16 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
   }
   function removeTicket(id: string) { setLinkedTickets((t) => t.filter((x) => x !== id)); }
 
-  function handleSave() {
+  async function handleSave() {
+    const isTerminal = ["Resolved", "Verified", "Closed"].includes(status);
+    if (isTerminal && (!rootCause.trim() || !resolutionNotes.trim())) {
+      toast.error("Root cause and resolution notes are required for resolved, verified, or closed defects");
+      return;
+    }
     const defect: Defect = {
-      id: tempDefectId(),
-      projectId: "",
+      id: initialDefect?.id ?? tempDefectId(),
+      _dbId: initialDefect?._dbId,
+      projectId: initialDefect?.projectId ?? "",
       severity: severity as Defect["severity"],
       title: title.trim(),
       description,
@@ -5269,11 +5549,18 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
       stepsToReproduce: steps.filter(Boolean),
       expectedBehavior: expected,
       actualBehavior: actual,
-      createdAt: new Date().toISOString(),
-      age: 0,
-      screenshotFile: screenshotFile ?? undefined,
+      rootCause,
+      resolutionNotes,
+      createdAt: initialDefect?.createdAt ?? new Date().toISOString(),
+      age: initialDefect?.age ?? 0,
+      screenshotFiles,
     };
-    onSave(defect);
+    setSaving(true);
+    try {
+      await onSave(defect);
+    } finally {
+      setSaving(false);
+    }
   }
 
   const canSave = title.trim().length >= 5 && severity !== "";
@@ -5281,10 +5568,17 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
   return (
     <>
       <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-40" onClick={onClose} />
-      <div className="fixed inset-y-0 right-0 w-[560px] bg-card border-l border-border shadow-xl z-50 flex flex-col">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="fixed inset-y-0 right-0 w-full sm:max-w-[560px] bg-card border-l border-border shadow-xl z-50 flex flex-col"
+      >
         <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
-          <h3 className="text-base font-semibold text-foreground">Add Defect</h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+          <h3 id={titleId} className="text-base font-semibold text-foreground">{initialDefect ? "Edit Defect" : "Add Defect"}</h3>
+          <button onClick={onClose} aria-label="Close defect form" className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
           {/* Core */}
@@ -5302,7 +5596,7 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
               </select>
               {severity && <p className="text-xs italic text-muted-foreground mt-1">{SEVERITY_DESC[severity]}</p>}
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-foreground mb-1">Status</label>
                 <select className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" value={status} onChange={(e) => setStatus(e.target.value as Defect["status"])}>
@@ -5328,13 +5622,13 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
               <div key={i} className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground w-5 text-right flex-shrink-0">{i + 1}.</span>
                 <input className="flex-1 bg-input-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" value={s} onChange={(e) => setStep(i, e.target.value)} placeholder={`Step ${i + 1}`} />
-                <button onClick={() => removeStep(i)} className="text-muted-foreground hover:text-red-500"><X className="w-4 h-4" /></button>
+                <button onClick={() => removeStep(i)} aria-label={`Remove reproduction step ${i + 1}`} className="text-muted-foreground hover:text-red-500"><X className="w-4 h-4" /></button>
               </div>
             ))}
             <button onClick={addStep} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700"><Plus className="w-4 h-4" /> Add Step</button>
           </div>
           {/* Expected / Actual */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">Expected Behavior</label>
               <MentionTextarea className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" rows={3} value={expected} onChange={(e) => setExpected(e.target.value)} placeholder={t("pm.mention.placeholder")} />
@@ -5344,8 +5638,20 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
               <MentionTextarea className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" rows={3} value={actual} onChange={(e) => setActual(e.target.value)} placeholder={t("pm.mention.placeholder")} />
             </div>
           </div>
+          {["Resolved", "Verified", "Closed"].includes(status) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Root Cause *</label>
+                <textarea className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm" rows={3} value={rootCause} onChange={(e) => setRootCause(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">Resolution Notes *</label>
+                <textarea className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm" rows={3} value={resolutionNotes} onChange={(e) => setResolutionNotes(e.target.value)} />
+              </div>
+            </div>
+          )}
           {/* Meta */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">Environment</label>
               <select className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" value={environment} onChange={(e) => setEnvironment(e.target.value)}>
@@ -5357,7 +5663,7 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
               <input className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary" value={version} onChange={(e) => setVersion(e.target.value)} placeholder="e.g. v2.1.0" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">Assignee</label>
               <EmployeeSearchDropdown
@@ -5398,23 +5704,30 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
           </div>
           {/* Screenshot */}
           <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Screenshot</h4>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Screenshots</h4>
             <label className="flex flex-col items-center justify-center w-full border-2 border-dashed border-border rounded-xl p-6 cursor-pointer hover:border-primary/50 transition-colors text-muted-foreground text-sm">
-              {screenshotFile ? (
-                <span className="text-foreground font-medium">{screenshotFile.name}</span>
+              {screenshotFiles.length > 0 ? (
+                <span className="text-foreground font-medium">{screenshotFiles.length} file{screenshotFiles.length === 1 ? "" : "s"} selected</span>
               ) : (
                 <>
                   <span>Drop screenshot here or browse</span>
                   <span className="text-xs mt-1 opacity-70">PNG, JPG up to 5 MB</span>
                 </>
               )}
-              <input type="file" accept="image/*" className="hidden" onChange={(e) => setScreenshotFile(e.target.files?.[0] ?? null)} />
+              <input type="file" accept="image/*" multiple className="hidden" onChange={(e) => setScreenshotFiles(Array.from(e.target.files ?? []))} />
             </label>
+            {screenshotFiles.length > 0 && (
+              <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                {screenshotFiles.map((file) => <li key={`${file.name}-${file.lastModified}`}>{file.name}</li>)}
+              </ul>
+            )}
           </div>
         </div>
         <div className="px-6 py-4 border-t border-border flex justify-end gap-2 flex-shrink-0">
           <button onClick={onClose} className="px-4 py-2 text-sm text-foreground border border-border rounded-lg hover:bg-muted">Cancel</button>
-          <button onClick={handleSave} disabled={!canSave} className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">Save Defect</button>
+          <button onClick={handleSave} disabled={!canSave || saving} className="px-4 py-2 text-sm text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed">
+            {saving ? "Saving..." : initialDefect ? "Update Defect" : "Save Defect"}
+          </button>
         </div>
       </div>
     </>
@@ -5449,6 +5762,13 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterAssignee, setFilterAssignee] = useState("All");
   const [selectedDefect, setSelectedDefect] = useState<Defect | null>(null);
+  const [editingDefect, setEditingDefect] = useState<Defect | null>(null);
+  const [defectToDelete, setDefectToDelete] = useState<Defect | null>(null);
+  const [deletingDefect, setDeletingDefect] = useState(false);
+  const [defectLimit, setDefectLimit] = useState(50);
+  const [defectTotal, setDefectTotal] = useState(0);
+  const defectRequestRef = useRef<AbortController | null>(null);
+  const defectRequestSequence = useRef(0);
   const navigate = useNavigate();
 
   const memberNames = members.map((m) => m.employeeName);
@@ -5458,15 +5778,23 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
     'P1': 'P1', 'P2': 'P2', 'P3': 'P3', 'P4': 'P4',
   };
 
-  const loadDefects = useCallback(async () => {
-    setLoading(true);
+  const loadDefects = useCallback(async (showLoading = true) => {
+    if (document.visibilityState === "hidden") return;
+    defectRequestRef.current?.abort();
+    const controller = new AbortController();
+    defectRequestRef.current = controller;
+    const sequence = ++defectRequestSequence.current;
+    if (showLoading) setLoading(true);
     try {
-      const { data, error } = await supabase
-        .from('project_defects')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('created_at', { ascending: false });
-      if (error) { setDefects([]); return; }
+      const response = await fetch(`${API_BASE}/projects/defects?projectId=${encodeURIComponent(projectId)}&page=1&pageSize=${defectLimit}`, {
+        headers: apiHeaders(),
+        signal: controller.signal,
+      });
+      const json = await safeJson(response) ?? {};
+      if (!response.ok || !json.success) throw new Error(json.error ?? "Failed to load defects");
+      if (sequence !== defectRequestSequence.current) return;
+      const data = json.data ?? [];
+      setDefectTotal(Number(json.pagination?.total ?? data.length));
       setDefects((data ?? []).map((d: any) => ({
         id: d.defect_id ?? d.id,
         projectId: d.project_id,
@@ -5484,19 +5812,34 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
         stepsToReproduce: d.steps_to_reproduce ?? [],
         expectedBehavior: d.expected_result ?? '',
         actualBehavior: d.actual_result ?? '',
+        rootCause: d.root_cause ?? '',
+        resolutionNotes: d.resolution_notes ?? '',
         regressionFlag: d.is_regression ?? false,
         createdAt: d.created_at ?? '',
         _dbId: d.id,
         age: d.created_at ? Math.floor((Date.now() - new Date(d.created_at).getTime()) / 86400000) : 0,
       })));
-    } catch { setDefects([]); }
-    finally { setLoading(false); }
-  }, [projectId]);
+    } catch (error: unknown) {
+      if (!(error instanceof DOMException && error.name === "AbortError") && showLoading) {
+        toast.error(error instanceof Error ? error.message : "Failed to load defects");
+      }
+    } finally {
+      if (sequence === defectRequestSequence.current) setLoading(false);
+    }
+  }, [projectId, defectLimit]);
 
   useEffect(() => {
-    loadDefects();
-    const interval = setInterval(loadDefects, 30000);
-    return () => clearInterval(interval);
+    void loadDefects();
+    const refresh = () => {
+      if (document.visibilityState === "visible") void loadDefects(false);
+    };
+    const interval = window.setInterval(refresh, 30000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refresh);
+      defectRequestRef.current?.abort();
+    };
   }, [loadDefects]);
 
   const filtered = defects.filter((d) => {
@@ -5572,20 +5915,21 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
       {viewMode === "table" && !loading && (
         <div className="bg-card border border-border rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[760px] table-auto text-sm">
+              <caption className="sr-only">Project management data table</caption>
               <thead className="bg-muted border-b border-border">
                 <tr>
-                  <th className="w-[90px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">ID</th>
-                  <th className="w-[120px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Severity</th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-muted-foreground">Title</th>
-                  <th className="w-[120px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Status</th>
-                  <th className="w-[130px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Assignee</th>
-                  <th className="w-[110px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Found In</th>
-                  <th className="w-[120px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Sprint</th>
-                  <th className="w-[90px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Links</th>
-                  <th className="w-[70px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Age</th>
-                  <th className="w-[90px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">SLA</th>
-                  <th className="w-[40px] px-3 py-3" />
+                  <th scope="col" className="w-[90px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">ID</th>
+                  <th scope="col" className="w-[120px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Severity</th>
+                  <th scope="col" className="px-3 py-3 text-left text-xs font-medium text-muted-foreground">Title</th>
+                  <th scope="col" className="w-[120px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Status</th>
+                  <th scope="col" className="w-[130px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Assignee</th>
+                  <th scope="col" className="w-[110px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Found In</th>
+                  <th scope="col" className="w-[120px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Sprint</th>
+                  <th scope="col" className="w-[90px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Links</th>
+                  <th scope="col" className="w-[70px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">Age</th>
+                  <th scope="col" className="w-[90px] px-3 py-3 text-left text-xs font-medium text-muted-foreground">SLA</th>
+                  <th scope="col" aria-label="Actions" className="w-[40px] px-3 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -5613,11 +5957,11 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
                     </td>
                     <td className="px-3 py-2.5">
                       {canManage && (
-                        <button onClick={async () => {
-                          const dbId = (d as any)._dbId;
-                          if (dbId) await supabase.from('project_defects').delete().eq('id', dbId);
-                          setDefects((prev) => prev.filter((x) => x.id !== d.id));
-                        }} className="text-muted-foreground hover:text-red-500">
+                        <button
+                          onClick={() => setDefectToDelete(d)}
+                          aria-label={`Delete defect ${d.id}: ${d.title}`}
+                          className="text-muted-foreground hover:text-red-500"
+                        >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       )}
@@ -5663,11 +6007,23 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
         </div>
       )}
 
-      {showAdd && (
+      {!loading && defects.length < defectTotal && (
+        <div className="flex justify-center">
+          <button
+            onClick={() => setDefectLimit((current) => Math.min(current + 50, defectTotal))}
+            className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted"
+          >
+            Load more ({defectTotal - defects.length} remaining)
+          </button>
+        </div>
+      )}
+
+      {(showAdd || editingDefect) && (
         <AddDefectSlideOver
           sprintNames={sprintNames}
           memberNames={memberNames}
-          onClose={() => setShowAdd(false)}
+          initialDefect={editingDefect ?? undefined}
+          onClose={() => { setShowAdd(false); setEditingDefect(null); }}
           onSave={async (defect) => {
             const PRIORITY_TO_DB: Record<string, string> = {
               'P1': 'Critical', 'P2': 'High', 'P3': 'Medium', 'P4': 'Low',
@@ -5678,46 +6034,58 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
               'production': 'production', 'staging': 'staging', 'uat': 'uat',
             };
             try {
-              const { data: created, error } = await supabase.from('project_defects').insert([{
-                project_id: projectId,
-                // defect_id assigned by DB trigger (DEF-#####)
+              const payload = {
+                projectId,
                 title: defect.title,
                 severity: defect.severity,
                 status: defect.status,
                 priority: PRIORITY_TO_DB[defect.priority] ?? 'Medium',
                 environment: ENV_MAP[defect.environment ?? ''] ?? 'uat',
-                assignee_id: defect.assigneeId ?? '',
-                assignee_name: defect.assigneeName ?? '',
-                steps_to_reproduce: defect.stepsToReproduce ?? [],
-                expected_result: defect.expectedBehavior ?? '',
-                actual_result: defect.actualBehavior ?? '',
-                linked_tickets: defect.linkedTicketIds ?? [],
-                found_in_version: defect.foundInVersion ?? '',
-                sprint_name: defect.sprint ?? '',
+                assigneeId: defect.assigneeId ?? '',
+                assigneeName: defect.assigneeName ?? '',
+                stepsToReproduce: defect.stepsToReproduce ?? [],
+                expectedResult: defect.expectedBehavior ?? '',
+                actualResult: defect.actualBehavior ?? '',
+                linkedTickets: defect.linkedTicketIds ?? [],
+                foundInVersion: defect.foundInVersion ?? '',
+                sprintName: defect.sprint ?? '',
                 description: defect.description ?? '',
-              }]).select().single();
-              if (error) {
-                toast.error(error.message);
-              } else {
-                if (defect.screenshotFile && created?.id) {
+                rootCause: defect.rootCause ?? '',
+                resolutionNotes: defect.resolutionNotes ?? '',
+              };
+              const endpoint = editingDefect?._dbId
+                ? `${API_BASE}/projects/defects/${editingDefect._dbId}`
+                : `${API_BASE}/projects/defects`;
+              const response = await fetch(endpoint, {
+                method: editingDefect?._dbId ? "PUT" : "POST",
+                headers: apiHeaders(),
+                body: JSON.stringify(payload),
+              });
+              const json = await safeJson(response) ?? {};
+              if (!response.ok || !json.success) throw new Error(json.error ?? "Failed to save defect");
+              const saved = json.data;
+              if (defect.screenshotFiles?.length && saved?.id) {
                   const uploadResult = await uploadEntityAttachments({
                     entityType: "defect",
-                    entityId: created.id,
-                    files: [defect.screenshotFile],
+                    entityId: saved.id,
+                    files: defect.screenshotFiles,
                     uploadedBy: userEmail || "unknown",
                     uploadedByName: userEmail || "Unknown",
                   });
                   if (uploadResult.failed.length > 0) {
-                    await supabase.from("project_defects").delete().eq("id", created.id);
+                    if (!editingDefect) {
+                      await fetch(`${API_BASE}/projects/defects/${saved.id}`, { method: "DELETE", headers: apiHeaders() });
+                    }
                     throw new Error(uploadResult.failed[0].error);
                   }
-                }
-                await loadDefects();
-                toast.success(t("projectMgmt.defectSaved"));
-                setShowAdd(false);
               }
-            } catch {
-              toast.error("Failed to save defect — check your connection");
+              await loadDefects(false);
+              toast.success(editingDefect ? "Defect updated" : t("projectMgmt.defectSaved"));
+              setShowAdd(false);
+              setEditingDefect(null);
+            } catch (error: unknown) {
+              toast.error(error instanceof Error ? error.message : "Failed to save defect");
+              throw error;
             }
           }}
         />
@@ -5732,7 +6100,7 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
               <Badge className="bg-muted text-foreground">{selectedDefect.priority}</Badge>
             </div>
             {selectedDefect.description && <p className="text-muted-foreground whitespace-pre-wrap">{selectedDefect.description}</p>}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div><span className="text-muted-foreground">Assignee</span><p className="font-medium">{selectedDefect.assigneeName || "—"}</p></div>
               <div><span className="text-muted-foreground">Sprint</span><p className="font-medium">{selectedDefect.sprint || "Backlog"}</p></div>
               <div><span className="text-muted-foreground">Environment</span><p className="font-medium">{selectedDefect.environment || "—"}</p></div>
@@ -5743,12 +6111,54 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
             )}
             {selectedDefect.expectedBehavior && <div><h4 className="font-medium">Expected Behavior</h4><p className="text-muted-foreground whitespace-pre-wrap">{selectedDefect.expectedBehavior}</p></div>}
             {selectedDefect.actualBehavior && <div><h4 className="font-medium">Actual Behavior</h4><p className="text-muted-foreground whitespace-pre-wrap">{selectedDefect.actualBehavior}</p></div>}
+            {selectedDefect.rootCause && <div><h4 className="font-medium">Root Cause</h4><p className="text-muted-foreground whitespace-pre-wrap">{selectedDefect.rootCause}</p></div>}
+            {selectedDefect.resolutionNotes && <div><h4 className="font-medium">Resolution Notes</h4><p className="text-muted-foreground whitespace-pre-wrap">{selectedDefect.resolutionNotes}</p></div>}
             <div><h4 className="font-medium mb-1">Linked Tickets</h4><LinkedTicketsBadge ids={selectedDefect.linkedTicketIds ?? []} /></div>
             {selectedDefect._dbId && (
               <AttachmentSection entityType="defect" entityId={selectedDefect._dbId} readOnly compact title="Screenshots" />
             )}
+            {canManage && (
+              <div className="flex justify-end">
+                <button
+                  onClick={() => { setEditingDefect(selectedDefect); setSelectedDefect(null); }}
+                  className="px-3 py-1.5 border border-border rounded-lg hover:bg-muted"
+                >
+                  Edit Defect
+                </button>
+              </div>
+            )}
           </div>
         </Modal>
+      )}
+      {defectToDelete && (
+        <ConfirmDialog
+          title="Delete defect"
+          message={`Delete ${defectToDelete.id} “${defectToDelete.title}”? Its screenshots and attachment records will also be permanently removed.`}
+          confirmLabel={deletingDefect ? "Deleting..." : "Delete defect"}
+          onCancel={() => {
+            if (!deletingDefect) setDefectToDelete(null);
+          }}
+          onConfirm={async () => {
+            const dbId = defectToDelete._dbId;
+            if (!dbId || deletingDefect) return;
+            setDeletingDefect(true);
+            try {
+              const res = await fetch(`${API_BASE}/projects/defects/${dbId}`, {
+                method: "DELETE",
+                headers: apiHeaders(),
+              });
+              const json = await safeJson(res) ?? {};
+              if (!res.ok || !json.success) throw new Error(json.error ?? "Failed to delete defect");
+              setDefects((prev) => prev.filter((item) => item.id !== defectToDelete.id));
+              setDefectToDelete(null);
+              toast.success("Defect and attachments deleted");
+            } catch (error: unknown) {
+              toast.error(error instanceof Error ? error.message : "Failed to delete defect");
+            } finally {
+              setDeletingDefect(false);
+            }
+          }}
+        />
       )}
     </div>
   );
@@ -6015,7 +6425,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
 
   function exportTimeLogCsv() {
     const rows = filteredLogs.map((l: any) => [l.log_date, l.employee_name, l.log_type, l.hours, l.billable ? "Yes" : "No", l.comment ?? ""]);
-    const csv = ["Date,Member,Type,Hours,Billable,Comment", ...rows.map((r: any[]) => r.join(","))].join("\n");
+    const csv = [csvRow(["Date", "Member", "Type", "Hours", "Billable", "Comment"]), ...rows.map(csvRow)].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a"); a.href = url; a.download = "time-log.csv"; a.click();
@@ -6082,29 +6492,29 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
 
   function exportFullReportCSV() {
     const sections: string[] = [];
-    sections.push(`"Project Report: ${project.name}"`);
-    sections.push(`"Generated: ${new Date().toLocaleString('en-IN')}"`);
+    sections.push(csvRow([`Project Report: ${project.name}`]));
+    sections.push(csvRow([`Generated: ${new Date().toLocaleString('en-IN')}`]));
     sections.push("");
-    sections.push("PROJECT SUMMARY");
-    sections.push(`"Name","Status","Priority","Progress","Budget","Spent","Start","End"`);
-    sections.push(`"${project.name}","${project.status}","${project.priority ?? ''}","${project.progress ?? 0}%","${project.budget ?? 0}","${project.spent ?? 0}","${project.startDate ?? ''}","${project.endDate ?? ''}"`);
+    sections.push(csvRow(["PROJECT SUMMARY"]));
+    sections.push(csvRow(["Name", "Status", "Priority", "Progress", "Budget", "Spent", "Start", "End"]));
+    sections.push(csvRow([project.name, project.status, project.priority, `${project.progress ?? 0}%`, project.budget, project.spent, project.startDate, project.endDate]));
     sections.push("");
-    sections.push("TIME LOG");
-    sections.push(`"Date","Member","Type","Hours","Billable","Comment"`);
+    sections.push(csvRow(["TIME LOG"]));
+    sections.push(csvRow(["Date", "Member", "Type", "Hours", "Billable", "Comment"]));
     for (const l of (timeLogs as any[])) {
-      sections.push(`"${l.log_date}","${l.employee_name}","${l.log_type}","${l.hours}","${l.billable ? 'Yes' : 'No'}","${l.comment ?? ''}"`);
+      sections.push(csvRow([l.log_date, l.employee_name, l.log_type, l.hours, l.billable ? "Yes" : "No", l.comment]));
     }
     sections.push("");
-    sections.push("BUDGET ITEMS");
-    sections.push(`"Category","Budgeted","Actual","Variance"`);
+    sections.push(csvRow(["BUDGET ITEMS"]));
+    sections.push(csvRow(["Category", "Budgeted", "Actual", "Variance"]));
     for (const b of (budgetItems as any[])) {
-      sections.push(`"${b.category}","${budgetedAmount(b)}","${actualAmount(b)}","${(budgetedAmount(b) - actualAmount(b)).toFixed(2)}"`);
+      sections.push(csvRow([b.category, budgetedAmount(b), actualAmount(b), (budgetedAmount(b) - actualAmount(b)).toFixed(2)]));
     }
     sections.push("");
-    sections.push("DEFECTS");
-    sections.push(`"Title","Priority","Status","Assignee"`);
+    sections.push(csvRow(["DEFECTS"]));
+    sections.push(csvRow(["Title", "Priority", "Status", "Assignee"]));
     for (const d of (defects as any[])) {
-      sections.push(`"${d.title}","${d.priority}","${d.status}","${d.assignee_name ?? ''}"`);
+      sections.push(csvRow([d.title, d.priority, d.status, d.assignee_name]));
     }
     const csv = sections.join("\n");
     const a = document.createElement("a");
@@ -6116,21 +6526,21 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
   function exportFullReportPrint() {
     const totalBudgetLocal = project.budget ?? 0;
     const totalSpentLocal = project.spent ?? 0;
-    const html = `<!DOCTYPE html><html><head><title>Project Report: ${project.name}</title>
+    const html = `<!DOCTYPE html><html><head><title>Project Report: ${escapeHtml(project.name)}</title>
     <style>body{font-family:sans-serif;padding:24px;color:#111}h1{font-size:20px}h2{font-size:14px;margin-top:20px;border-bottom:1px solid #ccc;padding-bottom:4px}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}th,td{border:1px solid #ddd;padding:6px 8px;text-align:left}th{background:#f5f5f5}@media print{button{display:none}}</style>
     </head><body>
-    <h1>Project Report: ${project.name}</h1>
-    <p style="color:#666;font-size:12px">Generated: ${new Date().toLocaleString('en-IN')} &nbsp;|&nbsp; Status: ${project.status} &nbsp;|&nbsp; Progress: ${project.progress ?? 0}%</p>
+    <h1>Project Report: ${escapeHtml(project.name)}</h1>
+    <p style="color:#666;font-size:12px">Generated: ${escapeHtml(new Date().toLocaleString('en-IN'))} &nbsp;|&nbsp; Status: ${escapeHtml(project.status)} &nbsp;|&nbsp; Progress: ${escapeHtml(project.progress ?? 0)}%</p>
     <h2>Budget Summary</h2>
-    <table><tr><th>Budget</th><th>Spent</th><th>Remaining</th></tr>
+    <table><caption>Budget summary</caption><tr><th scope="col">Budget</th><th scope="col">Spent</th><th scope="col">Remaining</th></tr>
     <tr><td>₹${totalBudgetLocal.toLocaleString('en-IN')}</td><td>₹${totalSpentLocal.toLocaleString('en-IN')}</td><td>₹${(totalBudgetLocal - totalSpentLocal).toLocaleString('en-IN')}</td></tr></table>
     <h2>Defects</h2>
-    <table><tr><th>Title</th><th>Priority</th><th>Status</th><th>Assignee</th></tr>
-    ${(defects as any[]).map(d => `<tr><td>${d.title}</td><td>${d.priority}</td><td>${d.status}</td><td>${d.assignee_name ?? ''}</td></tr>`).join('')}
+    <table><caption>Defects</caption><tr><th scope="col">Title</th><th scope="col">Priority</th><th scope="col">Status</th><th scope="col">Assignee</th></tr>
+    ${(defects as any[]).map(d => `<tr><td>${escapeHtml(d.title)}</td><td>${escapeHtml(d.priority)}</td><td>${escapeHtml(d.status)}</td><td>${escapeHtml(d.assignee_name)}</td></tr>`).join('')}
     </table>
     <h2>Time Log</h2>
-    <table><tr><th>Date</th><th>Member</th><th>Type</th><th>Hours</th><th>Billable</th></tr>
-    ${(timeLogs as any[]).map(l => `<tr><td>${l.log_date}</td><td>${l.employee_name}</td><td>${l.log_type}</td><td>${l.hours}</td><td>${l.billable ? 'Yes' : 'No'}</td></tr>`).join('')}
+    <table><caption>Time log</caption><tr><th scope="col">Date</th><th scope="col">Member</th><th scope="col">Type</th><th scope="col">Hours</th><th scope="col">Billable</th></tr>
+    ${(timeLogs as any[]).map(l => `<tr><td>${escapeHtml(l.log_date)}</td><td>${escapeHtml(l.employee_name)}</td><td>${escapeHtml(l.log_type)}</td><td>${escapeHtml(l.hours)}</td><td>${l.billable ? 'Yes' : 'No'}</td></tr>`).join('')}
     </table>
     </body></html>`;
     const w = window.open('', '_blank');
@@ -6183,7 +6593,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
             <div className="text-sm text-muted-foreground">No sprint items found. Select a sprint with backlog items.</div>
           ) : (
             <div className="bg-card border rounded-xl p-4">
-              <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="overflow-visible">
+              <svg role="img" aria-label="Project report chart with equivalent summary data below" viewBox={`0 0 ${W} ${H}`} width="100%" className="overflow-visible">
                 {/* Grid lines */}
                 {[0, 0.25, 0.5, 0.75, 1].map(r => (
                   <line key={r} x1={PL} x2={W - PR} y1={PT + r * CH} y2={PT + r * CH} stroke="#e5e7eb" strokeWidth="1" />
@@ -6218,7 +6628,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
             </div>
           )}
           {/* Summary cards */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: "Committed", value: totalPts, unit: "pts" },
               { label: "Completed", value: completedPts, unit: "pts" },
@@ -6246,7 +6656,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
             <div className="text-sm text-muted-foreground">No completed or active sprints found.</div>
           ) : (
             <div className="bg-card border rounded-xl p-4">
-              <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="overflow-visible">
+              <svg role="img" aria-label="Project report chart with equivalent summary data below" viewBox={`0 0 ${W} ${H}`} width="100%" className="overflow-visible">
                 {[0, 0.25, 0.5, 0.75, 1].map(r => (
                   <line key={r} x1={PL} x2={W - PR} y1={PT + r * CH} y2={PT + r * CH} stroke="#e5e7eb" strokeWidth="1" />
                 ))}
@@ -6294,11 +6704,12 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
               <h4 className="font-medium text-sm">Sprint Comparison</h4>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[760px] table-auto text-sm">
+                <caption className="sr-only">Project management data table</caption>
                 <thead>
                   <tr className="border-b bg-muted/50">
                     {["Sprint", "Committed", "Completed", "Velocity", "Completion %"].map(h => (
-                      <th key={h} className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">{h}</th>
+                      <th key={h} scope="col" className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -6333,7 +6744,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
       {reportTab === "timelog" && (
         <div className="space-y-4">
           {/* KPI cards */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {[
               { label: "Total Hours", value: totalHours.toFixed(1) },
               { label: "Billable Hours", value: billableHours.toFixed(1) },
@@ -6375,11 +6786,12 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
             {/* Table */}
             <div className="flex-1 bg-card border rounded-xl overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[760px] table-auto text-sm">
+                  <caption className="sr-only">Project management data table</caption>
                   <thead>
                     <tr className="border-b bg-muted/50">
                       {["Date", "Member", "Task/Type", "Hours", "Billable", "Comment"].map(h => (
-                        <th key={h} className="px-3 py-2 text-left text-xs font-medium text-muted-foreground whitespace-nowrap">{h}</th>
+                        <th key={h} scope="col" className="px-3 py-2 text-left text-xs font-medium text-muted-foreground whitespace-nowrap">{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -6406,7 +6818,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
             {logTypeTotals.length > 0 && (
               <div className="bg-card border rounded-xl p-4 flex-shrink-0">
                 <h4 className="text-xs font-medium text-muted-foreground mb-2">By Type</h4>
-                <svg viewBox="0 0 160 160" width="160" height="160">
+                <svg role="img" aria-label="Project report chart with equivalent summary data below" viewBox="0 0 160 160" width="160" height="160">
                   {donutSegments().map(seg => (
                     <path key={seg.type} d={seg.d} fill={seg.color} />
                   ))}
@@ -6432,7 +6844,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
           {/* Overview card */}
           <div className="bg-card border rounded-xl p-5">
             <h4 className="font-semibold mb-4">Budget Overview</h4>
-            <div className="grid grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
               {[
                 { label: "Total Budget", value: `$${(totalBudget).toLocaleString()}`, color: "text-foreground" },
                 { label: "Spent", value: `$${(totalSpent).toLocaleString()}`, color: "text-orange-600" },
@@ -6468,11 +6880,12 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
                   <h4 className="font-medium text-sm">Category Breakdown</h4>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <table className="w-full min-w-[760px] table-auto text-sm">
+                    <caption className="sr-only">Project management data table</caption>
                     <thead>
                       <tr className="border-b bg-muted/50">
                         {["Category", "Budgeted", "Actual", "Variance", "% Used"].map(h => (
-                          <th key={h} className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">{h}</th>
+                          <th key={h} scope="col" className="px-4 py-2 text-left text-xs font-medium text-muted-foreground">{h}</th>
                         ))}
                       </tr>
                     </thead>
@@ -6509,7 +6922,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
               {/* Budget vs Actual bar chart */}
               <div className="bg-card border rounded-xl p-4">
                 <h4 className="text-sm font-medium mb-3">Budget vs Actual by Category</h4>
-                <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="overflow-visible">
+                <svg role="img" aria-label="Project report chart with equivalent summary data below" viewBox={`0 0 ${W} ${H}`} width="100%" className="overflow-visible">
                   {[0, 0.25, 0.5, 0.75, 1].map(r => (
                     <line key={r} x1={PL} x2={W - PR} y1={PT + r * CH} y2={PT + r * CH} stroke="#e5e7eb" strokeWidth="1" />
                   ))}
@@ -6549,7 +6962,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
       {reportTab === "defects" && (
         <div className="space-y-4">
           {/* KPI row */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
               { label: "Total", value: defects.length, color: "text-foreground" },
               { label: "Open", value: openDefects.length, color: "text-red-600" },
@@ -6566,7 +6979,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
           {/* Opened vs Closed line chart */}
           <div className="bg-card border rounded-xl p-4">
             <h4 className="text-sm font-medium mb-3">Opened vs Closed (Last 30 Days)</h4>
-            <svg viewBox={`0 0 ${W} ${H}`} width="100%" className="overflow-visible">
+            <svg role="img" aria-label="Project report chart with equivalent summary data below" viewBox={`0 0 ${W} ${H}`} width="100%" className="overflow-visible">
               {[0, 0.25, 0.5, 0.75, 1].map(r => (
                 <line key={r} x1={PL} x2={W - PR} y1={PT + r * CH} y2={PT + r * CH} stroke="#e5e7eb" strokeWidth="1" />
               ))}
@@ -6635,7 +7048,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
 
         return (
           <div className="space-y-4">
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               {[
                 { label: "Total Milestones", value: total, color: "text-foreground" },
                 { label: "Completed", value: completed, color: "text-green-600" },
@@ -6682,13 +7095,14 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
             {/* Milestone list */}
             {ms.length > 0 && (
               <div className="bg-card border rounded-xl overflow-hidden">
-                <table className="w-full text-sm">
+                <table className="w-full min-w-[760px] table-auto text-sm">
+                  <caption className="sr-only">Project management data table</caption>
                   <thead>
                     <tr className="bg-muted/50 border-b">
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Milestone</th>
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Planned</th>
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Actual</th>
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Status</th>
+                      <th scope="col" className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Milestone</th>
+                      <th scope="col" className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Planned</th>
+                      <th scope="col" className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Actual</th>
+                      <th scope="col" className="px-4 py-2 text-left text-xs font-semibold text-muted-foreground">Status</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -6802,24 +7216,23 @@ function ProjectDetailPanel({
   }, [project.id]);
 
   useEffect(() => {
-    supabase.from("project_rag_log").select("*").eq("project_id", project.id).order("created_at", { ascending: false }).limit(5)
-      .then(({ data }) => { if (data) setRagLog(data); });
-    supabase.from("project_activity_log").select("*").eq("project_id", project.id).order("created_at", { ascending: false }).limit(10)
-      .then(({ data }) => { if (data) setActivityLog(data); });
+    fetch(`${PM_API}/${project.id}/rag-log`, { headers: apiHeaders() })
+      .then((response) => response.json())
+      .then((json) => setRagLog(json.data ?? []))
+      .catch(() => setRagLog([]));
+    fetch(`${PM_API}/${project.id}/activity`, { headers: apiHeaders() })
+      .then((response) => response.json())
+      .then((json) => setActivityLog(json.data ?? []))
+      .catch(() => setActivityLog([]));
   }, [project.id]);
 
   async function handleRagChange(ragStatus: string) {
     setUpdatingRag(true);
     try {
       await onUpdateRAG(ragStatus);
-      await supabase.from("project_rag_log").insert([{
-        project_id: project.id,
-        old_status: project.ragStatus,
-        new_status: ragStatus,
-        changed_by: userEmail ?? "unknown",
-      }]);
-      const { data } = await supabase.from("project_rag_log").select("*").eq("project_id", project.id).order("created_at", { ascending: false }).limit(5);
-      if (data) setRagLog(data);
+      const response = await fetch(`${PM_API}/${project.id}/rag-log`, { headers: apiHeaders() });
+      const json = await safeJson(response) ?? {};
+      if (response.ok) setRagLog(json.data ?? []);
       if (ragStatus === "Red") {
         void notifyPM({
           projectId: project.id,
@@ -6939,7 +7352,7 @@ function ProjectDetailPanel({
                 {project.description && (
                   <p className="text-sm text-muted-foreground">{project.description}</p>
                 )}
-                <div className="grid grid-cols-2 gap-4 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                   <div>
                     <span className="text-muted-foreground">{t("project.category")}</span>
                     <p className="font-medium">{project.category}</p>
@@ -7082,7 +7495,7 @@ function ProjectDetailPanel({
                         />
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                       <div><span className="text-muted-foreground">Remaining</span><br /><span className="font-semibold">{(((project.budget ?? 0) - (project.spent ?? 0)) / 1000).toFixed(0)}K</span></div>
                       <div><span className="text-muted-foreground">Used</span><br /><span className="font-semibold">{budgetPct}%</span></div>
                     </div>
@@ -7127,7 +7540,13 @@ function ProjectDetailPanel({
 
         {/* Defects */}
         {activeTab === "defects" && (
-          <DefectsTab projectId={project.id} members={members} sprintNames={sprintNames} userEmail={userEmail} canManage={canManageDefects} />
+          <Suspense fallback={<InlineLoader />}>
+            <ProjectDefectWorkspace
+              projectId={project.id}
+              projectName={project.name}
+              canManage={canManageDefects}
+            />
+          </Suspense>
         )}
 
         {/* Tasks */}
@@ -7672,7 +8091,7 @@ function DashboardView({
     return name.split(" ").map((w) => w[0]).join("").toUpperCase().slice(0, 2);
   }
 
-  const myProjects = projects.slice(0, 3);
+  const dashboardProjects = projects.slice(0, 6);
 
   const activityItems = useMemo(() => {
     const items: { initials: string; action: string; time: string }[] = [];
@@ -7784,10 +8203,10 @@ function DashboardView({
               <Folder className="size-4" />
             </div>
             <h3 className="font-semibold text-foreground">My Projects</h3>
-            <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">{myProjects.length}</span>
+            <span className="text-xs bg-muted text-muted-foreground px-2 py-0.5 rounded-full">{projects.length}</span>
           </div>
           <div className="space-y-3">
-            {myProjects.map((p, i) => {
+            {dashboardProjects.map((p, i) => {
               const progress = projectProgress(p);
               const totalTasks = (p.tasks ?? []).length;
               const doneTasks = (p.tasks ?? []).filter((t) => t.status === "Done").length;
@@ -7817,8 +8236,13 @@ function DashboardView({
                 </button>
               );
             })}
-            {myProjects.length === 0 && (
+            {dashboardProjects.length === 0 && (
               <p className="text-sm text-muted-foreground text-center py-6">No projects found</p>
+            )}
+            {projects.length > dashboardProjects.length && (
+              <p className="border-t border-border pt-3 text-center text-xs text-muted-foreground">
+                Showing {dashboardProjects.length} of {projects.length} projects
+              </p>
             )}
           </div>
         </div>
@@ -8405,6 +8829,7 @@ function NotificationPreferencesModal({ userId, onClose }: { userId: string; onC
                   type="button"
                   role="switch"
                   aria-checked={prefs[e.key]}
+                  aria-label={t(e.label)}
                   onClick={() => setPrefs((p) => ({ ...p, [e.key]: !p[e.key] }))}
                   className={`relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border-2 border-transparent transition-colors focus:outline-none ${prefs[e.key] ? "bg-indigo-600" : "bg-gray-300"}`}
                 >
@@ -8445,6 +8870,7 @@ export function ProjectManagementJira({
   onLogout: () => void;
 }) {
   const { currentUser } = useUser();
+  const appRootRef = useAccessibleFormLabels();
   const navigate = useNavigate();
   const location = useLocation();
   const {
@@ -8492,6 +8918,12 @@ export function ProjectManagementJira({
   const [deleteConfirmProject, setDeleteConfirmProject] = useState<{ id: string; name: string } | null>(null);
   const [deleteNameInput, setDeleteNameInput] = useState("");
   const [showNotifPrefs, setShowNotifPrefs] = useState(false);
+  const deleteProjectTitleId = useId();
+  const deleteProjectDescriptionId = useId();
+  const deleteProjectDialogRef = useDialogFocus(() => {
+    setDeleteConfirmProject(null);
+    setDeleteNameInput("");
+  }, Boolean(deleteConfirmProject));
 
   const role = currentUser?.primaryRole as string | undefined;
   const canManage = secManageTeam || secCreateTasks || secManageBacklog || secManageSprints;
@@ -8528,8 +8960,8 @@ export function ProjectManagementJira({
   function handleExportCSV(data: Record<string, unknown>[], filename: string) {
     if (!data.length) return;
     const headers = Object.keys(data[0]);
-    const rows = data.map((row) => headers.map((h) => JSON.stringify(row[h] ?? "")).join(","));
-    const csv = [headers.join(","), ...rows].join("\n");
+    const rows = data.map((row) => csvRow(headers.map((h) => row[h])));
+    const csv = [csvRow(headers), ...rows].join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -8626,7 +9058,10 @@ export function ProjectManagementJira({
   // My tasks: flat list of tasks assigned to current user
   const myTasks = projects.flatMap((p) =>
     (p.tasks ?? [])
-      .filter((t) => t.assigneeId === userId)
+      .filter((task) =>
+        task.assigneeId === userId
+        || (currentUserName && task.assigneeName?.toLocaleLowerCase() === currentUserName.toLocaleLowerCase())
+      )
       .map((t) => ({ ...t, projectName: p.name, projectId: p.id }))
   );
 
@@ -8641,7 +9076,7 @@ export function ProjectManagementJira({
   );
 
   return (
-    <div className="min-h-screen bg-muted">
+    <div ref={appRootRef} className="min-h-screen bg-muted">
       {/* Header */}
       <div className="sticky top-0 z-30 border-b border-border/80 bg-background/90 backdrop-blur-xl">
         <div className="flex w-full flex-wrap items-center gap-3 px-4 py-3 sm:px-6 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-4">
@@ -8714,7 +9149,7 @@ export function ProjectManagementJira({
         </div>
       </div>
 
-      <div className="w-full px-4 sm:px-6 py-6 space-y-6">
+      <div className="w-full space-y-6 px-3 py-5 sm:px-5 sm:py-6 lg:px-6 xl:px-8">
         {/* Dashboard View */}
         {mainView === "dashboard" && (
           <DashboardView
@@ -8771,7 +9206,7 @@ export function ProjectManagementJira({
 
         {/* Projects Grid/Table quick view (outside main view switcher) */}
         {projectsViewMode === 'grid' && view === 'list' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
             {projects.map((p) => (
               <ProjectCard
                 key={p.id}
@@ -8788,18 +9223,19 @@ export function ProjectManagementJira({
         )}
         {projectsViewMode === 'table' && view === 'list' && (
           <div className="overflow-x-auto bg-card border rounded-xl">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[900px] table-auto text-sm">
+              <caption className="sr-only">Project management data table</caption>
               <thead>
                 <tr className="border-b text-xs text-muted-foreground">
-                  <th className="text-left py-2 px-3 font-medium">Name</th>
-                  <th className="text-left py-2 px-3 font-medium">Category</th>
-                  <th className="text-left py-2 px-3 font-medium">Status</th>
-                  <th className="text-left py-2 px-3 font-medium">Health</th>
-                  <th className="text-left py-2 px-3 font-medium">RAG</th>
-                  <th className="text-left py-2 px-3 font-medium">Manager</th>
-                  <th className="text-left py-2 px-3 font-medium">Progress</th>
-                  <th className="text-left py-2 px-3 font-medium">Budget %</th>
-                  <th className="py-2 px-3 text-right font-medium">Actions</th>
+                  <th scope="col" className="text-left py-2 px-3 font-medium">Name</th>
+                  <th scope="col" className="text-left py-2 px-3 font-medium">Category</th>
+                  <th scope="col" className="text-left py-2 px-3 font-medium">Status</th>
+                  <th scope="col" className="text-left py-2 px-3 font-medium">Health</th>
+                  <th scope="col" className="text-left py-2 px-3 font-medium">RAG</th>
+                  <th scope="col" className="text-left py-2 px-3 font-medium">Manager</th>
+                  <th scope="col" className="text-left py-2 px-3 font-medium">Progress</th>
+                  <th scope="col" className="text-left py-2 px-3 font-medium">Budget %</th>
+                  <th scope="col" className="py-2 px-3 text-right font-medium">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -8877,173 +9313,7 @@ export function ProjectManagementJira({
           <div className="text-center py-12 text-red-500">{error}</div>
         ) : (
           <>
-            {/* List View */}
-            {view === "list" && (
-              <div className="bg-card rounded-xl border overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted border-b">
-                      <tr>
-                        <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                          {t("project.projectNameCol")}
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                          {t("project.category")}
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                          {t("common.status")}
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                          {t("projects.priority")}
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                          {t("project.rag")}
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                          {t("project.manager")}
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">
-                          {t("projects.timeline")}
-                        </th>
-                        <th className="text-left px-4 py-3 font-medium text-muted-foreground">
-                          {t("project.progress")}
-                        </th>
-                        <th className="px-4 py-3" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {projects.map((project) => (
-                        <tr
-                          key={project.id}
-                          className="group hover:bg-muted transition-colors"
-                        >
-                          <td className="px-4 py-3">
-                            <button
-                              onClick={() => openProject(project)}
-                              className="font-medium text-blue-700 hover:underline text-left"
-                            >
-                              {project.name}
-                            </button>
-                          </td>
-                          <td className="px-4 py-3">
-                            <Badge className="bg-muted text-foreground">
-                              {project.category}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3">
-                            <Badge className={STATUS_COLORS[project.status] ?? "bg-gray-100 text-gray-700"}>
-                              {project.status}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3">
-                            <Badge className={PRIORITY_COLORS[project.priority]}>
-                              {project.priority}
-                            </Badge>
-                          </td>
-                          <td className="px-4 py-3">
-                            <RagDot status={project.ragStatus} />
-                          </td>
-                          <td className="px-4 py-3">
-                            {(() => { const hs = computeHealthScore(project); const hl = healthLabel(hs); return <span className={`text-xs font-medium px-2 py-0.5 rounded border ${hl.bg} ${hl.color}`}>{hl.label}</span>; })()}
-                          </td>
-                          <td className="px-4 py-3 text-muted-foreground">
-                            {project.managerName}
-                          </td>
-                          <td className="px-4 py-3 text-muted-foreground text-xs hidden sm:table-cell whitespace-nowrap">
-                            {project.startDate} – {project.endDate}
-                          </td>
-                          <td className="px-4 py-3 w-32">
-                            <div className="flex items-center gap-2">
-                              <ProgressBar value={project.progress} />
-                              <span className="text-xs text-muted-foreground whitespace-nowrap">
-                                {project.progress}%
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={() => openProject(project)}
-                                className="p-1 text-blue-500 hover:text-blue-700"
-                                title={t("common.view")}
-                              >
-                                <Circle className="w-4 h-4" />
-                              </button>
-                              {canEditProject && (
-                                <>
-                                  <button
-                                    onClick={() => setEditingProject(project)}
-                                    className="p-1 text-muted-foreground hover:text-foreground"
-                                    title={t("common.edit")}
-                                  >
-                                    <Edit className="w-4 h-4" />
-                                  </button>
-                                  <button
-                                    onClick={() =>
-                                      setShowRagSelector(
-                                        showRagSelector === project.id
-                                          ? null
-                                          : project.id
-                                      )
-                                    }
-                                    className="p-1 text-muted-foreground hover:text-foreground relative"
-                                    title={t("project.rag")}
-                                  >
-                                    <RagDot status={project.ragStatus} />
-                                    {showRagSelector === project.id && (
-                                      <div className="absolute right-0 top-6 z-20 bg-card border rounded-lg shadow-lg p-2 flex gap-2">
-                                        {RAG_STATUSES.map((r) => (
-                                          <button
-                                            key={r}
-                                            onClick={async (e) => {
-                                              e.stopPropagation();
-                                              try {
-                                                await updateRAG(project.id, r);
-                                                toast.success(t("project.ragUpdatedInline"));
-                                              } catch {
-                                                toast.error(t("project.failed"));
-                                              }
-                                              setShowRagSelector(null);
-                                            }}
-                                            className={`w-5 h-5 rounded-full ${RAG_COLORS[r]} ${project.ragStatus === r ? "ring-2 ring-offset-1 ring-gray-600" : ""}`}
-                                            title={r}
-                                          />
-                                        ))}
-                                      </div>
-                                    )}
-                                  </button>
-                                </>
-                              )}
-                              {canAdminDelete && (
-                                <button
-                                  onClick={() =>
-                                    handleDeleteProject(project.id, project.name)
-                                  }
-                                  className="p-1 text-red-400 hover:text-red-600"
-                                  title={t("common.delete")}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                      {projects.length === 0 && (
-                        <tr>
-                          <td
-                            colSpan={9}
-                            className="px-4 py-12 text-center text-muted-foreground"
-                          >
-                            {t("projects.noProjects")}
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+            {/* List view is rendered by the grid/table selector above. */}
 
             {/* Board View */}
             {view === "board" && (
@@ -9118,14 +9388,15 @@ export function ProjectManagementJira({
                         <h3 className="font-semibold text-foreground">{projectName}</h3>
                       </div>
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="w-full min-w-[760px] table-auto text-sm">
+                          <caption className="sr-only">Project management data table</caption>
                           <thead className="bg-muted border-b">
                             <tr>
-                              <th className="text-left px-4 py-2 font-medium text-muted-foreground">{t("project.task")}</th>
-                              <th className="text-left px-4 py-2 font-medium text-muted-foreground">{t("projects.priority")}</th>
-                              <th className="text-left px-4 py-2 font-medium text-muted-foreground">{t("common.status")}</th>
-                              <th className="text-left px-4 py-2 font-medium text-muted-foreground">{t("projects.dueDate")}</th>
-                              <th className="px-4 py-2" />
+                              <th scope="col" className="text-left px-4 py-2 font-medium text-muted-foreground">{t("project.task")}</th>
+                              <th scope="col" className="text-left px-4 py-2 font-medium text-muted-foreground">{t("projects.priority")}</th>
+                              <th scope="col" className="text-left px-4 py-2 font-medium text-muted-foreground">{t("common.status")}</th>
+                              <th scope="col" className="text-left px-4 py-2 font-medium text-muted-foreground">{t("projects.dueDate")}</th>
+                              <th scope="col" aria-label="Actions" className="px-4 py-2" />
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border">
@@ -9270,22 +9541,31 @@ export function ProjectManagementJira({
 
       {deleteConfirmProject && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-card border border-border rounded-xl shadow-xl p-6 w-[440px]">
+          <div
+            ref={deleteProjectDialogRef}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby={deleteProjectTitleId}
+            aria-describedby={deleteProjectDescriptionId}
+            tabIndex={-1}
+            className="bg-card border border-border rounded-xl shadow-xl p-6 w-full max-w-[440px] mx-4"
+          >
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
                 <Trash2 className="w-5 h-5 text-red-600" />
               </div>
               <div>
-                <h3 className="font-semibold text-foreground">Delete Project</h3>
+                <h3 id={deleteProjectTitleId} className="font-semibold text-foreground">Delete Project</h3>
                 <p className="text-xs text-muted-foreground">This action cannot be undone</p>
               </div>
             </div>
-            <p className="text-sm text-muted-foreground mb-4">
+            <p id={deleteProjectDescriptionId} className="text-sm text-muted-foreground mb-4">
               Type <strong className="text-foreground">{deleteConfirmProject.name}</strong> to confirm deletion.
             </p>
             <input
               value={deleteNameInput}
               onChange={(e) => setDeleteNameInput(e.target.value)}
+              aria-label={`Type ${deleteConfirmProject.name} to confirm project deletion`}
               placeholder="Type project name..."
               className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-red-500/30"
             />

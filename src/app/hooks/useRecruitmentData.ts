@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { API_BASE, safeJson, apiHeaders, apiFetch }from "../utils/constants";
 import { toast } from "sonner";
+import { parseCandidateExperience } from "../utils/recruitmentExperience";
 
 const RECRUIT_URL = `${API_BASE}/recruitment`;
 
@@ -540,30 +541,35 @@ export function useRecruitmentData(userEmail?: string) {
   // ==================== BULK UPLOAD ====================
 
   const bulkUpload = useCallback(async (rows: Record<string, string>[]): Promise<BulkUploadResult> => {
-    const mapped = rows.map((r) => ({
-      name: r.Name ?? r.name ?? "",
-      email: r.Email ?? r.email ?? "",
-      phone: r.Phone ?? r.phone ?? "",
-      position: r.Position ?? r.position ?? "",
-      department: r.Department ?? r.department ?? "",
-      experience: Number(r.Experience ?? r.experience ?? 0) || 0,
-      expectedSalary: r["Expected Salary"] ?? r.expectedSalary ?? r.expected_salary ?? "",
-      noticePeriod: r["Notice Period"] ?? r.noticePeriod ?? r.notice_period ?? "",
-      source: r.Source ?? r.source ?? "Excel Upload",
-      skills: (r.Skills ?? r.skills ?? "").split(",").map((s: string) => s.trim()).filter(Boolean),
-      expertise: r.Expertise ?? r.expertise ?? "",
-      nationality: r.Nationality ?? r.nationality ?? "",
-      previousCompany: r["Previous Company"] ?? r.previousCompany ?? "",
-      userNotes: r.Notes ?? r.notes ?? "",
-      currentCompany: r["Current Company"] ?? r.currentCompany ?? r.current_company ?? "",
-      currentSalary: r["Current Salary"] ?? r.currentSalary ?? r.current_salary ?? "",
-      hiringManager: r["Hiring Manager"] ?? r.hiringManager ?? r.hiring_manager ?? "",
-      servingNoticePeriod: ["yes", "true", "1"].includes(String(r["Serving Notice Period"] ?? r.servingNoticePeriod ?? "").toLowerCase()),
-      noticePeriodEndDate: r["Notice Period End Date"] ?? r.noticePeriodEndDate ?? r.notice_period_end_date ?? "",
-      agency_name: r["Agency Name"] ?? r.agency_name ?? "",
-      agency_email: r["Agency Email"] ?? r.agency_email ?? "",
-      agency_fee: Number(r["Agency Fee"] ?? r.agency_fee ?? 0) || undefined,
-    }));
+    const mapped = rows.map((r) => {
+      const parsedExperience = parseCandidateExperience(r.Experience ?? r.experience ?? 0);
+      return {
+        name: r.Name ?? r.name ?? "",
+        email: r.Email ?? r.email ?? "",
+        phone: r.Phone ?? r.phone ?? "",
+        position: r.Position ?? r.position ?? "",
+        department: r.Department ?? r.department ?? "",
+        experience: parsedExperience.decimalYears,
+        experienceYears: parsedExperience.years,
+        experienceMonths: parsedExperience.months,
+        expectedSalary: r["Expected Salary"] ?? r.expectedSalary ?? r.expected_salary ?? "",
+        noticePeriod: r["Notice Period"] ?? r.noticePeriod ?? r.notice_period ?? "",
+        source: r.Source ?? r.source ?? "Excel Upload",
+        skills: (r.Skills ?? r.skills ?? "").split(",").map((s: string) => s.trim()).filter(Boolean),
+        expertise: r.Expertise ?? r.expertise ?? "",
+        nationality: r.Nationality ?? r.nationality ?? "",
+        previousCompany: r["Previous Company"] ?? r.previousCompany ?? "",
+        userNotes: r.Notes ?? r.notes ?? "",
+        currentCompany: r["Current Company"] ?? r.currentCompany ?? r.current_company ?? "",
+        currentSalary: r["Current Salary"] ?? r.currentSalary ?? r.current_salary ?? "",
+        hiringManager: r["Hiring Manager"] ?? r.hiringManager ?? r.hiring_manager ?? "",
+        servingNoticePeriod: ["yes", "true", "1"].includes(String(r["Serving Notice Period"] ?? r.servingNoticePeriod ?? "").toLowerCase()),
+        noticePeriodEndDate: r["Notice Period End Date"] ?? r.noticePeriodEndDate ?? r.notice_period_end_date ?? "",
+        agency_name: r["Agency Name"] ?? r.agency_name ?? "",
+        agency_email: r["Agency Email"] ?? r.agency_email ?? "",
+        agency_fee: Number(r["Agency Fee"] ?? r.agency_fee ?? 0) || undefined,
+      };
+    });
 
     const res = await api(`${RECRUIT_URL}/bulk-upload`, {
       method: "POST",

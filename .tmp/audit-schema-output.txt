@@ -1,0 +1,671 @@
+supabase/migrations/05_business_extensions.sql:434:ALTER TABLE recruitment_communication_log
+supabase/migrations/05_business_extensions.sql-435-  ADD COLUMN IF NOT EXISTS sent_by_name TEXT;
+supabase/migrations/05_business_extensions.sql-436-
+supabase/migrations/05_business_extensions.sql-437-ALTER TABLE offboarding_tasks
+supabase/migrations/05_business_extensions.sql-438-  ADD COLUMN IF NOT EXISTS assigned_to_name TEXT;
+supabase/migrations/05_business_extensions.sql-439-
+supabase/migrations/05_business_extensions.sql:440:ALTER TABLE onboarding_signature_requests
+supabase/migrations/05_business_extensions.sql-441-  ADD COLUMN IF NOT EXISTS signature_data TEXT;
+supabase/migrations/05_business_extensions.sql-442-
+supabase/migrations/05_business_extensions.sql-443--- Compensation inputs intentionally accept formatted values such as "12 LPA".
+supabase/migrations/05_business_extensions.sql-444--- Convert legacy numeric columns to text without losing existing values.
+supabase/migrations/05_business_extensions.sql-445-DO $$
+supabase/migrations/05_business_extensions.sql-446-BEGIN
+supabase/migrations/05_business_extensions.sql-447-  IF EXISTS (
+supabase/migrations/05_business_extensions.sql-448-    SELECT 1 FROM information_schema.columns
+supabase/migrations/05_business_extensions.sql-449-    WHERE table_schema = 'public' AND table_name = 'job_requisitions'
+supabase/migrations/05_business_extensions.sql-450-      AND column_name = 'budget_min' AND data_type <> 'text'
+supabase/migrations/05_business_extensions.sql-451-  ) THEN
+supabase/migrations/05_business_extensions.sql-452-    ALTER TABLE job_requisitions ALTER COLUMN budget_min TYPE TEXT USING budget_min::TEXT;
+supabase/migrations/05_business_extensions.sql-453-  END IF;
+supabase/migrations/05_business_extensions.sql-454-  IF EXISTS (
+supabase/migrations/05_business_extensions.sql-455-    SELECT 1 FROM information_schema.columns
+supabase/migrations/05_business_extensions.sql-456-    WHERE table_schema = 'public' AND table_name = 'job_requisitions'
+supabase/migrations/05_business_extensions.sql-457-      AND column_name = 'budget_max' AND data_type <> 'text'
+supabase/migrations/05_business_extensions.sql-458-  ) THEN
+supabase/migrations/05_business_extensions.sql-459-    ALTER TABLE job_requisitions ALTER COLUMN budget_max TYPE TEXT USING budget_max::TEXT;
+supabase/migrations/05_business_extensions.sql-460-  END IF;
+supabase/migrations/05_business_extensions.sql-461-  IF EXISTS (
+supabase/migrations/05_business_extensions.sql-462-    SELECT 1 FROM information_schema.columns
+supabase/migrations/05_business_extensions.sql-463-    WHERE table_schema = 'public' AND table_name = 'recruitment_offers'
+supabase/migrations/05_business_extensions.sql-464-      AND column_name = 'offered_ctc' AND data_type <> 'text'
+supabase/migrations/05_business_extensions.sql-465-  ) THEN
+supabase/migrations/05_business_extensions.sql:466:    ALTER TABLE recruitment_offers ALTER COLUMN offered_ctc TYPE TEXT USING offered_ctc::TEXT;
+supabase/migrations/05_business_extensions.sql-467-  END IF;
+supabase/migrations/05_business_extensions.sql-468-  IF EXISTS (
+supabase/migrations/05_business_extensions.sql-469-    SELECT 1 FROM information_schema.columns
+supabase/migrations/05_business_extensions.sql-470-    WHERE table_schema = 'public' AND table_name = 'recruitment_offers'
+supabase/migrations/05_business_extensions.sql-471-      AND column_name = 'negotiated_ctc' AND data_type <> 'text'
+supabase/migrations/05_business_extensions.sql-472-  ) THEN
+supabase/migrations/05_business_extensions.sql:473:    ALTER TABLE recruitment_offers ALTER COLUMN negotiated_ctc TYPE TEXT USING negotiated_ctc::TEXT;
+supabase/migrations/05_business_extensions.sql-474-  END IF;
+supabase/migrations/05_business_extensions.sql-475-END;
+supabase/migrations/05_business_extensions.sql-476-$$;
+supabase/migrations/05_business_extensions.sql-477-
+supabase/migrations/05_business_extensions.sql:478:ALTER TABLE recruitment_communication_log
+supabase/migrations/05_business_extensions.sql-479-  DROP CONSTRAINT IF EXISTS recruitment_communication_log_channel_check;
+supabase/migrations/05_business_extensions.sql:480:ALTER TABLE recruitment_communication_log
+supabase/migrations/05_business_extensions.sql-481-  ADD CONSTRAINT recruitment_communication_log_channel_check
+supabase/migrations/05_business_extensions.sql-482-  CHECK (channel IN ('email','phone','sms','linkedin','whatsapp','in-person','video-call','other'));
+supabase/migrations/05_business_extensions.sql-483-
+supabase/migrations/05_business_extensions.sql:484:ALTER TABLE recruitment_interviews
+supabase/migrations/05_business_extensions.sql-485-  DROP CONSTRAINT IF EXISTS recruitment_interviews_status_check;
+supabase/migrations/05_business_extensions.sql:486:ALTER TABLE recruitment_interviews
+supabase/migrations/05_business_extensions.sql-487-  ADD CONSTRAINT recruitment_interviews_status_check
+supabase/migrations/05_business_extensions.sql-488-  CHECK (status IN ('Scheduled','Completed','Cancelled','Rescheduled','No-show'));
+supabase/migrations/05_business_extensions.sql-489-
+supabase/migrations/05_business_extensions.sql:490:ALTER TABLE recruitment_feedback
+supabase/migrations/05_business_extensions.sql-491-  DROP CONSTRAINT IF EXISTS recruitment_feedback_recommendation_check;
+supabase/migrations/05_business_extensions.sql:492:ALTER TABLE recruitment_feedback
+supabase/migrations/05_business_extensions.sql-493-  ADD CONSTRAINT recruitment_feedback_recommendation_check
+supabase/migrations/05_business_extensions.sql-494-  CHECK (recommendation IN (
+supabase/migrations/05_business_extensions.sql-495-    'Strong Hire','Hire','Maybe','Neutral','No Hire','Strong No Hire','Reject',
+supabase/migrations/05_business_extensions.sql-496-    'strong_hire','hire','neutral','no_hire','strong_no_hire'
+supabase/migrations/05_business_extensions.sql-497-  ));
+supabase/migrations/05_business_extensions.sql-498-
+supabase/migrations/05_business_extensions.sql-499--- ============================================================
+supabase/migrations/05_business_extensions.sql-500--- HR APP FIELD PERSISTENCE
+supabase/migrations/05_business_extensions.sql-501--- Keep Directory, Recruitment, and Onboarding form fields aligned
+supabase/migrations/05_business_extensions.sql-502--- with their relational tables and dropdown values.
+supabase/migrations/05_business_extensions.sql-503--- ============================================================
+supabase/migrations/05_business_extensions.sql-504-
+supabase/migrations/05_business_extensions.sql-505-ALTER TABLE employees
+supabase/migrations/05_business_extensions.sql-506-  ADD COLUMN IF NOT EXISTS lifecycle_status TEXT DEFAULT 'Active';
+supabase/migrations/05_business_extensions.sql-507-
+supabase/migrations/05_business_extensions.sql-508-ALTER TABLE employees DROP CONSTRAINT IF EXISTS employees_status_check;
+supabase/migrations/05_business_extensions.sql-509-ALTER TABLE employees
+supabase/migrations/05_business_extensions.sql-510-  ADD CONSTRAINT employees_status_check
+supabase/migrations/05_business_extensions.sql-511-  CHECK (status IN ('Active', 'Inactive', 'On Leave', 'Remote', 'Terminated'));
+supabase/migrations/05_business_extensions.sql-512-
+supabase/migrations/05_business_extensions.sql:513:ALTER TABLE recruitment_candidates
+supabase/migrations/05_business_extensions.sql-514-  ADD COLUMN IF NOT EXISTS agency_name TEXT,
+supabase/migrations/05_business_extensions.sql-515-  ADD COLUMN IF NOT EXISTS agency_email TEXT,
+supabase/migrations/05_business_extensions.sql-516-  ADD COLUMN IF NOT EXISTS agency_fee NUMERIC(12,2);
+supabase/migrations/05_business_extensions.sql-517-
+supabase/migrations/05_business_extensions.sql:518:ALTER TABLE recruitment_candidates DROP CONSTRAINT IF EXISTS recruitment_candidates_source_check;
+supabase/migrations/05_business_extensions.sql:519:ALTER TABLE recruitment_candidates
+supabase/migrations/05_business_extensions.sql-520-  ADD CONSTRAINT recruitment_candidates_source_check
+supabase/migrations/05_business_extensions.sql-521-  CHECK (source IN ('Email', 'Job Portal', 'Referral', 'LinkedIn', 'Walk-in', 'Excel Upload', 'Agency', 'Other'));
+supabase/migrations/05_business_extensions.sql-522-
+supabase/migrations/05_business_extensions.sql:523:ALTER TABLE recruitment_jobs DROP CONSTRAINT IF EXISTS recruitment_jobs_type_check;
+supabase/migrations/05_business_extensions.sql:524:ALTER TABLE recruitment_jobs
+supabase/migrations/05_business_extensions.sql-525-  ADD CONSTRAINT recruitment_jobs_type_check
+supabase/migrations/05_business_extensions.sql-526-  CHECK (type IN ('Full-time', 'Part-time', 'Contract', 'Internship', 'Freelance'));
+supabase/migrations/05_business_extensions.sql-527-
+supabase/migrations/05_business_extensions.sql:528:ALTER TABLE onboarding_records
+supabase/migrations/05_business_extensions.sql-529-  ADD COLUMN IF NOT EXISTS employment_type TEXT DEFAULT 'Full-time',
+supabase/migrations/05_business_extensions.sql-530-  ADD COLUMN IF NOT EXISTS work_mode TEXT DEFAULT 'On-site',
+supabase/migrations/05_business_extensions.sql-531-  ADD COLUMN IF NOT EXISTS gender TEXT,
+supabase/migrations/05_business_extensions.sql-532-  ADD COLUMN IF NOT EXISTS nationality TEXT,
+supabase/migrations/05_business_extensions.sql-533-  ADD COLUMN IF NOT EXISTS offered_ctc TEXT,
+supabase/migrations/05_business_extensions.sql-534-  ADD COLUMN IF NOT EXISTS probation_days INTEGER DEFAULT 90,
+supabase/migrations/05_business_extensions.sql-535-  ADD COLUMN IF NOT EXISTS date_of_birth DATE;
+supabase/migrations/05_business_extensions.sql-536-
+supabase/migrations/05_business_extensions.sql:537:ALTER TABLE onboarding_records DROP CONSTRAINT IF EXISTS onboarding_records_status_check;
+supabase/migrations/05_business_extensions.sql:538:ALTER TABLE onboarding_records
+supabase/migrations/05_business_extensions.sql-539-  ADD CONSTRAINT onboarding_records_status_check
+supabase/migrations/05_business_extensions.sql-540-  CHECK (status IN ('not-started', 'in-progress', 'completed', 'on-hold', 'Pending', 'In Progress', 'Completed', 'On Hold'));
+supabase/migrations/05_business_extensions.sql-541-
+supabase/migrations/05_business_extensions.sql-542-DROP TRIGGER IF EXISTS trg_temp_grants_updated_at ON temporary_access_grants;
+supabase/migrations/05_business_extensions.sql-543-CREATE TRIGGER trg_temp_grants_updated_at
+supabase/migrations/05_business_extensions.sql-544-  BEFORE UPDATE ON temporary_access_grants
+supabase/migrations/05_business_extensions.sql-545-  FOR EACH ROW EXECUTE FUNCTION update_temp_grants_updated_at();
+supabase/migrations/05_business_extensions.sql-546-
+supabase/migrations/05_business_extensions.sql-547--- >>> LEGACY SOURCE: 16_employee_code_jl.sql
+supabase/migrations/05_business_extensions.sql-548-
+supabase/migrations/05_business_extensions.sql-549--- Migration 16: Change employee code format from JSN#### to JL###
+supabase/migrations/05_business_extensions.sql-550--- New format: JL001, JL002, ... JL999, JL1000 (no zero-padding cap)
+supabase/migrations/05_business_extensions.sql-551-
+supabase/migrations/05_business_extensions.sql-552--- Drop old sequence and recreate starting at 1
+supabase/migrations/05_business_extensions.sql-553-DROP SEQUENCE IF EXISTS employee_code_seq CASCADE;
+supabase/migrations/05_business_extensions.sql-554-CREATE SEQUENCE employee_code_seq START 1 INCREMENT 1;
+supabase/migrations/05_business_extensions.sql-555-
+supabase/migrations/05_business_extensions.sql-556--- Sync sequence to current max to avoid collisions with existing rows
+supabase/migrations/05_business_extensions.sql-557-DO $$
+supabase/migrations/05_business_extensions.sql-558-DECLARE max_num INT;
+supabase/migrations/05_business_extensions.sql-559-BEGIN
+supabase/migrations/05_business_extensions.sql-560-  SELECT COALESCE(
+supabase/migrations/05_business_extensions.sql-561-    MAX(
+supabase/migrations/05_business_extensions.sql-562-      NULLIF(
+supabase/migrations/05_business_extensions.sql-563-        regexp_replace(employee_code, '[^0-9]', '', 'g'),
+supabase/migrations/05_business_extensions.sql-564-        ''
+supabase/migrations/05_business_extensions.sql-565-      )::INT
+supabase/migrations/05_business_extensions.sql-566-    ), 0
+supabase/migrations/05_business_extensions.sql-567-  )
+supabase/migrations/05_business_extensions.sql-568-  INTO max_num
+supabase/migrations/05_business_extensions.sql-569-  FROM employees
+supabase/migrations/05_business_extensions.sql-570-  WHERE employee_code IS NOT NULL;
+supabase/migrations/05_business_extensions.sql-571-
+supabase/migrations/05_business_extensions.sql-572-  IF max_num > 0 THEN
+supabase/migrations/05_business_extensions.sql-573-    PERFORM setval('employee_code_seq', max_num, true);
+supabase/migrations/05_business_extensions.sql-574-  END IF;
+supabase/migrations/05_business_extensions.sql-575-END $$;
+supabase/migrations/05_business_extensions.sql-576-
+supabase/migrations/05_business_extensions.sql-577--- Replace generator function with new JL prefix + zero-padded 3-digit (then 4+)
+supabase/migrations/05_business_extensions.sql-578-CREATE OR REPLACE FUNCTION generate_employee_code()
+supabase/migrations/05_business_extensions.sql-579-RETURNS TRIGGER LANGUAGE plpgsql AS $$
+supabase/migrations/05_business_extensions.sql-580-DECLARE
+supabase/migrations/05_business_extensions.sql-581-  next_num BIGINT;
+supabase/migrations/05_business_extensions.sql-582-BEGIN
+supabase/migrations/05_business_extensions.sql-583-  IF NEW.employee_code IS NULL THEN
+--
+supabase/migrations/05_business_extensions.sql:623:ALTER TABLE recruitment_candidates
+supabase/migrations/05_business_extensions.sql-624-  ADD COLUMN IF NOT EXISTS expertise TEXT;
+supabase/migrations/05_business_extensions.sql-625-
+supabase/migrations/05_business_extensions.sql-626--- >>> LEGACY SOURCE: 18_task_comments.sql
+supabase/migrations/05_business_extensions.sql-627-
+supabase/migrations/05_business_extensions.sql-628--- Migration 18: Task comments for project_tasks
+supabase/migrations/05_business_extensions.sql-629--- Allows users to add threaded comments on individual tasks
+supabase/migrations/05_business_extensions.sql-630-
+supabase/migrations/05_business_extensions.sql-631-CREATE TABLE IF NOT EXISTS task_comments (
+supabase/migrations/05_business_extensions.sql-632-  id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/05_business_extensions.sql-633-  task_id      UUID NOT NULL REFERENCES project_tasks(id) ON DELETE CASCADE,
+supabase/migrations/05_business_extensions.sql-634-  author_id    UUID REFERENCES employees(id) ON DELETE SET NULL,
+supabase/migrations/05_business_extensions.sql-635-  author_name  TEXT NOT NULL DEFAULT '',
+supabase/migrations/05_business_extensions.sql-636-  content      TEXT NOT NULL,
+supabase/migrations/05_business_extensions.sql-637-  created_by   TEXT,
+supabase/migrations/05_business_extensions.sql-638-  created_at   TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/05_business_extensions.sql-639-  updated_at   TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/05_business_extensions.sql-640-);
+supabase/migrations/05_business_extensions.sql-641-
+supabase/migrations/05_business_extensions.sql-642-CREATE INDEX IF NOT EXISTS idx_task_comments_task_id ON task_comments(task_id);
+supabase/migrations/05_business_extensions.sql-643-CREATE INDEX IF NOT EXISTS idx_task_comments_created_at ON task_comments(task_id, created_at DESC);
+supabase/migrations/05_business_extensions.sql-644-
+supabase/migrations/05_business_extensions.sql-645--- Enable RLS to match project_tasks pattern
+supabase/migrations/05_business_extensions.sql-646-ALTER TABLE task_comments ENABLE ROW LEVEL SECURITY;
+supabase/migrations/05_business_extensions.sql-647-
+supabase/migrations/05_business_extensions.sql-648-DROP POLICY IF EXISTS "task_comments_select" ON task_comments;
+supabase/migrations/05_business_extensions.sql-649-DROP POLICY IF EXISTS "task_comments_insert" ON task_comments;
+supabase/migrations/05_business_extensions.sql-650-DROP POLICY IF EXISTS "task_comments_update" ON task_comments;
+supabase/migrations/05_business_extensions.sql-651-DROP POLICY IF EXISTS "task_comments_delete" ON task_comments;
+supabase/migrations/05_business_extensions.sql-652-CREATE POLICY "task_comments_select" ON task_comments FOR SELECT TO authenticated USING (true);
+supabase/migrations/05_business_extensions.sql-653-CREATE POLICY "task_comments_insert" ON task_comments FOR INSERT TO authenticated WITH CHECK (true);
+supabase/migrations/05_business_extensions.sql-654-CREATE POLICY "task_comments_update" ON task_comments FOR UPDATE TO authenticated USING (true);
+supabase/migrations/05_business_extensions.sql-655-CREATE POLICY "task_comments_delete" ON task_comments FOR DELETE TO authenticated USING (true);
+supabase/migrations/05_business_extensions.sql-656-
+supabase/migrations/05_business_extensions.sql-657--- >>> LEGACY SOURCE: 19_project_tasks_timestamps.sql
+supabase/migrations/05_business_extensions.sql-658-
+supabase/migrations/05_business_extensions.sql-659--- Migration 19: Ensure timestamp audit columns exist on project_tasks
+supabase/migrations/05_business_extensions.sql-660--- These may be missing if the DB was initialised from an older schema snapshot.
+supabase/migrations/05_business_extensions.sql-661-
+supabase/migrations/05_business_extensions.sql-662-ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS started_at   TIMESTAMPTZ;
+supabase/migrations/05_business_extensions.sql-663-ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+supabase/migrations/05_business_extensions.sql-664-ALTER TABLE project_tasks ADD COLUMN IF NOT EXISTS closed_at    TIMESTAMPTZ;
+supabase/migrations/05_business_extensions.sql-665-
+supabase/migrations/05_business_extensions.sql-666--- >>> LEGACY SOURCE: 26_allow_general_defects.sql
+supabase/migrations/05_business_extensions.sql-667-
+supabase/migrations/05_business_extensions.sql-668--- Allow defects that are not associated with a project.
+--
+supabase/migrations/01_schema.sql:115:CREATE TABLE IF NOT EXISTS recruitment_jobs (
+supabase/migrations/01_schema.sql-116-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-117-  title TEXT NOT NULL,
+supabase/migrations/01_schema.sql-118-  department TEXT,
+supabase/migrations/01_schema.sql-119-  location TEXT,
+supabase/migrations/01_schema.sql-120-  type TEXT DEFAULT 'Full-time' CHECK (type IN ('Full-time', 'Part-time', 'Contract', 'Internship')),
+supabase/migrations/01_schema.sql-121-  experience TEXT,
+supabase/migrations/01_schema.sql-122-  description TEXT,
+supabase/migrations/01_schema.sql-123-  requirements JSONB DEFAULT '[]'::jsonb,
+supabase/migrations/01_schema.sql-124-  posted_date DATE DEFAULT CURRENT_DATE,
+supabase/migrations/01_schema.sql-125-  status TEXT DEFAULT 'Active' CHECK (status IN ('Active', 'Closed')),
+supabase/migrations/01_schema.sql-126-  applicants INTEGER DEFAULT 0,
+supabase/migrations/01_schema.sql-127-  platforms JSONB DEFAULT '["Company Website"]'::jsonb,
+supabase/migrations/01_schema.sql-128-  created_by TEXT,
+supabase/migrations/01_schema.sql-129-  updated_by TEXT,
+supabase/migrations/01_schema.sql-130-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-131-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-132-);
+supabase/migrations/01_schema.sql-133-
+supabase/migrations/01_schema.sql-134-CREATE INDEX IF NOT EXISTS idx_recruitment_jobs_status ON recruitment_jobs(status);
+supabase/migrations/01_schema.sql-135-CREATE INDEX IF NOT EXISTS idx_recruitment_jobs_department ON recruitment_jobs(department);
+supabase/migrations/01_schema.sql-136-
+supabase/migrations/01_schema.sql:137:CREATE TABLE IF NOT EXISTS recruitment_candidates (
+supabase/migrations/01_schema.sql-138-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-139-  name TEXT NOT NULL,
+supabase/migrations/01_schema.sql-140-  email TEXT NOT NULL,
+supabase/migrations/01_schema.sql-141-  phone TEXT,
+supabase/migrations/01_schema.sql-142-  position TEXT,
+supabase/migrations/01_schema.sql-143-  department TEXT,
+supabase/migrations/01_schema.sql-144-  job_id UUID REFERENCES recruitment_jobs(id) ON DELETE SET NULL,
+supabase/migrations/01_schema.sql-145-  experience INTEGER DEFAULT 0,
+supabase/migrations/01_schema.sql-146-  current_company TEXT,
+supabase/migrations/01_schema.sql-147-  current_salary TEXT,
+supabase/migrations/01_schema.sql-148-  expected_salary TEXT,
+supabase/migrations/01_schema.sql-149-  notice_period TEXT,
+supabase/migrations/01_schema.sql-150-  source TEXT DEFAULT 'Job Portal' CHECK (source IN ('Email', 'Job Portal', 'Referral', 'LinkedIn', 'Walk-in', 'Excel Upload', 'Other')),
+supabase/migrations/01_schema.sql-151-  stage TEXT DEFAULT 'Applied' CHECK (stage IN ('Applied', 'Screening', 'Interview Scheduled', 'Interview Done', 'HR Round Done', 'Offer Sent', 'Offer Accepted', 'Hired', 'Rejected')),
+supabase/migrations/01_schema.sql-152-  applied_date DATE DEFAULT CURRENT_DATE,
+supabase/migrations/01_schema.sql-153-  resume_url TEXT,
+supabase/migrations/01_schema.sql-154-  rating DECIMAL(3,1) DEFAULT 0,
+supabase/migrations/01_schema.sql-155-  skills JSONB DEFAULT '[]'::jsonb,
+supabase/migrations/01_schema.sql-156-  status TEXT DEFAULT 'Active' CHECK (status IN ('Active', 'On Hold', 'Closed')),
+supabase/migrations/01_schema.sql-157-  hiring_manager TEXT,
+supabase/migrations/01_schema.sql-158-  notes TEXT,
+supabase/migrations/01_schema.sql-159-  offer_sent_date DATE,
+supabase/migrations/01_schema.sql-160-  offer_accepted_date DATE,
+supabase/migrations/01_schema.sql-161-  expected_joining_date DATE,
+supabase/migrations/01_schema.sql-162-  created_by TEXT,
+supabase/migrations/01_schema.sql-163-  updated_by TEXT,
+supabase/migrations/01_schema.sql-164-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-165-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-166-);
+supabase/migrations/01_schema.sql-167-
+supabase/migrations/01_schema.sql-168-CREATE INDEX IF NOT EXISTS idx_recruitment_candidates_email ON recruitment_candidates(email);
+supabase/migrations/01_schema.sql-169-CREATE INDEX IF NOT EXISTS idx_recruitment_candidates_stage ON recruitment_candidates(stage);
+supabase/migrations/01_schema.sql-170-CREATE INDEX IF NOT EXISTS idx_recruitment_candidates_job_id ON recruitment_candidates(job_id);
+supabase/migrations/01_schema.sql-171-CREATE INDEX IF NOT EXISTS idx_recruitment_candidates_created_by ON recruitment_candidates(created_by);
+supabase/migrations/01_schema.sql-172-
+supabase/migrations/01_schema.sql:173:CREATE TABLE IF NOT EXISTS recruitment_interviews (
+supabase/migrations/01_schema.sql-174-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-175-  candidate_id UUID NOT NULL REFERENCES recruitment_candidates(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-176-  type TEXT CHECK (type IN ('Phone', 'Video', 'In-Person', 'Technical', 'HR')),
+supabase/migrations/01_schema.sql-177-  interview_date DATE,
+supabase/migrations/01_schema.sql-178-  interview_time TEXT,
+supabase/migrations/01_schema.sql-179-  interviewer TEXT,
+supabase/migrations/01_schema.sql-180-  duration TEXT,
+supabase/migrations/01_schema.sql-181-  meeting_link TEXT,
+supabase/migrations/01_schema.sql-182-  status TEXT DEFAULT 'Scheduled' CHECK (status IN ('Scheduled', 'Completed', 'Cancelled', 'Rescheduled')),
+supabase/migrations/01_schema.sql-183-  notes TEXT,
+supabase/migrations/01_schema.sql-184-  created_by TEXT,
+supabase/migrations/01_schema.sql-185-  updated_by TEXT,
+supabase/migrations/01_schema.sql-186-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-187-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-188-);
+supabase/migrations/01_schema.sql-189-
+supabase/migrations/01_schema.sql-190-CREATE INDEX IF NOT EXISTS idx_recruitment_interviews_candidate_id ON recruitment_interviews(candidate_id);
+supabase/migrations/01_schema.sql-191-
+supabase/migrations/01_schema.sql:192:CREATE TABLE IF NOT EXISTS recruitment_feedback (
+supabase/migrations/01_schema.sql-193-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-194-  candidate_id UUID NOT NULL REFERENCES recruitment_candidates(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-195-  interview_id UUID REFERENCES recruitment_interviews(id) ON DELETE SET NULL,
+supabase/migrations/01_schema.sql-196-  interviewer TEXT,
+supabase/migrations/01_schema.sql-197-  feedback_date DATE DEFAULT CURRENT_DATE,
+supabase/migrations/01_schema.sql-198-  rating DECIMAL(3,1),
+supabase/migrations/01_schema.sql-199-  technical_skills DECIMAL(3,1),
+supabase/migrations/01_schema.sql-200-  communication DECIMAL(3,1),
+supabase/migrations/01_schema.sql-201-  cultural_fit DECIMAL(3,1),
+supabase/migrations/01_schema.sql-202-  comments TEXT,
+supabase/migrations/01_schema.sql-203-  recommendation TEXT CHECK (recommendation IN ('Hire', 'Maybe', 'Reject')),
+supabase/migrations/01_schema.sql-204-  created_by TEXT,
+supabase/migrations/01_schema.sql-205-  updated_by TEXT,
+supabase/migrations/01_schema.sql-206-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-207-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-208-);
+supabase/migrations/01_schema.sql-209-
+supabase/migrations/01_schema.sql-210-CREATE INDEX IF NOT EXISTS idx_recruitment_feedback_candidate_id ON recruitment_feedback(candidate_id);
+supabase/migrations/01_schema.sql-211-
+supabase/migrations/01_schema.sql-212--- ============================================================
+supabase/migrations/01_schema.sql-213--- SECTION 3: ONBOARDING
+supabase/migrations/01_schema.sql-214--- ============================================================
+supabase/migrations/01_schema.sql-215-
+supabase/migrations/01_schema.sql:216:CREATE TABLE IF NOT EXISTS onboarding_records (
+supabase/migrations/01_schema.sql-217-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-218-  employee_id UUID REFERENCES employees(id) ON DELETE SET NULL,
+supabase/migrations/01_schema.sql-219-  candidate_id UUID REFERENCES recruitment_candidates(id) ON DELETE SET NULL,
+supabase/migrations/01_schema.sql-220-  employee_name TEXT NOT NULL,
+supabase/migrations/01_schema.sql-221-  email TEXT NOT NULL,
+supabase/migrations/01_schema.sql-222-  phone TEXT,
+supabase/migrations/01_schema.sql-223-  department TEXT,
+supabase/migrations/01_schema.sql-224-  position TEXT,
+supabase/migrations/01_schema.sql-225-  start_date DATE,
+supabase/migrations/01_schema.sql-226-  manager TEXT,
+supabase/migrations/01_schema.sql-227-  buddy TEXT,
+supabase/migrations/01_schema.sql-228-  location TEXT,
+supabase/migrations/01_schema.sql-229-  status TEXT DEFAULT 'not-started' CHECK (status IN ('not-started', 'in-progress', 'completed', 'Pending', 'In Progress', 'Completed')),
+supabase/migrations/01_schema.sql-230-  progress INTEGER DEFAULT 0,
+supabase/migrations/01_schema.sql-231-  completed_tasks INTEGER DEFAULT 0,
+supabase/migrations/01_schema.sql-232-  total_tasks INTEGER DEFAULT 0,
+supabase/migrations/01_schema.sql-233-  notes TEXT,
+supabase/migrations/01_schema.sql-234-  portal_access_enabled BOOLEAN DEFAULT FALSE,
+supabase/migrations/01_schema.sql-235-  auth_user_id UUID,
+supabase/migrations/01_schema.sql-236-  account_created_date TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-237-  created_by TEXT,
+supabase/migrations/01_schema.sql-238-  updated_by TEXT,
+supabase/migrations/01_schema.sql-239-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-240-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-241-);
+supabase/migrations/01_schema.sql-242-
+supabase/migrations/01_schema.sql-243-CREATE INDEX IF NOT EXISTS idx_onboarding_records_email ON onboarding_records(email);
+supabase/migrations/01_schema.sql-244-CREATE INDEX IF NOT EXISTS idx_onboarding_records_employee_id ON onboarding_records(employee_id);
+supabase/migrations/01_schema.sql-245-CREATE INDEX IF NOT EXISTS idx_onboarding_records_candidate_id ON onboarding_records(candidate_id);
+supabase/migrations/01_schema.sql-246-CREATE INDEX IF NOT EXISTS idx_onboarding_records_status ON onboarding_records(status);
+supabase/migrations/01_schema.sql-247-
+supabase/migrations/01_schema.sql:248:CREATE TABLE IF NOT EXISTS onboarding_tasks (
+supabase/migrations/01_schema.sql-249-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-250-  onboarding_id UUID NOT NULL REFERENCES onboarding_records(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-251-  title TEXT NOT NULL,
+supabase/migrations/01_schema.sql-252-  description TEXT,
+supabase/migrations/01_schema.sql-253-  category TEXT,
+supabase/migrations/01_schema.sql-254-  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'in-progress', 'completed', 'Pending', 'In Progress', 'Completed')),
+supabase/migrations/01_schema.sql-255-  priority TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high')),
+supabase/migrations/01_schema.sql-256-  assigned_to TEXT,
+supabase/migrations/01_schema.sql-257-  due_date DATE,
+supabase/migrations/01_schema.sql-258-  completed_date DATE,
+supabase/migrations/01_schema.sql-259-  task_order INTEGER DEFAULT 0,
+supabase/migrations/01_schema.sql-260-  created_by TEXT,
+supabase/migrations/01_schema.sql-261-  updated_by TEXT,
+supabase/migrations/01_schema.sql-262-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-263-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-264-);
+supabase/migrations/01_schema.sql-265-
+supabase/migrations/01_schema.sql-266-CREATE INDEX IF NOT EXISTS idx_onboarding_tasks_onboarding_id ON onboarding_tasks(onboarding_id);
+supabase/migrations/01_schema.sql-267-
+supabase/migrations/01_schema.sql:268:CREATE TABLE IF NOT EXISTS onboarding_documents (
+supabase/migrations/01_schema.sql-269-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-270-  onboarding_id UUID NOT NULL REFERENCES onboarding_records(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-271-  name TEXT NOT NULL,
+supabase/migrations/01_schema.sql-272-  type TEXT CHECK (type IN ('Offer Letter', 'NDA', 'Policy', 'Tax Form', 'Other')),
+supabase/migrations/01_schema.sql-273-  status TEXT DEFAULT 'Pending' CHECK (status IN ('Pending', 'Signed', 'Approved')),
+supabase/migrations/01_schema.sql-274-  url TEXT,
+supabase/migrations/01_schema.sql-275-  uploaded_date TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-276-  signed_date TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-277-  created_by TEXT,
+supabase/migrations/01_schema.sql-278-  updated_by TEXT,
+supabase/migrations/01_schema.sql-279-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-280-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-281-);
+supabase/migrations/01_schema.sql-282-
+supabase/migrations/01_schema.sql-283-CREATE INDEX IF NOT EXISTS idx_onboarding_documents_onboarding_id ON onboarding_documents(onboarding_id);
+supabase/migrations/01_schema.sql-284-
+supabase/migrations/01_schema.sql:285:CREATE TABLE IF NOT EXISTS onboarding_welcome_kits (
+supabase/migrations/01_schema.sql-286-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-287-  onboarding_id UUID NOT NULL REFERENCES onboarding_records(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-288-  status TEXT DEFAULT 'Not Ordered' CHECK (status IN ('Not Ordered', 'Ordered', 'Shipped', 'Delivered')),
+supabase/migrations/01_schema.sql-289-  items JSONB DEFAULT '[]'::jsonb,
+supabase/migrations/01_schema.sql-290-  tracking_number TEXT,
+supabase/migrations/01_schema.sql-291-  delivery_date DATE,
+supabase/migrations/01_schema.sql-292-  created_by TEXT,
+supabase/migrations/01_schema.sql-293-  updated_by TEXT,
+supabase/migrations/01_schema.sql-294-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-295-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-296-);
+supabase/migrations/01_schema.sql-297-
+supabase/migrations/01_schema.sql-298-CREATE INDEX IF NOT EXISTS idx_onboarding_welcome_kits_onboarding_id ON onboarding_welcome_kits(onboarding_id);
+supabase/migrations/01_schema.sql-299-
+supabase/migrations/01_schema.sql:300:CREATE TABLE IF NOT EXISTS onboarding_workflow_templates (
+supabase/migrations/01_schema.sql-301-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-302-  name TEXT NOT NULL,
+supabase/migrations/01_schema.sql-303-  department TEXT,
+supabase/migrations/01_schema.sql-304-  steps JSONB DEFAULT '[]'::jsonb,
+supabase/migrations/01_schema.sql-305-  created_by TEXT,
+supabase/migrations/01_schema.sql-306-  updated_by TEXT,
+supabase/migrations/01_schema.sql-307-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-308-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-309-);
+supabase/migrations/01_schema.sql-310-
+supabase/migrations/01_schema.sql:311:CREATE TABLE IF NOT EXISTS onboarding_signature_requests (
+supabase/migrations/01_schema.sql-312-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-313-  onboarding_id UUID REFERENCES onboarding_records(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-314-  employee_id UUID,
+supabase/migrations/01_schema.sql-315-  document_name TEXT NOT NULL,
+supabase/migrations/01_schema.sql-316-  document_type TEXT,
+supabase/migrations/01_schema.sql-317-  document_url TEXT,
+supabase/migrations/01_schema.sql-318-  signer_name TEXT,
+supabase/migrations/01_schema.sql-319-  signer_email TEXT,
+supabase/migrations/01_schema.sql-320-  due_date DATE,
+supabase/migrations/01_schema.sql-321-  signed_date TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-322-  status TEXT DEFAULT 'Pending' CHECK (status IN ('Pending', 'Sent', 'Signed', 'Expired', 'Declined')),
+supabase/migrations/01_schema.sql-323-  created_by TEXT,
+supabase/migrations/01_schema.sql-324-  updated_by TEXT,
+supabase/migrations/01_schema.sql-325-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-326-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-327-);
+supabase/migrations/01_schema.sql-328-
+supabase/migrations/01_schema.sql-329-CREATE INDEX IF NOT EXISTS idx_onboarding_signatures_onboarding ON onboarding_signature_requests(onboarding_id);
+supabase/migrations/01_schema.sql-330-
+supabase/migrations/01_schema.sql-331--- ============================================================
+supabase/migrations/01_schema.sql-332--- SECTION 4: EMPLOYEE DASHBOARD
+supabase/migrations/01_schema.sql-333--- ============================================================
+supabase/migrations/01_schema.sql-334-
+supabase/migrations/01_schema.sql-335-CREATE TABLE IF NOT EXISTS attendance (
+supabase/migrations/01_schema.sql-336-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-337-  employee_id UUID REFERENCES employees(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-338-  employee_name TEXT,
+supabase/migrations/01_schema.sql-339-  user_id TEXT,
+supabase/migrations/01_schema.sql-340-  attendance_date DATE DEFAULT CURRENT_DATE,
+supabase/migrations/01_schema.sql-341-  check_in TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-342-  check_out TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-343-  duration_minutes INTEGER,
+supabase/migrations/01_schema.sql-344-  status TEXT DEFAULT 'Present' CHECK (status IN ('Present', 'Absent', 'Late', 'Half Day', 'Work From Home')),
+supabase/migrations/01_schema.sql-345-  notes TEXT,
+supabase/migrations/01_schema.sql-346-  work_mode TEXT,
+supabase/migrations/01_schema.sql-347-  created_by TEXT,
+supabase/migrations/01_schema.sql-348-  updated_by TEXT,
+supabase/migrations/01_schema.sql-349-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-350-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-351-);
+supabase/migrations/01_schema.sql-352-
+supabase/migrations/01_schema.sql-353-CREATE INDEX IF NOT EXISTS idx_attendance_employee_id ON attendance(employee_id);
+supabase/migrations/01_schema.sql-354-CREATE INDEX IF NOT EXISTS idx_attendance_user_id ON attendance(user_id);
+supabase/migrations/01_schema.sql-355-CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(attendance_date);
+supabase/migrations/01_schema.sql-356-CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_employee_date ON attendance(user_id, attendance_date);
+--
+supabase/migrations/01_schema.sql:1725:ALTER TABLE recruitment_candidates
+supabase/migrations/01_schema.sql-1726-  ADD COLUMN IF NOT EXISTS nationality            TEXT,
+supabase/migrations/01_schema.sql-1727-  ADD COLUMN IF NOT EXISTS serving_notice_period  BOOLEAN DEFAULT FALSE,
+supabase/migrations/01_schema.sql-1728-  ADD COLUMN IF NOT EXISTS notice_period_end_date DATE,
+supabase/migrations/01_schema.sql-1729-  ADD COLUMN IF NOT EXISTS part_of_organization   BOOLEAN DEFAULT FALSE,
+supabase/migrations/01_schema.sql-1730-  ADD COLUMN IF NOT EXISTS previous_company        TEXT,
+supabase/migrations/01_schema.sql-1731-  ADD COLUMN IF NOT EXISTS attachments             JSONB DEFAULT '[]'::jsonb,
+supabase/migrations/01_schema.sql-1732-  ADD COLUMN IF NOT EXISTS user_notes              TEXT;
+supabase/migrations/01_schema.sql-1733-
+supabase/migrations/01_schema.sql:1734:ALTER TABLE recruitment_jobs
+supabase/migrations/01_schema.sql-1735-  ADD COLUMN IF NOT EXISTS work_mode       TEXT,
+supabase/migrations/01_schema.sql-1736-  ADD COLUMN IF NOT EXISTS salary_min      TEXT,
+supabase/migrations/01_schema.sql-1737-  ADD COLUMN IF NOT EXISTS salary_max      TEXT,
+supabase/migrations/01_schema.sql-1738-  ADD COLUMN IF NOT EXISTS headcount       INTEGER DEFAULT 1,
+supabase/migrations/01_schema.sql-1739-  ADD COLUMN IF NOT EXISTS deadline        DATE,
+supabase/migrations/01_schema.sql-1740-  ADD COLUMN IF NOT EXISTS hiring_manager  TEXT,
+supabase/migrations/01_schema.sql-1741-  ADD COLUMN IF NOT EXISTS required_skills JSONB DEFAULT '[]'::jsonb,
+supabase/migrations/01_schema.sql-1742-  ADD COLUMN IF NOT EXISTS benefits        TEXT;
+supabase/migrations/01_schema.sql-1743-
+supabase/migrations/01_schema.sql-1744-
+supabase/migrations/01_schema.sql-1745--- ============================================================
+supabase/migrations/01_schema.sql-1746--- SECTION: ONBOARDING COLUMN EXTENSIONS
+supabase/migrations/01_schema.sql-1747--- ============================================================
+supabase/migrations/01_schema.sql-1748-
+supabase/migrations/01_schema.sql:1749:ALTER TABLE onboarding_records
+supabase/migrations/01_schema.sql-1750-  ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'Direct'
+supabase/migrations/01_schema.sql-1751-    CHECK (source IN ('Recruitment', 'Direct', 'Referral', 'Bulk Upload', 'Other'));
+supabase/migrations/01_schema.sql-1752-
+supabase/migrations/01_schema.sql-1753-
+supabase/migrations/01_schema.sql-1754--- ============================================================
+supabase/migrations/01_schema.sql-1755--- SECTION: ADDITIONAL TABLES (project_backlog_items, project_defects,
+supabase/migrations/01_schema.sql-1756--- project_methodologies, it_kb_articles, it_linked_items,
+supabase/migrations/01_schema.sql-1757--- it_sla_policies, it_ticket_categories, it_resolution_codes,
+supabase/migrations/01_schema.sql-1758--- asset_vendors, asset_categories, asset_maintenance_types,
+supabase/migrations/01_schema.sql-1759--- asset_documents, kv_store_1fe2c468)
+supabase/migrations/01_schema.sql-1760--- ============================================================
+supabase/migrations/01_schema.sql-1761-
+supabase/migrations/01_schema.sql-1762--- ============================================================
+supabase/migrations/01_schema.sql-1763--- Migration 05: Missing Tables & Column Additions
+supabase/migrations/01_schema.sql-1764--- Run this in Supabase SQL Editor (Dashboard → SQL Editor → New query)
+supabase/migrations/01_schema.sql-1765--- Safe to run multiple times — all statements use IF NOT EXISTS / IF EXISTS guards
+supabase/migrations/01_schema.sql-1766--- ============================================================
+supabase/migrations/01_schema.sql-1767-
+supabase/migrations/01_schema.sql-1768--- Enable uuid extension if not already enabled
+supabase/migrations/01_schema.sql-1769-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+supabase/migrations/01_schema.sql-1770-
+supabase/migrations/01_schema.sql-1771--- ============================================================
+supabase/migrations/01_schema.sql-1772--- 1. COLUMN ADDITIONS TO EXISTING TABLES
+supabase/migrations/01_schema.sql-1773--- ============================================================
+supabase/migrations/01_schema.sql-1774-
+supabase/migrations/01_schema.sql-1775--- projects: add rag_status column
+supabase/migrations/01_schema.sql-1776-ALTER TABLE projects ADD COLUMN IF NOT EXISTS rag_status TEXT DEFAULT 'Green'
+supabase/migrations/01_schema.sql-1777-  CHECK (rag_status IN ('Green', 'Amber', 'Red'));
+supabase/migrations/01_schema.sql-1778-
+supabase/migrations/01_schema.sql-1779--- project_members: server inserts 'joined_date' (date) but schema only has 'joined_at' (timestamptz)
+supabase/migrations/01_schema.sql-1780-ALTER TABLE project_members ADD COLUMN IF NOT EXISTS joined_date DATE;
+supabase/migrations/01_schema.sql-1781-
+supabase/migrations/01_schema.sql-1782--- it_tickets: status check constraint includes 'Pending User' in the app but schema only allows 'Pending'
+supabase/migrations/01_schema.sql-1783--- Drop the old constraint and re-add with the full list
+supabase/migrations/01_schema.sql-1784-ALTER TABLE it_tickets DROP CONSTRAINT IF EXISTS it_tickets_status_check;
+supabase/migrations/01_schema.sql-1785-ALTER TABLE it_tickets ADD CONSTRAINT it_tickets_status_check
+supabase/migrations/01_schema.sql-1786-  CHECK (status IN ('Open', 'In Progress', 'Pending', 'Pending User', 'Resolved', 'Closed'));
+supabase/migrations/01_schema.sql-1787-
+supabase/migrations/01_schema.sql-1788--- it_tickets: add assigned_to_name column (server stores agent name separately)
+supabase/migrations/01_schema.sql-1789-ALTER TABLE it_tickets ADD COLUMN IF NOT EXISTS assigned_to_name TEXT;
+supabase/migrations/01_schema.sql-1790-
+supabase/migrations/01_schema.sql-1791--- it_tickets: add source and impact fields used in the enhanced IT Services component
+supabase/migrations/01_schema.sql-1792-ALTER TABLE it_tickets ADD COLUMN IF NOT EXISTS source TEXT;
+supabase/migrations/01_schema.sql-1793-ALTER TABLE it_tickets ADD COLUMN IF NOT EXISTS impact TEXT;
+supabase/migrations/01_schema.sql-1794-ALTER TABLE it_tickets ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'::jsonb;
+--
+supabase/migrations/01_schema.sql:3630:CREATE TABLE IF NOT EXISTS recruitment_offers (
+supabase/migrations/01_schema.sql-3631-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-3632-  candidate_id UUID REFERENCES recruitment_candidates(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-3633-  job_id UUID REFERENCES recruitment_jobs(id),
+supabase/migrations/01_schema.sql-3634-  offer_letter_template_id TEXT,
+supabase/migrations/01_schema.sql-3635-  offered_ctc NUMERIC(12,2),
+supabase/migrations/01_schema.sql-3636-  offered_designation TEXT,
+supabase/migrations/01_schema.sql-3637-  joining_date DATE,
+supabase/migrations/01_schema.sql-3638-  offer_expiry_date DATE,
+supabase/migrations/01_schema.sql-3639-  offer_letter_url TEXT,
+supabase/migrations/01_schema.sql-3640-  signature_data JSONB,
+supabase/migrations/01_schema.sql-3641-  signed_pdf_url TEXT,
+supabase/migrations/01_schema.sql-3642-  status TEXT DEFAULT 'draft' CHECK (status IN ('draft','sent','accepted','negotiating','declined','expired','revoked')),
+supabase/migrations/01_schema.sql-3643-  candidate_response TEXT,
+supabase/migrations/01_schema.sql-3644-  negotiated_ctc NUMERIC(12,2),
+supabase/migrations/01_schema.sql-3645-  negotiation_notes TEXT,
+supabase/migrations/01_schema.sql-3646-  sent_at TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-3647-  responded_at TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-3648-  generated_by UUID REFERENCES employees(id),
+supabase/migrations/01_schema.sql-3649-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-3650-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-3651-);
+supabase/migrations/01_schema.sql-3652-
+supabase/migrations/01_schema.sql-3653--- Candidate communication log
+supabase/migrations/01_schema.sql:3654:CREATE TABLE IF NOT EXISTS recruitment_communication_log (
+supabase/migrations/01_schema.sql-3655-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-3656-  candidate_id UUID REFERENCES recruitment_candidates(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-3657-  channel TEXT NOT NULL CHECK (channel IN ('email','phone','sms','linkedin','whatsapp','other')),
+supabase/migrations/01_schema.sql-3658-  direction TEXT NOT NULL CHECK (direction IN ('inbound','outbound')),
+supabase/migrations/01_schema.sql-3659-  subject TEXT,
+supabase/migrations/01_schema.sql-3660-  body TEXT,
+supabase/migrations/01_schema.sql-3661-  sent_by UUID REFERENCES employees(id),
+supabase/migrations/01_schema.sql-3662-  sent_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-3663-  read_at TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-3664-  attachments JSONB DEFAULT '[]'::jsonb,
+supabase/migrations/01_schema.sql-3665-  created_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-3666-);
+supabase/migrations/01_schema.sql-3667-CREATE INDEX IF NOT EXISTS idx_recruitment_comm_candidate ON recruitment_communication_log(candidate_id);
+supabase/migrations/01_schema.sql-3668-
+supabase/migrations/01_schema.sql-3669--- ALTER recruitment_candidates
+supabase/migrations/01_schema.sql:3670:ALTER TABLE recruitment_candidates
+supabase/migrations/01_schema.sql-3671-  ADD COLUMN IF NOT EXISTS source TEXT,
+supabase/migrations/01_schema.sql-3672-  ADD COLUMN IF NOT EXISTS blacklisted BOOLEAN DEFAULT false,
+supabase/migrations/01_schema.sql-3673-  ADD COLUMN IF NOT EXISTS blacklist_reason TEXT,
+supabase/migrations/01_schema.sql-3674-  ADD COLUMN IF NOT EXISTS aggregate_feedback_score NUMERIC(3,2),
+supabase/migrations/01_schema.sql-3675-  ADD COLUMN IF NOT EXISTS assigned_recruiter UUID REFERENCES employees(id),
+supabase/migrations/01_schema.sql-3676-  ADD COLUMN IF NOT EXISTS hired_at TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-3677-  ADD COLUMN IF NOT EXISTS portal_link TEXT,
+supabase/migrations/01_schema.sql-3678-  ADD COLUMN IF NOT EXISTS referral_employee_id UUID REFERENCES employees(id);
+supabase/migrations/01_schema.sql-3679-
+supabase/migrations/01_schema.sql-3680--- ALTER recruitment_feedback
+supabase/migrations/01_schema.sql:3681:ALTER TABLE recruitment_feedback
+supabase/migrations/01_schema.sql-3682-  ADD COLUMN IF NOT EXISTS competency_ratings JSONB DEFAULT '{}'::jsonb,
+supabase/migrations/01_schema.sql-3683-  ADD COLUMN IF NOT EXISTS strengths TEXT,
+supabase/migrations/01_schema.sql-3684-  ADD COLUMN IF NOT EXISTS concerns TEXT,
+supabase/migrations/01_schema.sql-3685-  ADD COLUMN IF NOT EXISTS recommendation TEXT CHECK (recommendation IN ('strong_hire','hire','neutral','no_hire','strong_no_hire'));
+supabase/migrations/01_schema.sql-3686-
+supabase/migrations/01_schema.sql-3687--- ALTER recruitment_interviews
+supabase/migrations/01_schema.sql:3688:ALTER TABLE recruitment_interviews
+supabase/migrations/01_schema.sql-3689-  ADD COLUMN IF NOT EXISTS calendar_event_url TEXT,
+supabase/migrations/01_schema.sql-3690-  ADD COLUMN IF NOT EXISTS location_type TEXT DEFAULT 'virtual' CHECK (location_type IN ('virtual','in_person','phone')),
+supabase/migrations/01_schema.sql-3691-  ADD COLUMN IF NOT EXISTS location_address TEXT,
+supabase/migrations/01_schema.sql-3692-  ADD COLUMN IF NOT EXISTS ics_uid TEXT;
+supabase/migrations/01_schema.sql-3693-
+supabase/migrations/01_schema.sql-3694--- ============================================================
+supabase/migrations/01_schema.sql-3695--- SECTION 4: ONBOARDING GAPS
+supabase/migrations/01_schema.sql-3696--- ============================================================
+supabase/migrations/01_schema.sql-3697-
+supabase/migrations/01_schema.sql-3698--- Pre-boarding submissions (public portal, unauthenticated)
+supabase/migrations/01_schema.sql-3699-CREATE TABLE IF NOT EXISTS preboarding_submissions (
+supabase/migrations/01_schema.sql-3700-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-3701-  token TEXT UNIQUE NOT NULL DEFAULT uuid_generate_v4()::TEXT,
+supabase/migrations/01_schema.sql-3702-  candidate_id UUID REFERENCES recruitment_candidates(id),
+supabase/migrations/01_schema.sql-3703-  employee_id UUID REFERENCES employees(id),
+supabase/migrations/01_schema.sql-3704-  personal_info JSONB DEFAULT '{}'::jsonb,
+supabase/migrations/01_schema.sql-3705-  emergency_contacts JSONB DEFAULT '[]'::jsonb,
+supabase/migrations/01_schema.sql-3706-  bank_details JSONB DEFAULT '{}'::jsonb,
+supabase/migrations/01_schema.sql-3707-  document_uploads JSONB DEFAULT '[]'::jsonb,
+supabase/migrations/01_schema.sql-3708-  submitted_at TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-3709-  token_expires_at TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-3710-  status TEXT DEFAULT 'pending' CHECK (status IN ('pending','in_progress','submitted','expired')),
+supabase/migrations/01_schema.sql-3711-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-3712-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-3713-);
+supabase/migrations/01_schema.sql-3714-
+supabase/migrations/01_schema.sql-3715--- Offboarding records
+supabase/migrations/01_schema.sql-3716-CREATE TABLE IF NOT EXISTS offboarding_records (
+supabase/migrations/01_schema.sql-3717-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-3718-  employee_id UUID REFERENCES employees(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-3719-  resignation_date DATE,
+supabase/migrations/01_schema.sql-3720-  last_working_date DATE,
+supabase/migrations/01_schema.sql-3721-  exit_type TEXT CHECK (exit_type IN ('resignation','termination','retirement','contract_end','other')),
+supabase/migrations/01_schema.sql-3722-  exit_interview_date DATE,
+supabase/migrations/01_schema.sql-3723-  exit_interviewer_id UUID REFERENCES employees(id),
+supabase/migrations/01_schema.sql-3724-  exit_feedback JSONB,
+supabase/migrations/01_schema.sql-3725-  fnf_status TEXT DEFAULT 'pending' CHECK (fnf_status IN ('pending','in_progress','completed')),
+supabase/migrations/01_schema.sql-3726-  fnf_amount NUMERIC(12,2),
+supabase/migrations/01_schema.sql-3727-  fnf_paid_at DATE,
+supabase/migrations/01_schema.sql-3728-  workflow_instance_id UUID,
+supabase/migrations/01_schema.sql-3729-  status TEXT DEFAULT 'initiated' CHECK (status IN ('initiated','in_progress','completed','cancelled')),
+supabase/migrations/01_schema.sql-3730-  created_by UUID REFERENCES employees(id),
+supabase/migrations/01_schema.sql-3731-  created_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-3732-  updated_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-3733-);
+--
+supabase/migrations/01_schema.sql:3752:ALTER TABLE onboarding_records
+supabase/migrations/01_schema.sql-3753-  ADD COLUMN IF NOT EXISTS pre_boarding_token TEXT UNIQUE,
+supabase/migrations/01_schema.sql-3754-  ADD COLUMN IF NOT EXISTS buddy_id UUID REFERENCES employees(id),
+supabase/migrations/01_schema.sql-3755-  ADD COLUMN IF NOT EXISTS it_ticket_id UUID,
+supabase/migrations/01_schema.sql-3756-  ADD COLUMN IF NOT EXISTS welcome_email_sent_at TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-3757-  ADD COLUMN IF NOT EXISTS personal_email TEXT;
+supabase/migrations/01_schema.sql-3758-
+supabase/migrations/01_schema.sql-3759--- ALTER onboarding_documents
+supabase/migrations/01_schema.sql:3760:ALTER TABLE onboarding_documents
+supabase/migrations/01_schema.sql-3761-  ADD COLUMN IF NOT EXISTS signed_pdf_url TEXT,
+supabase/migrations/01_schema.sql-3762-  ADD COLUMN IF NOT EXISTS signature_data JSONB;
+supabase/migrations/01_schema.sql-3763-
+supabase/migrations/01_schema.sql-3764--- ============================================================
+supabase/migrations/01_schema.sql-3765--- SECTION 5: USER MANAGEMENT GAPS
+supabase/migrations/01_schema.sql-3766--- ============================================================
+supabase/migrations/01_schema.sql-3767-
+supabase/migrations/01_schema.sql-3768--- App user sessions
+supabase/migrations/01_schema.sql-3769-CREATE TABLE IF NOT EXISTS app_user_sessions (
+supabase/migrations/01_schema.sql-3770-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-3771-  user_id UUID REFERENCES app_users(id) ON DELETE CASCADE,
+supabase/migrations/01_schema.sql-3772-  session_token TEXT UNIQUE,
+supabase/migrations/01_schema.sql-3773-  ip_address TEXT,
+supabase/migrations/01_schema.sql-3774-  user_agent TEXT,
+supabase/migrations/01_schema.sql-3775-  device_type TEXT,
+supabase/migrations/01_schema.sql-3776-  location TEXT,
+supabase/migrations/01_schema.sql-3777-  started_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-3778-  last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+supabase/migrations/01_schema.sql-3779-  ended_at TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-3780-  revoked BOOLEAN DEFAULT false,
+supabase/migrations/01_schema.sql-3781-  revoked_by UUID REFERENCES app_users(id),
+supabase/migrations/01_schema.sql-3782-  revoked_at TIMESTAMPTZ,
+supabase/migrations/01_schema.sql-3783-  created_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-3784-);
+supabase/migrations/01_schema.sql-3785-CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON app_user_sessions(user_id);
+supabase/migrations/01_schema.sql-3786-
+supabase/migrations/01_schema.sql-3787--- Login history
+supabase/migrations/01_schema.sql-3788-CREATE TABLE IF NOT EXISTS login_history (
+supabase/migrations/01_schema.sql-3789-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+supabase/migrations/01_schema.sql-3790-  user_id UUID REFERENCES app_users(id),
+supabase/migrations/01_schema.sql-3791-  email TEXT,
+supabase/migrations/01_schema.sql-3792-  ip_address TEXT,
+supabase/migrations/01_schema.sql-3793-  user_agent TEXT,
+supabase/migrations/01_schema.sql-3794-  device_type TEXT,
+supabase/migrations/01_schema.sql-3795-  location TEXT,
+supabase/migrations/01_schema.sql-3796-  success BOOLEAN NOT NULL,
+supabase/migrations/01_schema.sql-3797-  failure_reason TEXT,
+supabase/migrations/01_schema.sql-3798-  mfa_used BOOLEAN DEFAULT false,
+supabase/migrations/01_schema.sql-3799-  logged_in_at TIMESTAMPTZ DEFAULT NOW()
+supabase/migrations/01_schema.sql-3800-);
+supabase/migrations/01_schema.sql-3801-CREATE INDEX IF NOT EXISTS idx_login_history_user ON login_history(user_id);
+supabase/migrations/01_schema.sql-3802-
+supabase/migrations/01_schema.sql-3803--- Access review cycles
+supabase/migrations/01_schema.sql-3804-CREATE TABLE IF NOT EXISTS access_review_cycles (
+supabase/migrations/01_schema.sql-3805-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

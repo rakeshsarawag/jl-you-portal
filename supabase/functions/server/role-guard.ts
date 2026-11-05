@@ -314,6 +314,16 @@ export function roleGuard(base: string) {
       return;
     }
 
+    // Project members may log their own time. The project API verifies that
+    // the authenticated employee belongs to the supplied project.
+    if (c.req.method === "POST" && path === "/projects/time-logs") {
+      if (!INTERNAL_ROLES.includes(role)) {
+        return c.json({ error: "Forbidden: project access required" }, 403);
+      }
+      await next();
+      return;
+    }
+
     // Course catalogue administration is restricted to administrators. The
     // UI additionally applies the Training → Manage Sessions permission.
     if (

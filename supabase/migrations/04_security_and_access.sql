@@ -574,6 +574,240 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ── Project Management: project-aware access ────────────────────────────────
+-- This final override replaces the legacy authenticated catch-all policies
+-- above. Edge Functions use service_role and enforce the same ownership rules
+-- before querying; browser clients are constrained here as a second boundary.
+
+CREATE OR REPLACE FUNCTION pm_current_employee_id()
+RETURNS UUID
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE(
+    (SELECT employee_id FROM app_users WHERE auth_user_id = auth.uid() LIMIT 1),
+    (SELECT id FROM employees WHERE auth_user_id = auth.uid() LIMIT 1)
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION pm_has_portfolio_access()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM app_users
+    WHERE auth_user_id = auth.uid()
+      AND status = 'active'
+      AND (
+        primary_role IN ('admin', 'hr')
+        OR roles ? 'admin'
+        OR roles ? 'hr'
+      )
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION pm_has_management_role()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM app_users
+    WHERE auth_user_id = auth.uid()
+      AND status = 'active'
+      AND (
+        primary_role IN ('admin', 'hr', 'manager')
+        OR roles ? 'admin'
+        OR roles ? 'hr'
+        OR roles ? 'manager'
+      )
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION pm_can_access_project(p_project_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT pm_has_portfolio_access() OR EXISTS (
+    SELECT 1
+    FROM projects p
+    WHERE p.id = p_project_id
+      AND (
+        p.manager_id = pm_current_employee_id()
+        OR EXISTS (
+          SELECT 1 FROM project_members m
+          WHERE m.project_id = p.id
+            AND m.employee_id = pm_current_employee_id()
+        )
+      )
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION pm_can_manage_project(p_project_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT pm_has_portfolio_access() OR (
+    pm_has_management_role() AND EXISTS (
+      SELECT 1
+      FROM projects p
+      WHERE p.id = p_project_id
+        AND (
+          p.manager_id = pm_current_employee_id()
+          OR EXISTS (
+            SELECT 1 FROM project_members m
+            WHERE m.project_id = p.id
+              AND m.employee_id = pm_current_employee_id()
+              AND LOWER(m.role) IN ('owner', 'manager', 'project manager')
+          )
+        )
+    )
+  );
+$$;
+
+REVOKE ALL ON FUNCTION pm_current_employee_id() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION pm_has_portfolio_access() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION pm_has_management_role() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION pm_can_access_project(UUID) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION pm_can_manage_project(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION pm_current_employee_id() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION pm_has_portfolio_access() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION pm_has_management_role() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION pm_can_access_project(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION pm_can_manage_project(UUID) TO authenticated, service_role;
+
+DO $$
+DECLARE
+  t TEXT;
+  p TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'projects', 'project_members', 'project_tasks', 'project_milestones',
+    'project_sprints', 'project_backlog_items', 'project_epics', 'project_risks',
+    'project_defects', 'project_time_logs', 'project_budget_line_items',
+    'project_rag_log'
+  ]
+  LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = t
+    ) THEN
+      EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+      FOR p IN
+        SELECT policyname FROM pg_policies
+        WHERE schemaname = 'public' AND tablename = t
+      LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', p, t);
+      END LOOP;
+    END IF;
+  END LOOP;
+END $$;
+
+DROP POLICY IF EXISTS "projects_select_assigned" ON projects;
+DROP POLICY IF EXISTS "projects_insert_managers" ON projects;
+DROP POLICY IF EXISTS "projects_update_managers" ON projects;
+DROP POLICY IF EXISTS "projects_delete_managers" ON projects;
+CREATE POLICY "projects_select_assigned" ON projects
+  FOR SELECT TO authenticated USING (pm_can_access_project(id));
+CREATE POLICY "projects_insert_managers" ON projects
+  FOR INSERT TO authenticated WITH CHECK (pm_has_management_role());
+CREATE POLICY "projects_update_managers" ON projects
+  FOR UPDATE TO authenticated USING (pm_can_manage_project(id))
+  WITH CHECK (pm_can_manage_project(id));
+CREATE POLICY "projects_delete_managers" ON projects
+  FOR DELETE TO authenticated USING (pm_can_manage_project(id));
+
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'project_members', 'project_tasks', 'project_milestones', 'project_sprints',
+    'project_backlog_items', 'project_epics', 'project_risks', 'project_defects',
+    'project_time_logs', 'project_budget_line_items', 'project_rag_log'
+  ]
+  LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = t
+    ) THEN
+      EXECUTE format(
+        'CREATE POLICY %I ON %I FOR SELECT TO authenticated USING (pm_can_access_project(project_id))',
+        t || '_select_assigned', t
+      );
+      EXECUTE format(
+        'CREATE POLICY %I ON %I FOR ALL TO authenticated USING (pm_can_manage_project(project_id)) WITH CHECK (pm_can_manage_project(project_id))',
+        t || '_manage_assigned', t
+      );
+    END IF;
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE p TEXT;
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='project_sprint_backlog') THEN
+    FOR p IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='project_sprint_backlog'
+    LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON project_sprint_backlog', p); END LOOP;
+    DROP POLICY IF EXISTS "sprint_backlog_select_assigned" ON project_sprint_backlog;
+    CREATE POLICY "sprint_backlog_select_assigned" ON project_sprint_backlog
+      FOR SELECT TO authenticated
+      USING (EXISTS (
+        SELECT 1 FROM project_sprints s
+        WHERE s.id = sprint_id AND pm_can_access_project(s.project_id)
+      ));
+    DROP POLICY IF EXISTS "sprint_backlog_manage_assigned" ON project_sprint_backlog;
+    CREATE POLICY "sprint_backlog_manage_assigned" ON project_sprint_backlog
+      FOR ALL TO authenticated
+      USING (EXISTS (
+        SELECT 1 FROM project_sprints s
+        WHERE s.id = sprint_id AND pm_can_manage_project(s.project_id)
+      ))
+      WITH CHECK (EXISTS (
+        SELECT 1 FROM project_sprints s
+        WHERE s.id = sprint_id AND pm_can_manage_project(s.project_id)
+      ));
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='project_backlog_dependencies') THEN
+    FOR p IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='project_backlog_dependencies'
+    LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON project_backlog_dependencies', p); END LOOP;
+    DROP POLICY IF EXISTS "backlog_dependencies_select_assigned" ON project_backlog_dependencies;
+    CREATE POLICY "backlog_dependencies_select_assigned" ON project_backlog_dependencies
+      FOR SELECT TO authenticated
+      USING (EXISTS (
+        SELECT 1 FROM project_backlog_items b
+        WHERE b.id = source_item_id AND pm_can_access_project(b.project_id)
+      ));
+    DROP POLICY IF EXISTS "backlog_dependencies_manage_assigned" ON project_backlog_dependencies;
+    CREATE POLICY "backlog_dependencies_manage_assigned" ON project_backlog_dependencies
+      FOR ALL TO authenticated
+      USING (EXISTS (
+        SELECT 1 FROM project_backlog_items b
+        WHERE b.id = source_item_id AND pm_can_manage_project(b.project_id)
+      ))
+      WITH CHECK (EXISTS (
+        SELECT 1 FROM project_backlog_items b
+        WHERE b.id = source_item_id AND pm_can_manage_project(b.project_id)
+      ));
+  END IF;
+END $$;
+
 -- ── 4. Grant authenticated role full access on all tables ─────────────────────
 DO $$
 DECLARE tbl TEXT;
@@ -1304,6 +1538,34 @@ CREATE POLICY "project_defects_project_access"
   TO authenticated
   USING (public.defect_tracker_can_access_project(project_id))
   WITH CHECK (public.defect_tracker_can_access_project(project_id));
+
+-- PM support tables that were historically left with broad authenticated
+-- policies. Reads are scoped to project membership; durable writes are owned
+-- by the canonical service-role API.
+ALTER TABLE IF EXISTS public.project_notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.project_activity_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.pm_saved_views ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated users full access" ON public.project_notifications;
+DROP POLICY IF EXISTS "project_notifications_project_read" ON public.project_notifications;
+CREATE POLICY "project_notifications_project_read"
+  ON public.project_notifications FOR SELECT TO authenticated
+  USING (project_id IS NOT NULL AND public.pm_can_access_project(project_id));
+
+DROP POLICY IF EXISTS "Authenticated users full access" ON public.project_activity_log;
+DROP POLICY IF EXISTS "project_activity_log_project_read" ON public.project_activity_log;
+CREATE POLICY "project_activity_log_project_read"
+  ON public.project_activity_log FOR SELECT TO authenticated
+  USING (public.pm_can_access_project(project_id));
+
+DROP POLICY IF EXISTS "Authenticated users full access" ON public.pm_saved_views;
+DROP POLICY IF EXISTS "pm_saved_views_owner_access" ON public.pm_saved_views;
+CREATE POLICY "pm_saved_views_owner_access"
+  ON public.pm_saved_views FOR SELECT TO authenticated
+  USING (
+    LOWER(user_id) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+    AND (project_id IS NULL OR public.pm_can_access_project(project_id))
+  );
 
 DROP POLICY IF EXISTS "Authenticated users full access" ON public.project_members;
 DROP POLICY IF EXISTS "project_members_authenticated_read" ON public.project_members;

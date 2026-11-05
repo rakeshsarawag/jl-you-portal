@@ -19,6 +19,16 @@ function getSupabase() {
   );
 }
 
+function normalizedCandidateExperience(candidate: Record<string, any>): number {
+  const years = Number(candidate.experienceYears);
+  const months = Number(candidate.experienceMonths);
+  if (Number.isInteger(years) && years >= 0 && Number.isInteger(months) && months >= 0 && months <= 11) {
+    return Number((years + months / 12).toFixed(2));
+  }
+  const experience = Number(candidate.experience ?? 0);
+  return Number.isFinite(experience) && experience >= 0 ? experience : 0;
+}
+
 function mappedUpdates(
   body: Record<string, any>,
   mappings: Array<[column: string, keys: string[], transform?: (value: any) => any]>,
@@ -264,7 +274,7 @@ app.post('/bulk-upload', async (c) => {
         position: cd.position,
         department: cd.department,
         job_id: cd.jobId || cd.job_id || null,
-        experience: cd.experience || 0,
+        experience: normalizedCandidateExperience(cd),
         current_company: cd.currentCompany || '',
         current_salary: cd.currentSalary || '',
         expected_salary: cd.expectedSalary || '',

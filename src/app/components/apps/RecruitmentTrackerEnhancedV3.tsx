@@ -22,6 +22,7 @@ import {
 } from "../../../constants/apps/recruitment";
 import { DEPARTMENTS, LOCATIONS } from "../../../constants/apps/directory";
 import { API_BASE, apiHeaders, safeJson, supabase } from "../../utils/constants";
+import { formatCandidateExperience, parseCandidateExperience } from "../../utils/recruitmentExperience";
 import { useEmployees } from '../../context/EmployeesContext';
 
 // ==================== HELPERS ====================
@@ -572,6 +573,11 @@ function validateRow(row: Record<string, string>, index: number): ParsedRow {
   if (row.Email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.Email.trim())) {
     errors.push(`Row ${index + 2}: Invalid email format`);
   }
+  try {
+    parseCandidateExperience(row.Experience ?? row.experience ?? 0);
+  } catch (error) {
+    errors.push(`Row ${index + 2}: ${error instanceof Error ? error.message : "Invalid experience"}`);
+  }
   return { data: row, errors };
 }
 
@@ -708,6 +714,9 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
                 <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ""; }} />
               </div>
+              <p className="text-xs text-muted-foreground">
+                Experience uses <strong>years.months</strong>: enter 6.2 for 6 years 2 months, or 0 for a fresher.
+              </p>
 
               {fileName && (
                 <p className="text-xs text-muted-foreground">
@@ -1587,7 +1596,7 @@ function CandidateDrawer({
                   [t("phone"), candidate.phone],
                   [t("nationality"), candidate.nationality],
                   [t("source"), candidate.source],
-                  [t("experience"), candidate.experience ? `${candidate.experience} yrs` : null],
+                  [t("experience"), formatCandidateExperience(candidate.experience)],
                   [t("currentCompany"), candidate.currentCompany],
                   [t("currentSalary"), candidate.currentSalary],
                   [t("expectedSalary"), candidate.expectedSalary],
@@ -2781,7 +2790,7 @@ function JobDetailModal({ job, applicants, onClose, onViewCandidate }: JobDetail
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <StageBadge stage={c.stage} />
-                      {c.experience ? <span className="text-xs text-muted-foreground">{c.experience}y</span> : null}
+                      <span className="text-xs text-muted-foreground">{formatCandidateExperience(c.experience)}</span>
                       <button onClick={() => { onClose(); onViewCandidate(c.id); }}
                         className="p-1 text-muted-foreground hover:text-blue-600 rounded" title="View candidate">
                         <Eye size={13} />
@@ -3073,7 +3082,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                               <p className="text-xs text-muted-foreground">{c.position}</p>
                             </div>
                             {c.experience != null && (
-                              <p className="text-xs text-muted-foreground">{c.experience} yrs exp.</p>
+                              <p className="text-xs text-muted-foreground">{formatCandidateExperience(c.experience)}</p>
                             )}
                             <StageBadge stage={c.stage} />
                             {nextStage && (
@@ -3148,7 +3157,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                         <td className="px-4 py-3"><StageBadge stage={c.stage} /></td>
                         <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground">{c.source}</td>
                         <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground">{c.appliedDate}</td>
-                        <td className="px-4 py-3 hidden md:table-cell text-muted-foreground">{c.experience ? `${c.experience} yrs` : "—"}</td>
+                        <td className="px-4 py-3 hidden md:table-cell text-muted-foreground">{formatCandidateExperience(c.experience)}</td>
                         <td className="px-4 py-3 hidden md:table-cell text-muted-foreground">{c.expectedSalary || "—"}</td>
                         <td className="px-4 py-3 hidden lg:table-cell">
                           <div className="flex flex-wrap gap-1">

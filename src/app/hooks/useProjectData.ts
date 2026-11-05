@@ -343,8 +343,10 @@ export function useProjectData(_userEmail?: string) {
       taskType: task.taskType ?? 'task',
       assigneeId: task.assigneeId || null,
       assigneeName: task.assigneeName ?? '',
+      startDate: task.startDate || null,
       dueDate: task.dueDate || null,
       estimatedHours: task.estimatedHours ?? null,
+      sprintId: task.sprintId || null,
     });
     const created = normalizeTask(json.data);
     setProjects(prev => prev.map(p =>
@@ -393,9 +395,7 @@ export function useProjectData(_userEmail?: string) {
     taskId: string, hours: number, type: string, description: string,
     opts?: { logDate?: string; billable?: boolean; employeeName?: string; projectId?: string }
   ): Promise<void> => {
-    // Update task's accumulated actual_hours
-    await pmApiPut(`/tasks/${taskId}`, { additionalHours: hours });
-    // Create a dedicated time log entry via the /time-logs endpoint
+    // The API records the log and increments actual_hours in one database transaction.
     await pmApi('/time-logs', {
       taskId,
       projectId: opts?.projectId || null,
@@ -417,8 +417,13 @@ export function useProjectData(_userEmail?: string) {
   }, []);
 
   const updateRAG = useCallback(async (projectId: string, ragStatus: string): Promise<Project> => {
-    return updateProject(projectId, { ragStatus });
-  }, [updateProject]);
+    const json = await pmApiPut(`/${projectId}/rag`, { ragStatus });
+    const updated = normalizeProject(json.data);
+    setProjects((previous) => previous.map((project) =>
+      project.id === projectId ? { ...project, ragStatus: updated.ragStatus } : project
+    ));
+    return updated;
+  }, []);
 
   const getTaskComments = useCallback(async (taskId: string): Promise<TaskComment[]> => {
     const json = await pmApi(`/tasks/${taskId}/comments`);

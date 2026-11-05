@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS recruitment_candidates (
   position TEXT,
   department TEXT,
   job_id UUID REFERENCES recruitment_jobs(id) ON DELETE SET NULL,
-  experience INTEGER DEFAULT 0,
+  experience NUMERIC(5,2) DEFAULT 0,
   current_company TEXT,
   current_salary TEXT,
   expected_salary TEXT,
@@ -183,6 +183,10 @@ CREATE TABLE IF NOT EXISTS recruitment_candidates (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+ALTER TABLE recruitment_candidates
+  ALTER COLUMN experience TYPE NUMERIC(5,2)
+  USING experience::NUMERIC;
 
 CREATE INDEX IF NOT EXISTS idx_recruitment_candidates_email ON recruitment_candidates(email);
 CREATE INDEX IF NOT EXISTS idx_recruitment_candidates_stage ON recruitment_candidates(stage);
@@ -1297,6 +1301,23 @@ CREATE TABLE IF NOT EXISTS entity_attachments (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Retry ledger for storage/database cleanup workflows. Direct client access is
+-- intentionally denied; the service-role PM API owns these records.
+CREATE TABLE IF NOT EXISTS pm_attachment_cleanup_jobs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  storage_objects JSONB NOT NULL DEFAULT '[]'::jsonb,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'failed', 'completed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pm_attachment_cleanup_jobs_status
+  ON pm_attachment_cleanup_jobs(status, updated_at);
+ALTER TABLE pm_attachment_cleanup_jobs ENABLE ROW LEVEL SECURITY;
+
 CREATE INDEX IF NOT EXISTS idx_entity_attachments_entity
   ON entity_attachments(entity_type, entity_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_entity_attachments_context
@@ -2314,6 +2335,7 @@ ALTER TABLE project_defects
   ADD COLUMN IF NOT EXISTS is_duplicate          BOOLEAN     DEFAULT FALSE,
   ADD COLUMN IF NOT EXISTS duplicate_of_id       TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS root_cause            TEXT        DEFAULT '',
+  ADD COLUMN IF NOT EXISTS resolution_notes       TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS resolution_code       TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS rejection_reason      TEXT        DEFAULT '',
   ADD COLUMN IF NOT EXISTS fix_description       TEXT        DEFAULT '',
@@ -5361,6 +5383,552 @@ CREATE INDEX IF NOT EXISTS idx_comm_event_rsvps_user ON communications_event_rsv
 -- (chat tables were removed — see 11_drop_chat_tables.sql)
 -- No DDL needed here; fresh installs never create them.
 -- ============================================================
+
+-- ============================================================
+-- PROJECT MANAGEMENT ATOMIC WRITE OPERATIONS
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION pm_log_time_atomic(
+  p_project_id UUID,
+  p_task_id UUID,
+  p_sprint_id UUID,
+  p_employee_name TEXT,
+  p_log_date DATE,
+  p_hours DECIMAL,
+  p_log_type TEXT,
+  p_billable BOOLEAN,
+  p_comment TEXT,
+  p_created_by TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_log project_time_logs;
+  v_task project_tasks;
+BEGIN
+  IF p_project_id IS NULL THEN
+    RAISE EXCEPTION 'Project is required';
+  END IF;
+  IF p_hours IS NULL OR p_hours <= 0 OR p_hours > 24 THEN
+    RAISE EXCEPTION 'Hours must be greater than 0 and no more than 24';
+  END IF;
+  IF p_log_date IS NULL OR p_log_date > CURRENT_DATE THEN
+    RAISE EXCEPTION 'Log date is required and cannot be in the future';
+  END IF;
+  IF NULLIF(BTRIM(p_comment), '') IS NULL THEN
+    RAISE EXCEPTION 'Description is required';
+  END IF;
+
+  IF p_task_id IS NOT NULL THEN
+    SELECT * INTO v_task
+    FROM project_tasks
+    WHERE id = p_task_id AND project_id = p_project_id
+    FOR UPDATE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Task does not belong to the selected project';
+    END IF;
+  END IF;
+
+  INSERT INTO project_time_logs (
+    project_id, task_id, sprint_id, employee_name, log_date, hours,
+    log_type, billable, comment, created_by
+  ) VALUES (
+    p_project_id, p_task_id, p_sprint_id, COALESCE(p_employee_name, ''),
+    p_log_date, p_hours, COALESCE(NULLIF(p_log_type, ''), 'Development'),
+    COALESCE(p_billable, TRUE), p_comment, p_created_by
+  )
+  RETURNING * INTO v_log;
+
+  IF p_task_id IS NOT NULL THEN
+    UPDATE project_tasks
+    SET
+      actual_hours = COALESCE(actual_hours, 0) + p_hours,
+      status = CASE WHEN status IN ('Todo', 'To Do') THEN 'In Progress' ELSE status END,
+      started_at = CASE
+        WHEN status IN ('Todo', 'To Do') AND started_at IS NULL THEN NOW()
+        ELSE started_at
+      END,
+      updated_by = p_created_by,
+      updated_at = NOW()
+    WHERE id = p_task_id;
+  END IF;
+
+  RETURN TO_JSONB(v_log);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pm_create_project_with_members(
+  p_project JSONB,
+  p_members JSONB,
+  p_actor TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_project projects;
+  v_member JSONB;
+BEGIN
+  IF NULLIF(p_project->>'startDate', '')::DATE IS NOT NULL
+    AND NULLIF(p_project->>'endDate', '')::DATE IS NOT NULL
+    AND (p_project->>'endDate')::DATE < (p_project->>'startDate')::DATE THEN
+    RAISE EXCEPTION 'Project end date must be on or after the start date';
+  END IF;
+  IF NULLIF(p_project->>'budget', '')::DECIMAL < 0 THEN
+    RAISE EXCEPTION 'Project budget cannot be negative';
+  END IF;
+
+  INSERT INTO projects (
+    name, description, category, client_id, client_name, manager_id, manager_name,
+    status, priority, rag_status, start_date, end_date, budget, budget_currency,
+    methodology, sprint_length, story_point_scale, tags, created_by, updated_by
+  ) VALUES (
+    p_project->>'name',
+    COALESCE(p_project->>'description', ''),
+    COALESCE(p_project->>'category', ''),
+    NULLIF(p_project->>'clientId', '')::UUID,
+    COALESCE(p_project->>'clientName', ''),
+    NULLIF(p_project->>'managerId', '')::UUID,
+    COALESCE(p_project->>'managerName', ''),
+    COALESCE(NULLIF(p_project->>'status', ''), 'Planning'),
+    COALESCE(NULLIF(p_project->>'priority', ''), 'Medium'),
+    COALESCE(NULLIF(p_project->>'ragStatus', ''), 'Green'),
+    NULLIF(p_project->>'startDate', '')::DATE,
+    NULLIF(p_project->>'endDate', '')::DATE,
+    NULLIF(p_project->>'budget', '')::DECIMAL,
+    COALESCE(NULLIF(p_project->>'budgetCurrency', ''), 'USD'),
+    COALESCE(NULLIF(p_project->>'methodology', ''), 'Scrum'),
+    COALESCE((p_project->>'sprintLength')::INTEGER, 14),
+    COALESCE(NULLIF(p_project->>'storyPointScale', ''), 'Fibonacci'),
+    COALESCE(p_project->'tags', '[]'::JSONB),
+    p_actor,
+    p_actor
+  )
+  RETURNING * INTO v_project;
+
+  FOR v_member IN SELECT value FROM JSONB_ARRAY_ELEMENTS(COALESCE(p_members, '[]'::JSONB))
+  LOOP
+    INSERT INTO project_members (
+      project_id, employee_id, employee_name, role, joined_at, created_by
+    ) VALUES (
+      v_project.id,
+      NULLIF(v_member->>'employeeId', '')::UUID,
+      COALESCE(v_member->>'employeeName', v_member->>'name', ''),
+      COALESCE(NULLIF(v_member->>'role', ''), 'Member'),
+      NOW(),
+      p_actor
+    );
+  END LOOP;
+
+  RETURN TO_JSONB(v_project);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pm_update_project_with_members(
+  p_project_id UUID,
+  p_updates JSONB,
+  p_members JSONB,
+  p_actor TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_project projects;
+  v_member JSONB;
+  v_employee_id UUID;
+  v_employee_name TEXT;
+BEGIN
+  UPDATE projects
+  SET
+    name = CASE WHEN p_updates ? 'name' THEN p_updates->>'name' ELSE name END,
+    description = CASE WHEN p_updates ? 'description' THEN p_updates->>'description' ELSE description END,
+    category = CASE WHEN p_updates ? 'category' THEN p_updates->>'category' ELSE category END,
+    client_name = CASE WHEN p_updates ? 'clientName' THEN COALESCE(p_updates->>'clientName', '') ELSE client_name END,
+    manager_id = CASE WHEN p_updates ? 'managerId' THEN NULLIF(p_updates->>'managerId', '')::UUID ELSE manager_id END,
+    manager_name = CASE WHEN p_updates ? 'managerName' THEN COALESCE(p_updates->>'managerName', '') ELSE manager_name END,
+    status = CASE WHEN p_updates ? 'status' THEN p_updates->>'status' ELSE status END,
+    priority = CASE WHEN p_updates ? 'priority' THEN p_updates->>'priority' ELSE priority END,
+    rag_status = CASE WHEN p_updates ? 'ragStatus' THEN p_updates->>'ragStatus' ELSE rag_status END,
+    start_date = CASE WHEN p_updates ? 'startDate' THEN NULLIF(p_updates->>'startDate', '')::DATE ELSE start_date END,
+    end_date = CASE WHEN p_updates ? 'endDate' THEN NULLIF(p_updates->>'endDate', '')::DATE ELSE end_date END,
+    budget = CASE WHEN p_updates ? 'budget' THEN NULLIF(p_updates->>'budget', '')::DECIMAL ELSE budget END,
+    budget_currency = CASE WHEN p_updates ? 'budgetCurrency' THEN p_updates->>'budgetCurrency' ELSE budget_currency END,
+    methodology = CASE WHEN p_updates ? 'methodology' THEN p_updates->>'methodology' ELSE methodology END,
+    sprint_length = CASE WHEN p_updates ? 'sprintLength' THEN (p_updates->>'sprintLength')::INTEGER ELSE sprint_length END,
+    story_point_scale = CASE WHEN p_updates ? 'storyPointScale' THEN p_updates->>'storyPointScale' ELSE story_point_scale END,
+    progress = CASE WHEN p_updates ? 'progress' THEN (p_updates->>'progress')::INTEGER ELSE progress END,
+    tags = CASE WHEN p_updates ? 'tags' THEN p_updates->'tags' ELSE tags END,
+    updated_by = p_actor,
+    updated_at = NOW()
+  WHERE id = p_project_id
+  RETURNING * INTO v_project;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Project not found';
+  END IF;
+  IF v_project.start_date IS NOT NULL AND v_project.end_date IS NOT NULL
+    AND v_project.end_date < v_project.start_date THEN
+    RAISE EXCEPTION 'Project end date must be on or after the start date';
+  END IF;
+  IF v_project.budget < 0 THEN
+    RAISE EXCEPTION 'Project budget cannot be negative';
+  END IF;
+
+  IF p_members IS NOT NULL THEN
+    DELETE FROM project_members existing
+    WHERE existing.project_id = p_project_id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM JSONB_ARRAY_ELEMENTS(p_members) submitted
+        WHERE (
+          NULLIF(submitted->>'employeeId', '') IS NOT NULL
+          AND existing.employee_id = (submitted->>'employeeId')::UUID
+        ) OR (
+          NULLIF(submitted->>'employeeId', '') IS NULL
+          AND existing.employee_id IS NULL
+          AND LOWER(existing.employee_name) = LOWER(COALESCE(submitted->>'employeeName', submitted->>'name', ''))
+        )
+      );
+
+    FOR v_member IN SELECT value FROM JSONB_ARRAY_ELEMENTS(p_members)
+    LOOP
+      v_employee_id := NULLIF(v_member->>'employeeId', '')::UUID;
+      v_employee_name := COALESCE(v_member->>'employeeName', v_member->>'name', '');
+
+      UPDATE project_members
+      SET
+        employee_name = v_employee_name,
+        role = COALESCE(NULLIF(v_member->>'role', ''), 'Member'),
+        updated_at = NOW()
+      WHERE project_id = p_project_id
+        AND (
+          (v_employee_id IS NOT NULL AND employee_id = v_employee_id)
+          OR
+          (v_employee_id IS NULL AND employee_id IS NULL AND LOWER(employee_name) = LOWER(v_employee_name))
+        );
+
+      IF NOT FOUND THEN
+        INSERT INTO project_members (
+          project_id, employee_id, employee_name, role, joined_at, created_by
+        ) VALUES (
+          p_project_id,
+          v_employee_id,
+          v_employee_name,
+          COALESCE(NULLIF(v_member->>'role', ''), 'Member'),
+          NOW(),
+          p_actor
+        );
+      END IF;
+    END LOOP;
+  END IF;
+
+  RETURN TO_JSONB(v_project);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pm_sync_backlog_dependencies(
+  p_item_id UUID,
+  p_dependencies JSONB,
+  p_actor TEXT
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_dependency JSONB;
+  v_target_id UUID;
+  v_type TEXT;
+  v_project_id UUID;
+BEGIN
+  SELECT project_id INTO v_project_id
+  FROM project_backlog_items
+  WHERE id = p_item_id
+  FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Backlog item not found';
+  END IF;
+
+  DELETE FROM project_backlog_dependencies
+  WHERE source_item_id = p_item_id OR target_item_id = p_item_id;
+
+  FOR v_dependency IN SELECT value FROM JSONB_ARRAY_ELEMENTS(COALESCE(p_dependencies, '[]'::JSONB))
+  LOOP
+    v_target_id := NULLIF(v_dependency->>'targetId', '')::UUID;
+    v_type := COALESCE(NULLIF(v_dependency->>'type', ''), 'Blocks');
+    IF v_target_id IS NULL OR v_target_id = p_item_id THEN
+      RAISE EXCEPTION 'Invalid backlog dependency';
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM project_backlog_items
+      WHERE id = v_target_id AND project_id = v_project_id
+    ) THEN
+      RAISE EXCEPTION 'Dependency target must belong to the same project';
+    END IF;
+
+    INSERT INTO project_backlog_dependencies (
+      source_item_id, target_item_id, dependency_type, created_by
+    ) VALUES (
+      CASE WHEN v_type = 'Blocked By' THEN v_target_id ELSE p_item_id END,
+      CASE WHEN v_type = 'Blocked By' THEN p_item_id ELSE v_target_id END,
+      CASE WHEN v_type = 'Blocked By' THEN 'Blocks' ELSE v_type END,
+      p_actor
+    );
+  END LOOP;
+
+  RETURN COALESCE((
+    SELECT JSONB_AGG(TO_JSONB(d))
+    FROM project_backlog_dependencies d
+    WHERE d.source_item_id = p_item_id OR d.target_item_id = p_item_id
+  ), '[]'::JSONB);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pm_delete_defect_with_attachments(p_defect_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_deleted project_defects;
+BEGIN
+  DELETE FROM entity_attachments
+  WHERE entity_type = 'defect' AND entity_id = p_defect_id::TEXT;
+
+  DELETE FROM project_defects
+  WHERE id = p_defect_id
+  RETURNING * INTO v_deleted;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Defect not found';
+  END IF;
+
+  RETURN TO_JSONB(v_deleted);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pm_add_sprint_item(
+  p_sprint_id UUID,
+  p_backlog_item_id UUID,
+  p_order_index INTEGER
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_entry project_sprint_backlog;
+  v_points DECIMAL;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM project_sprints s
+    JOIN project_backlog_items b ON b.project_id = s.project_id
+    WHERE s.id = p_sprint_id AND b.id = p_backlog_item_id
+  ) THEN
+    RAISE EXCEPTION 'Sprint and backlog item must belong to the same project';
+  END IF;
+
+  INSERT INTO project_sprint_backlog (sprint_id, backlog_item_id, order_index)
+  VALUES (p_sprint_id, p_backlog_item_id, COALESCE(p_order_index, 0))
+  RETURNING * INTO v_entry;
+
+  SELECT COALESCE(SUM(COALESCE(b.story_points, 0)), 0) INTO v_points
+  FROM project_sprint_backlog sb
+  JOIN project_backlog_items b ON b.id = sb.backlog_item_id
+  WHERE sb.sprint_id = p_sprint_id;
+
+  UPDATE project_sprints SET committed_points = v_points, updated_at = NOW()
+  WHERE id = p_sprint_id;
+
+  RETURN JSONB_BUILD_OBJECT('entry', TO_JSONB(v_entry), 'committed_points', v_points);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pm_remove_sprint_item(
+  p_sprint_id UUID,
+  p_entry_id UUID
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_points DECIMAL;
+BEGIN
+  DELETE FROM project_sprint_backlog
+  WHERE id = p_entry_id AND sprint_id = p_sprint_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Sprint backlog entry not found';
+  END IF;
+
+  SELECT COALESCE(SUM(COALESCE(b.story_points, 0)), 0) INTO v_points
+  FROM project_sprint_backlog sb
+  JOIN project_backlog_items b ON b.id = sb.backlog_item_id
+  WHERE sb.sprint_id = p_sprint_id;
+
+  UPDATE project_sprints SET committed_points = v_points, updated_at = NOW()
+  WHERE id = p_sprint_id;
+
+  RETURN JSONB_BUILD_OBJECT('committed_points', v_points);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pm_start_sprint(
+  p_sprint_id UUID,
+  p_name TEXT,
+  p_goal TEXT,
+  p_start_date DATE,
+  p_end_date DATE
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_sprint project_sprints;
+  v_points DECIMAL;
+BEGIN
+  SELECT * INTO v_sprint FROM project_sprints WHERE id = p_sprint_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Sprint not found'; END IF;
+  IF v_sprint.status <> 'Planning' THEN RAISE EXCEPTION 'Only a planning sprint can be started'; END IF;
+  IF NULLIF(BTRIM(p_goal), '') IS NULL THEN RAISE EXCEPTION 'Sprint goal is required'; END IF;
+  IF p_start_date IS NULL OR p_end_date IS NULL OR p_end_date < p_start_date THEN
+    RAISE EXCEPTION 'Valid sprint dates are required';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM project_sprints
+    WHERE project_id = v_sprint.project_id AND status = 'Active' AND id <> p_sprint_id
+  ) THEN
+    RAISE EXCEPTION 'There is already an active sprint';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM project_sprint_backlog WHERE sprint_id = p_sprint_id) THEN
+    RAISE EXCEPTION 'Add at least one item before starting the sprint';
+  END IF;
+
+  SELECT COALESCE(SUM(COALESCE(b.story_points, 0)), 0) INTO v_points
+  FROM project_sprint_backlog sb
+  JOIN project_backlog_items b ON b.id = sb.backlog_item_id
+  WHERE sb.sprint_id = p_sprint_id;
+
+  UPDATE project_backlog_items b
+  SET sprint_id = p_sprint_id, updated_at = NOW()
+  WHERE b.id IN (
+    SELECT backlog_item_id FROM project_sprint_backlog WHERE sprint_id = p_sprint_id
+  );
+
+  UPDATE project_sprints
+  SET name = p_name, goal = p_goal, start_date = p_start_date, end_date = p_end_date,
+      status = 'Active', committed_points = v_points, updated_at = NOW()
+  WHERE id = p_sprint_id
+  RETURNING * INTO v_sprint;
+
+  RETURN TO_JSONB(v_sprint);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION pm_complete_sprint(
+  p_sprint_id UUID,
+  p_moves JSONB
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_sprint project_sprints;
+  v_move JSONB;
+  v_item_id UUID;
+  v_target_sprint_id UUID;
+  v_velocity DECIMAL;
+BEGIN
+  SELECT * INTO v_sprint FROM project_sprints WHERE id = p_sprint_id FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Sprint not found'; END IF;
+  IF v_sprint.status <> 'Active' THEN RAISE EXCEPTION 'Only an active sprint can be completed'; END IF;
+
+  FOR v_move IN SELECT value FROM JSONB_ARRAY_ELEMENTS(COALESCE(p_moves, '[]'::JSONB))
+  LOOP
+    v_item_id := NULLIF(v_move->>'itemId', '')::UUID;
+    v_target_sprint_id := NULLIF(v_move->>'targetSprintId', '')::UUID;
+
+    IF NOT EXISTS (
+      SELECT 1 FROM project_sprint_backlog
+      WHERE sprint_id = p_sprint_id AND backlog_item_id = v_item_id
+    ) THEN
+      RAISE EXCEPTION 'Backlog item is not in the sprint';
+    END IF;
+    IF EXISTS (SELECT 1 FROM project_backlog_items WHERE id = v_item_id AND status = 'Done') THEN
+      RAISE EXCEPTION 'Completed items cannot be moved';
+    END IF;
+    IF v_target_sprint_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM project_sprints
+      WHERE id = v_target_sprint_id AND project_id = v_sprint.project_id AND status = 'Planning'
+    ) THEN
+      RAISE EXCEPTION 'Target sprint must be a planning sprint in the same project';
+    END IF;
+
+    DELETE FROM project_sprint_backlog
+    WHERE sprint_id = p_sprint_id AND backlog_item_id = v_item_id;
+
+    UPDATE project_backlog_items
+    SET sprint_id = v_target_sprint_id, updated_at = NOW()
+    WHERE id = v_item_id;
+
+    IF v_target_sprint_id IS NOT NULL THEN
+      INSERT INTO project_sprint_backlog (sprint_id, backlog_item_id, order_index)
+      VALUES (
+        v_target_sprint_id,
+        v_item_id,
+        COALESCE((SELECT MAX(order_index) + 1 FROM project_sprint_backlog WHERE sprint_id = v_target_sprint_id), 0)
+      );
+    END IF;
+  END LOOP;
+
+  SELECT COALESCE(SUM(COALESCE(b.story_points, 0)), 0) INTO v_velocity
+  FROM project_sprint_backlog sb
+  JOIN project_backlog_items b ON b.id = sb.backlog_item_id
+  WHERE sb.sprint_id = p_sprint_id AND b.status = 'Done';
+
+  UPDATE project_sprints
+  SET status = 'Completed', completed_points = v_velocity, velocity = v_velocity,
+      completed_at = NOW(), updated_at = NOW()
+  WHERE id = p_sprint_id
+  RETURNING * INTO v_sprint;
+
+  UPDATE project_sprints s
+  SET committed_points = totals.points, updated_at = NOW()
+  FROM (
+    SELECT sb.sprint_id, COALESCE(SUM(COALESCE(b.story_points, 0)), 0) AS points
+    FROM project_sprint_backlog sb
+    JOIN project_backlog_items b ON b.id = sb.backlog_item_id
+    WHERE sb.sprint_id IN (
+      SELECT DISTINCT NULLIF(value->>'targetSprintId', '')::UUID
+      FROM JSONB_ARRAY_ELEMENTS(COALESCE(p_moves, '[]'::JSONB))
+      WHERE NULLIF(value->>'targetSprintId', '') IS NOT NULL
+    )
+    GROUP BY sb.sprint_id
+  ) totals
+  WHERE s.id = totals.sprint_id;
+
+  RETURN TO_JSONB(v_sprint);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION pm_log_time_atomic(UUID, UUID, UUID, TEXT, DATE, DECIMAL, TEXT, BOOLEAN, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION pm_create_project_with_members(JSONB, JSONB, TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION pm_update_project_with_members(UUID, JSONB, JSONB, TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION pm_sync_backlog_dependencies(UUID, JSONB, TEXT) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION pm_delete_defect_with_attachments(UUID) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION pm_add_sprint_item(UUID, UUID, INTEGER) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION pm_remove_sprint_item(UUID, UUID) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION pm_start_sprint(UUID, TEXT, TEXT, DATE, DATE) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION pm_complete_sprint(UUID, JSONB) FROM PUBLIC, anon, authenticated;
+
+GRANT EXECUTE ON FUNCTION pm_log_time_atomic(UUID, UUID, UUID, TEXT, DATE, DECIMAL, TEXT, BOOLEAN, TEXT, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION pm_create_project_with_members(JSONB, JSONB, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION pm_update_project_with_members(UUID, JSONB, JSONB, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION pm_sync_backlog_dependencies(UUID, JSONB, TEXT) TO service_role;
+GRANT EXECUTE ON FUNCTION pm_delete_defect_with_attachments(UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION pm_add_sprint_item(UUID, UUID, INTEGER) TO service_role;
+GRANT EXECUTE ON FUNCTION pm_remove_sprint_item(UUID, UUID) TO service_role;
+GRANT EXECUTE ON FUNCTION pm_start_sprint(UUID, TEXT, TEXT, DATE, DATE) TO service_role;
+GRANT EXECUTE ON FUNCTION pm_complete_sprint(UUID, JSONB) TO service_role;
 
 -- ────────────────────────────────────────────────────────────
 -- File: 02_seed_data.sql
@@ -9978,6 +10546,240 @@ BEGIN
   END LOOP;
 END $$;
 
+-- ── Project Management: project-aware access ────────────────────────────────
+-- This final override replaces the legacy authenticated catch-all policies
+-- above. Edge Functions use service_role and enforce the same ownership rules
+-- before querying; browser clients are constrained here as a second boundary.
+
+CREATE OR REPLACE FUNCTION pm_current_employee_id()
+RETURNS UUID
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE(
+    (SELECT employee_id FROM app_users WHERE auth_user_id = auth.uid() LIMIT 1),
+    (SELECT id FROM employees WHERE auth_user_id = auth.uid() LIMIT 1)
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION pm_has_portfolio_access()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM app_users
+    WHERE auth_user_id = auth.uid()
+      AND status = 'active'
+      AND (
+        primary_role IN ('admin', 'hr')
+        OR roles ? 'admin'
+        OR roles ? 'hr'
+      )
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION pm_has_management_role()
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM app_users
+    WHERE auth_user_id = auth.uid()
+      AND status = 'active'
+      AND (
+        primary_role IN ('admin', 'hr', 'manager')
+        OR roles ? 'admin'
+        OR roles ? 'hr'
+        OR roles ? 'manager'
+      )
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION pm_can_access_project(p_project_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT pm_has_portfolio_access() OR EXISTS (
+    SELECT 1
+    FROM projects p
+    WHERE p.id = p_project_id
+      AND (
+        p.manager_id = pm_current_employee_id()
+        OR EXISTS (
+          SELECT 1 FROM project_members m
+          WHERE m.project_id = p.id
+            AND m.employee_id = pm_current_employee_id()
+        )
+      )
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION pm_can_manage_project(p_project_id UUID)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT pm_has_portfolio_access() OR (
+    pm_has_management_role() AND EXISTS (
+      SELECT 1
+      FROM projects p
+      WHERE p.id = p_project_id
+        AND (
+          p.manager_id = pm_current_employee_id()
+          OR EXISTS (
+            SELECT 1 FROM project_members m
+            WHERE m.project_id = p.id
+              AND m.employee_id = pm_current_employee_id()
+              AND LOWER(m.role) IN ('owner', 'manager', 'project manager')
+          )
+        )
+    )
+  );
+$$;
+
+REVOKE ALL ON FUNCTION pm_current_employee_id() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION pm_has_portfolio_access() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION pm_has_management_role() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION pm_can_access_project(UUID) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION pm_can_manage_project(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION pm_current_employee_id() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION pm_has_portfolio_access() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION pm_has_management_role() TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION pm_can_access_project(UUID) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION pm_can_manage_project(UUID) TO authenticated, service_role;
+
+DO $$
+DECLARE
+  t TEXT;
+  p TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'projects', 'project_members', 'project_tasks', 'project_milestones',
+    'project_sprints', 'project_backlog_items', 'project_epics', 'project_risks',
+    'project_defects', 'project_time_logs', 'project_budget_line_items',
+    'project_rag_log'
+  ]
+  LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = t
+    ) THEN
+      EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
+      FOR p IN
+        SELECT policyname FROM pg_policies
+        WHERE schemaname = 'public' AND tablename = t
+      LOOP
+        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', p, t);
+      END LOOP;
+    END IF;
+  END LOOP;
+END $$;
+
+DROP POLICY IF EXISTS "projects_select_assigned" ON projects;
+DROP POLICY IF EXISTS "projects_insert_managers" ON projects;
+DROP POLICY IF EXISTS "projects_update_managers" ON projects;
+DROP POLICY IF EXISTS "projects_delete_managers" ON projects;
+CREATE POLICY "projects_select_assigned" ON projects
+  FOR SELECT TO authenticated USING (pm_can_access_project(id));
+CREATE POLICY "projects_insert_managers" ON projects
+  FOR INSERT TO authenticated WITH CHECK (pm_has_management_role());
+CREATE POLICY "projects_update_managers" ON projects
+  FOR UPDATE TO authenticated USING (pm_can_manage_project(id))
+  WITH CHECK (pm_can_manage_project(id));
+CREATE POLICY "projects_delete_managers" ON projects
+  FOR DELETE TO authenticated USING (pm_can_manage_project(id));
+
+DO $$
+DECLARE
+  t TEXT;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'project_members', 'project_tasks', 'project_milestones', 'project_sprints',
+    'project_backlog_items', 'project_epics', 'project_risks', 'project_defects',
+    'project_time_logs', 'project_budget_line_items', 'project_rag_log'
+  ]
+  LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = t
+    ) THEN
+      EXECUTE format(
+        'CREATE POLICY %I ON %I FOR SELECT TO authenticated USING (pm_can_access_project(project_id))',
+        t || '_select_assigned', t
+      );
+      EXECUTE format(
+        'CREATE POLICY %I ON %I FOR ALL TO authenticated USING (pm_can_manage_project(project_id)) WITH CHECK (pm_can_manage_project(project_id))',
+        t || '_manage_assigned', t
+      );
+    END IF;
+  END LOOP;
+END $$;
+
+DO $$
+DECLARE p TEXT;
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='project_sprint_backlog') THEN
+    FOR p IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='project_sprint_backlog'
+    LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON project_sprint_backlog', p); END LOOP;
+    DROP POLICY IF EXISTS "sprint_backlog_select_assigned" ON project_sprint_backlog;
+    CREATE POLICY "sprint_backlog_select_assigned" ON project_sprint_backlog
+      FOR SELECT TO authenticated
+      USING (EXISTS (
+        SELECT 1 FROM project_sprints s
+        WHERE s.id = sprint_id AND pm_can_access_project(s.project_id)
+      ));
+    DROP POLICY IF EXISTS "sprint_backlog_manage_assigned" ON project_sprint_backlog;
+    CREATE POLICY "sprint_backlog_manage_assigned" ON project_sprint_backlog
+      FOR ALL TO authenticated
+      USING (EXISTS (
+        SELECT 1 FROM project_sprints s
+        WHERE s.id = sprint_id AND pm_can_manage_project(s.project_id)
+      ))
+      WITH CHECK (EXISTS (
+        SELECT 1 FROM project_sprints s
+        WHERE s.id = sprint_id AND pm_can_manage_project(s.project_id)
+      ));
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='project_backlog_dependencies') THEN
+    FOR p IN SELECT policyname FROM pg_policies WHERE schemaname='public' AND tablename='project_backlog_dependencies'
+    LOOP EXECUTE format('DROP POLICY IF EXISTS %I ON project_backlog_dependencies', p); END LOOP;
+    DROP POLICY IF EXISTS "backlog_dependencies_select_assigned" ON project_backlog_dependencies;
+    CREATE POLICY "backlog_dependencies_select_assigned" ON project_backlog_dependencies
+      FOR SELECT TO authenticated
+      USING (EXISTS (
+        SELECT 1 FROM project_backlog_items b
+        WHERE b.id = source_item_id AND pm_can_access_project(b.project_id)
+      ));
+    DROP POLICY IF EXISTS "backlog_dependencies_manage_assigned" ON project_backlog_dependencies;
+    CREATE POLICY "backlog_dependencies_manage_assigned" ON project_backlog_dependencies
+      FOR ALL TO authenticated
+      USING (EXISTS (
+        SELECT 1 FROM project_backlog_items b
+        WHERE b.id = source_item_id AND pm_can_manage_project(b.project_id)
+      ))
+      WITH CHECK (EXISTS (
+        SELECT 1 FROM project_backlog_items b
+        WHERE b.id = source_item_id AND pm_can_manage_project(b.project_id)
+      ));
+  END IF;
+END $$;
+
 -- ── 4. Grant authenticated role full access on all tables ─────────────────────
 DO $$
 DECLARE tbl TEXT;
@@ -10708,6 +11510,34 @@ CREATE POLICY "project_defects_project_access"
   TO authenticated
   USING (public.defect_tracker_can_access_project(project_id))
   WITH CHECK (public.defect_tracker_can_access_project(project_id));
+
+-- PM support tables that were historically left with broad authenticated
+-- policies. Reads are scoped to project membership; durable writes are owned
+-- by the canonical service-role API.
+ALTER TABLE IF EXISTS public.project_notifications ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.project_activity_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE IF EXISTS public.pm_saved_views ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated users full access" ON public.project_notifications;
+DROP POLICY IF EXISTS "project_notifications_project_read" ON public.project_notifications;
+CREATE POLICY "project_notifications_project_read"
+  ON public.project_notifications FOR SELECT TO authenticated
+  USING (project_id IS NOT NULL AND public.pm_can_access_project(project_id));
+
+DROP POLICY IF EXISTS "Authenticated users full access" ON public.project_activity_log;
+DROP POLICY IF EXISTS "project_activity_log_project_read" ON public.project_activity_log;
+CREATE POLICY "project_activity_log_project_read"
+  ON public.project_activity_log FOR SELECT TO authenticated
+  USING (public.pm_can_access_project(project_id));
+
+DROP POLICY IF EXISTS "Authenticated users full access" ON public.pm_saved_views;
+DROP POLICY IF EXISTS "pm_saved_views_owner_access" ON public.pm_saved_views;
+CREATE POLICY "pm_saved_views_owner_access"
+  ON public.pm_saved_views FOR SELECT TO authenticated
+  USING (
+    LOWER(user_id) = LOWER(COALESCE(auth.jwt() ->> 'email', ''))
+    AND (project_id IS NULL OR public.pm_can_access_project(project_id))
+  );
 
 DROP POLICY IF EXISTS "Authenticated users full access" ON public.project_members;
 DROP POLICY IF EXISTS "project_members_authenticated_read" ON public.project_members;
