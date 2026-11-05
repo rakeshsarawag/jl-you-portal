@@ -328,10 +328,11 @@ interface ProjectFormProps {
   initial?: Partial<Project>;
   onSubmit: (data: Partial<Project>) => Promise<void>;
   onCancel: () => void;
+  onDelete?: () => void;
   methodologyOptions?: string[];
 }
 
-function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_METHODOLOGIES] }: ProjectFormProps) {
+function ProjectForm({ initial, onSubmit, onCancel, onDelete, methodologyOptions = [...PM_METHODOLOGIES] }: ProjectFormProps) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState<Partial<Project> & { methodology?: string; budgetCurrency?: string; ragStatus?: string }>({
     name: "",
@@ -685,13 +686,25 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
 
       {/* Navigation */}
       <div className="flex justify-between pt-2 border-t">
-        <button
-          type="button"
-          onClick={step === 1 ? onCancel : () => setStep(s => s - 1)}
-          className="px-4 py-2 text-sm text-foreground border border-border rounded-lg hover:bg-muted"
-        >
-          {step === 1 ? t("common.cancel") : "← Back"}
-        </button>
+        <div className="flex items-center gap-2">
+          {initial?.id && onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 hover:text-red-700"
+            >
+              <Trash2 className="h-4 w-4" />
+              {t("common.delete")}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={step === 1 ? onCancel : () => setStep(s => s - 1)}
+            className="px-4 py-2 text-sm text-foreground border border-border rounded-lg hover:bg-muted"
+          >
+            {step === 1 ? t("common.cancel") : "← Back"}
+          </button>
+        </div>
         {step < 3 ? (
           <button
             type="button"
@@ -7896,16 +7909,12 @@ function ProjectCard({
   project,
   onSelect,
   canEdit = false,
-  canDelete = false,
   onEdit,
-  onDelete,
 }: {
   project: Project;
   onSelect: () => void;
   canEdit?: boolean;
-  canDelete?: boolean;
   onEdit?: () => void;
-  onDelete?: () => void;
 }) {
   const health = computeHealthScore(project);
   const hl = healthLabel(health);
@@ -7934,6 +7943,23 @@ function ProjectCard({
           <div className="flex items-center gap-1.5 flex-shrink-0">
             <RagDot status={project.ragStatus ?? 'Green'} />
             <span className={`text-xs font-medium px-1.5 py-0.5 rounded border ${hl.label === 'Healthy' ? 'text-green-700 bg-green-50 border-green-200' : hl.label === 'At Risk' ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-red-700 bg-red-50 border-red-200'}`}>{hl.label}</span>
+            {canEdit && onEdit && (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                title={t("common.edit")}
+                aria-label={`${t("common.edit")} ${project.name}`}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEdit();
+                }}
+              >
+                <Edit2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         </div>
         <div className="space-y-1">
@@ -7950,48 +7976,6 @@ function ProjectCard({
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1"><Users size={11} />{project.members?.length ?? 0}</span>
           <span className="flex items-center gap-1"><CheckSquare size={11} />{project.tasks?.length ?? 0} tasks</span>
-        </div>
-        <div className="flex items-center justify-end gap-1 border-t border-border pt-3">
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            onClick={(event) => {
-              event.stopPropagation();
-              onSelect();
-            }}
-          >
-            {t("common.view")}
-          </Button>
-          {canEdit && onEdit && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={(event) => {
-                event.stopPropagation();
-                onEdit();
-              }}
-            >
-              <Edit2 />
-              {t("common.edit")}
-            </Button>
-          )}
-          {canDelete && onDelete && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="text-red-600 hover:text-red-700"
-              onClick={(event) => {
-                event.stopPropagation();
-                onDelete();
-              }}
-            >
-              <Trash2 />
-              {t("common.delete")}
-            </Button>
-          )}
         </div>
       </div>
     </div>
@@ -9213,9 +9197,7 @@ export function ProjectManagementJira({
                 project={p}
                 onSelect={() => openProject(p)}
                 canEdit={canEditProject}
-                canDelete={canAdminDelete}
                 onEdit={() => setEditingProject(p)}
-                onDelete={() => void handleDeleteProject(p.id, p.name)}
               />
             ))}
             {projects.length === 0 && <p className="text-sm text-muted-foreground col-span-3 text-center py-8">{t("projects.noProjects")}</p>}
@@ -9255,17 +9237,9 @@ export function ProjectManagementJira({
                       <td className="py-2 px-3 text-muted-foreground">{budgetPct !== null ? `${budgetPct}%` : '—'}</td>
                       <td className="py-2 px-3">
                         <div className="flex items-center justify-end gap-1">
-                          <Button type="button" size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); openProject(p); }}>
-                            {t("common.view")}
-                          </Button>
                           {canEditProject && (
                             <Button type="button" size="icon" variant="ghost" title={t("common.edit")} onClick={(e) => { e.stopPropagation(); setEditingProject(p); }}>
                               <Edit2 />
-                            </Button>
-                          )}
-                          {canAdminDelete && (
-                            <Button type="button" size="icon" variant="ghost" className="text-red-600 hover:text-red-700" title={t("common.delete")} onClick={(e) => { e.stopPropagation(); void handleDeleteProject(p.id, p.name); }}>
-                              <Trash2 />
                             </Button>
                           )}
                         </div>
@@ -9529,6 +9503,11 @@ export function ProjectManagementJira({
             initial={editingProject}
             onSubmit={(data) => handleUpdateProject(editingProject.id, data)}
             onCancel={() => setEditingProject(null)}
+            onDelete={canAdminDelete ? () => {
+              const project = editingProject;
+              setEditingProject(null);
+              void handleDeleteProject(project.id, project.name);
+            } : undefined}
             methodologyOptions={methodologyOptions}
           />
         </Modal>
