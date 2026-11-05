@@ -589,6 +589,7 @@ interface BulkUploadModalProps {
 function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [fileError, setFileError] = useState("");
+  const [uploadError, setUploadError] = useState("");
   const [fileName, setFileName] = useState("");
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<BulkUploadResult | null>(null);
@@ -615,6 +616,7 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
 
   const handleFile = async (file: File) => {
     setFileError("");
+    setUploadError("");
     setFileName(file.name);
     setParsedRows([]);
     setResult(null);
@@ -642,12 +644,32 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
   const handleImport = async () => {
     if (!validRows.length) return;
     setUploading(true);
+    setUploadError("");
     try {
       const res = await onUpload(validRows.map((r) => r.data));
+      if (res.failureCount === 0) {
+        toast.success(`${res.successCount} candidate${res.successCount === 1 ? "" : "s"} imported successfully`);
+        onClose();
+        return;
+      }
+
       setResult(res);
-      toast.success(t("bulkUploadSuccess"));
+      const failureSummary = `${res.failureCount} row${res.failureCount === 1 ? "" : "s"} failed to import`;
+      if (res.successCount > 0) {
+        toast.warning(`${res.successCount} imported; ${failureSummary}. Review the reasons below.`);
+      } else {
+        toast.error(`${failureSummary}. Review the reasons below.`);
+      }
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Upload failed");
+      let message = err instanceof Error ? err.message : "Upload failed";
+      try {
+        const parsed = JSON.parse(message);
+        message = parsed.error ?? parsed.message ?? message;
+      } catch {
+        // The error is already plain text.
+      }
+      setUploadError(message);
+      toast.error(message);
     } finally {
       setUploading(false);
     }
@@ -727,6 +749,16 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
               {fileError && (
                 <div className="flex items-center gap-2 bg-red-50 text-red-700 rounded-lg px-3 py-2 text-sm">
                   <AlertCircle size={14} />{fileError}
+                </div>
+              )}
+
+              {uploadError && (
+                <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+                  <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                  <div>
+                    <p className="font-medium">Import failed</p>
+                    <p className="mt-0.5 text-xs">{uploadError}</p>
+                  </div>
                 </div>
               )}
 
@@ -2938,14 +2970,40 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
   const [viewingJobId, setViewingJobId] = useState<string | null>(null);
   const viewingJob = viewingJobId ? jobPostings.find((j) => j.id === viewingJobId) ?? null : null;
 
+  const expertiseOptions = useMemo(() => {
+    const values = candidates
+      .map((candidate) => candidate.expertise?.trim())
+      .filter((value): value is string => Boolean(value));
+    return [...new Set([...EXPERTISE_OPTIONS, ...values])]
+      .sort((a, b) => a.localeCompare(b));
+  }, [candidates]);
+
   const filteredCandidates = useMemo(() => {
     return candidates.filter((c) => {
       const matchStage = stageFilter === "All" || c.stage === stageFilter;
-      const q = search.toLowerCase();
-      const matchSearch = !q || c.name.toLowerCase().includes(q) || c.position.toLowerCase().includes(q) || (c.department ?? "").toLowerCase().includes(q);
-      return matchStage && matchSearch && (!filterExpertise || c.expertise === filterExpertise);
+      const q = search.trim().toLocaleLowerCase();
+      const searchableValues = [
+        c.name,
+        c.position,
+        c.department,
+        c.expertise,
+        ...(c.skills ?? []),
+      ];
+      const matchSearch = !q || searchableValues.some((value) =>
+        String(value ?? "").toLocaleLowerCase().includes(q)
+      );
+      const matchExpertise = !filterExpertise
+        || c.expertise?.trim().toLocaleLowerCase() === filterExpertise.toLocaleLowerCase();
+      return matchStage && matchSearch && matchExpertise;
     });
   }, [candidates, stageFilter, search, filterExpertise]);
+
+  const visiblePipelineStages = stageFilter === "All"
+    ? RECRUITMENT_STAGES
+    : RECRUITMENT_STAGES.filter((stage) => stage === stageFilter);
+  const activePipelineFilterCount = Number(stageFilter !== "All")
+    + Number(Boolean(filterExpertise))
+    + Number(Boolean(search.trim()));
 
   const derivedStats = useMemo(() => ({
     total: stats?.totalCandidates ?? candidates.length,
@@ -3027,44 +3085,89 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
         {/* Pipeline tab */}
         {activeTab === "pipeline" && (
           <div className="space-y-4">
-            <div className="flex items-center gap-3 flex-wrap">
-              <div className="flex gap-1 border border-border rounded-lg p-0.5">
-                <button onClick={() => setPipelineView("list")} className={`px-3 py-1 text-xs rounded ${pipelineView === "list" ? "bg-blue-600 text-white" : "text-muted-foreground"}`}>{t("recruitment.listView")}</button>
-                <button onClick={() => setPipelineView("kanban")} className={`px-3 py-1 text-xs rounded ${pipelineView === "kanban" ? "bg-blue-600 text-white" : "text-muted-foreground"}`}>{t("recruitment.kanbanView")}</button>
-              </div>
-              {pipelineView === "list" && (
-                <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide flex-1">
-                  {["All", ...RECRUITMENT_STAGES].map((s) => (
-                    <button key={s} onClick={() => setStageFilter(s)}
-                      className={`shrink-0 px-3 py-1.5 text-xs rounded-full border transition-colors ${stageFilter === s ? "bg-blue-600 text-white border-blue-600" : "border-border text-muted-foreground hover:border-blue-300"}`}>
-                      {s}
-                      {s !== "All" && (
-                        <span className="ml-1 opacity-70">({candidates.filter((c) => c.stage === s).length})</span>
-                      )}
-                    </button>
-                  ))}
+            <div className="rounded-xl border border-border bg-card p-3 shadow-sm">
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_190px_220px_auto] xl:items-end">
+                <div>
+                  <label htmlFor="candidate-search" className="mb-1 block text-xs font-medium text-muted-foreground">
+                    Search candidates
+                  </label>
+                  <div className="relative">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      id="candidate-search"
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Name, skill, expertise, position…"
+                      className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
                 </div>
+
+                <div>
+                  <label htmlFor="candidate-stage-filter" className="mb-1 block text-xs font-medium text-muted-foreground">
+                    Stage
+                  </label>
+                  <select
+                    id="candidate-stage-filter"
+                    value={stageFilter}
+                    onChange={(event) => setStageFilter(event.target.value)}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="All">All stages ({candidates.length})</option>
+                    {RECRUITMENT_STAGES.map((stage) => (
+                      <option key={stage} value={stage}>
+                        {stage} ({candidates.filter((candidate) => candidate.stage === stage).length})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label htmlFor="candidate-expertise-filter" className="mb-1 block text-xs font-medium text-muted-foreground">
+                    Expertise
+                  </label>
+                  <select
+                    id="candidate-expertise-filter"
+                    value={filterExpertise}
+                    onChange={(event) => setFilterExpertise(event.target.value)}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">All expertise</option>
+                    {expertiseOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </div>
+
+                <div className="flex items-center justify-between gap-2 xl:justify-end">
+                  {activePipelineFilterCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearch("");
+                        setStageFilter("All");
+                        setFilterExpertise("");
+                      }}
+                      className="whitespace-nowrap px-2 py-2 text-xs font-medium text-blue-600 hover:text-blue-700"
+                    >
+                      Clear {activePipelineFilterCount}
+                    </button>
+                  )}
+                  <div className="flex rounded-lg border border-border bg-muted/50 p-0.5">
+                    <button type="button" onClick={() => setPipelineView("list")} className={`px-3 py-1.5 text-xs rounded-md ${pipelineView === "list" ? "bg-background text-blue-600 shadow-sm" : "text-muted-foreground"}`}>{t("recruitment.listView")}</button>
+                    <button type="button" onClick={() => setPipelineView("kanban")} className={`px-3 py-1.5 text-xs rounded-md ${pipelineView === "kanban" ? "bg-background text-blue-600 shadow-sm" : "text-muted-foreground"}`}>{t("recruitment.kanbanView")}</button>
+                  </div>
+                </div>
+              </div>
+              {activePipelineFilterCount > 0 && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Showing {filteredCandidates.length} of {candidates.length} candidates
+                </p>
               )}
             </div>
 
-            {pipelineView === "list" && (
-              <div className="flex gap-2 flex-wrap">
-                <div className="relative flex-1 min-w-[180px]">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("searchCandidates")}
-                    className="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-                <select value={filterExpertise} onChange={e => setFilterExpertise(e.target.value)} className="px-3 py-2 border border-border rounded-lg text-sm bg-background">
-                  <option value="">All Expertise</option>
-                  {EXPERTISE_OPTIONS.map(opt => <option key={opt} value={opt}>{opt}</option>)}
-                </select>
-              </div>
-            )}
-
             {pipelineView === "kanban" && (
               <div className="flex gap-4 overflow-x-auto pb-4">
-                {RECRUITMENT_STAGES.map((stage) => {
-                  const stageCandidates = candidates.filter((c) => c.stage === stage);
+                {visiblePipelineStages.map((stage) => {
+                  const stageCandidates = filteredCandidates.filter((c) => c.stage === stage);
                   const stageIndex = RECRUITMENT_STAGES.indexOf(stage);
                   const nextStage = stageIndex < RECRUITMENT_STAGES.length - 1 ? RECRUITMENT_STAGES[stageIndex + 1] : null;
                   return (
