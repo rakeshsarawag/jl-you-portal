@@ -74,6 +74,8 @@ app.put('/milestones/:id', async (c) => {
   if (body.milestone_type !== undefined) updates.milestone_type = body.milestone_type;
   if (body.owner_name !== undefined) updates.owner_name = body.owner_name;
   if (body.notes !== undefined) updates.notes = body.notes;
+  if (body.status === 'Achieved') updates.completion_date = body.completion_date || new Date().toISOString().slice(0, 10);
+  else if (body.status !== undefined) updates.completion_date = null;
   const { data, error } = await supabase
     .from('project_milestones')
     .update(updates)
@@ -84,7 +86,7 @@ app.put('/milestones/:id', async (c) => {
   if (error) return c.json({ success: false, error: error.message }, 500);
 
   // Stakeholder notification on milestone completion (G-FSD requirement)
-  if (body.status === "Completed" && data) {
+  if (body.status === "Achieved" && data) {
     const supabaseNotify = getSupabase();
     const { data: members } = await supabaseNotify
       .from("project_members")
@@ -102,7 +104,7 @@ app.put('/milestones/:id', async (c) => {
         }
       }
     }
-    logAuditFromContext(c, { entity_type: "milestone", entity_id: data.id, action: "update", module: "projects", metadata: { status: "Completed", title: data.title } });
+    logAuditFromContext(c, { entity_type: "milestone", entity_id: data.id, action: "update", module: "projects", metadata: { status: "Achieved", title: data.title } });
   }
 
   return c.json({ success: true, data });
@@ -165,6 +167,9 @@ app.put('/sprints/:id', async (c) => {
   if (body.status !== undefined) updates.status = body.status;
   if (body.committed_points !== undefined) updates.committed_points = body.committed_points;
   if (body.completed_points !== undefined) updates.completed_points = body.completed_points;
+  if (body.velocity !== undefined) updates.velocity = body.velocity;
+  if (body.capacity_points !== undefined) updates.capacity_points = body.capacity_points;
+  if (body.status === 'Completed') updates.completed_at = new Date().toISOString();
   const { data, error } = await supabase
     .from('project_sprints')
     .update(updates)
@@ -410,7 +415,7 @@ app.post('/backlog', async (c) => {
     }
 
     const itemId = await nextItemId();
-    const validTypes = ['story', 'task', 'bug', 'epic', 'spike'];
+    const validTypes = ['story', 'task', 'bug', 'epic', 'spike', 'research'];
     const rawType = (body.type || 'story').toLowerCase();
     const type = validTypes.includes(rawType) ? rawType : 'story';
 
@@ -463,6 +468,7 @@ app.put('/backlog/:itemId', async (c) => {
         assignee_name: body.assigneeName,
         acceptance_criteria: body.acceptanceCriteria,
         linked_tickets: body.linkedTickets,
+        epic_id: body.epicId || null,
         updated_at: new Date().toISOString(),
       })
       .eq('id', c.req.param('itemId'))
@@ -525,6 +531,10 @@ app.post('/create', async (c) => {
         start_date: body.startDate || null,
         end_date: body.endDate || null,
         budget: body.budget || null,
+        budget_currency: body.budgetCurrency || 'USD',
+        methodology: body.methodology || 'Scrum',
+        sprint_length: body.sprintLength ?? 14,
+        story_point_scale: body.storyPointScale || 'Fibonacci',
         tags: body.tags || [],
         ...auditCreate(c),
       }])
@@ -571,28 +581,62 @@ app.post('/update', async (c) => {
     const supabase = getSupabase();
     const { id, ...body } = await c.req.json();
 
+    const updates: Record<string, unknown> = { ...auditUpdate(c) };
+    if (body.name !== undefined) updates.name = body.name;
+    if (body.description !== undefined) updates.description = body.description;
+    if (body.category !== undefined) updates.category = body.category;
+    if (body.clientName !== undefined || body.client !== undefined) updates.client_name = body.clientName || body.client || '';
+    if (body.managerId !== undefined) updates.manager_id = body.managerId || null;
+    if (body.managerName !== undefined || body.owner !== undefined) updates.manager_name = body.managerName || body.owner || '';
+    if (body.status !== undefined) updates.status = body.status;
+    if (body.priority !== undefined) updates.priority = body.priority;
+    if (body.ragStatus !== undefined || body.rag_status !== undefined) updates.rag_status = body.ragStatus || body.rag_status;
+    if (body.startDate !== undefined) updates.start_date = body.startDate || null;
+    if (body.endDate !== undefined) updates.end_date = body.endDate || null;
+    if (body.budget !== undefined) updates.budget = body.budget;
+    if (body.budgetCurrency !== undefined) updates.budget_currency = body.budgetCurrency;
+    if (body.methodology !== undefined) updates.methodology = body.methodology;
+    if (body.sprintLength !== undefined) updates.sprint_length = body.sprintLength;
+    if (body.storyPointScale !== undefined) updates.story_point_scale = body.storyPointScale;
+    if (body.progress !== undefined) updates.progress = body.progress;
+    if (body.tags !== undefined) updates.tags = body.tags;
+
     const { data, error } = await supabase
       .from('projects')
-      .update({
-        name: body.name,
-        description: body.description,
-        client_name: body.clientName || body.client,
-        manager_name: body.managerName || body.owner,
-        status: body.status,
-        priority: body.priority,
-        start_date: body.startDate,
-        end_date: body.endDate,
-        budget: body.budget,
-        progress: body.progress,
-        tags: body.tags,
-        ...auditUpdate(c),
-      })
+      .update(updates)
       .eq('id', id)
       .select()
       .single();
 
     if (error) return c.json({ success: false, error: error.message }, 404);
-    return c.json({ success: true, data });
+
+    if (Array.isArray(body.members)) {
+      const { error: deleteMembersError } = await supabase
+        .from('project_members')
+        .delete()
+        .eq('project_id', id);
+      if (deleteMembersError) return c.json({ success: false, error: deleteMembersError.message }, 500);
+      if (body.members.length > 0) {
+        const { error: insertMembersError } = await supabase.from('project_members').insert(
+          body.members.map((member: any) => ({
+            project_id: id,
+            employee_id: member.employeeId || null,
+            employee_name: member.employeeName || member.name || '',
+            role: member.role || 'Member',
+            joined_at: new Date().toISOString(),
+          })),
+        );
+        if (insertMembersError) return c.json({ success: false, error: insertMembersError.message }, 500);
+      }
+    }
+
+    const { data: fullProject, error: reloadError } = await supabase
+      .from('projects')
+      .select('*, project_members(id, employee_id, employee_name, role, joined_at), project_tasks(*)')
+      .eq('id', id)
+      .single();
+    if (reloadError) return c.json({ success: false, error: reloadError.message }, 500);
+    return c.json({ success: true, data: fullProject ?? data });
   } catch (error) {
     return c.json({ success: false, error: 'Failed to update project' }, 500);
   }
@@ -727,8 +771,17 @@ app.put('/tasks/:id', async (c) => {
 
     // Fetch current task to accumulate actual_hours if additionalHours given
     let actualHours = body.actualHours;
+    let currentTask: any = null;
+    if (body.additionalHours || body.sprintId !== undefined) {
+      const { data: cur } = await supabase
+        .from('project_tasks')
+        .select('actual_hours, sprint_id, sprint_change_history')
+        .eq('id', c.req.param('id'))
+        .single();
+      currentTask = cur;
+    }
     if (body.additionalHours) {
-      const { data: cur } = await supabase.from('project_tasks').select('actual_hours').eq('id', c.req.param('id')).single();
+      const cur = currentTask;
       actualHours = (Number(cur?.actual_hours ?? 0) + Number(body.additionalHours));
     }
 
@@ -749,6 +802,22 @@ app.put('/tasks/:id', async (c) => {
     if (body.tags !== undefined) updates.tags = body.tags;
     if (body.sprintId !== undefined) updates.sprint_id = body.sprintId || null;
     if (body.sprintChangeReason !== undefined) updates.sprint_change_reason = body.sprintChangeReason;
+    if (
+      body.sprintId !== undefined &&
+      (body.sprintId || null) !== (currentTask?.sprint_id || null) &&
+      body.sprintChangeReason
+    ) {
+      updates.sprint_change_history = [
+        ...(Array.isArray(currentTask?.sprint_change_history) ? currentTask.sprint_change_history : []),
+        {
+          from: currentTask?.sprint_id || null,
+          to: body.sprintId || null,
+          reason: body.sprintChangeReason,
+          changedAt: new Date().toISOString(),
+          changedBy: c.req.header('x-user-email') ?? '',
+        },
+      ];
+    }
     // Auto-set audit timestamps based on status transitions
     const now = new Date().toISOString();
     if (body.status === 'In Progress' && !updates.started_at) updates.started_at = now;

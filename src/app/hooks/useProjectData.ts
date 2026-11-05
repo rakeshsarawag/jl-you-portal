@@ -93,8 +93,12 @@ export interface Project {
   endDate: string;
   budget?: number;
   spent?: number;
+  budgetCurrency?: string;
   managerId: string;
   managerName: string;
+  methodology?: string;
+  sprintLength?: number;
+  storyPointScale?: string;
   members: ProjectMember[];
   tasks: ProjectTask[];
   progress: number;
@@ -163,8 +167,12 @@ function normalizeProject(p: any, members: any[] = [], tasks: any[] = []): Proje
     endDate: p.end_date ?? p.endDate ?? '',
     budget: p.budget,
     spent: p.spent,
+    budgetCurrency: p.budget_currency ?? p.budgetCurrency ?? 'USD',
     managerId: p.manager_id ?? p.managerId ?? '',
     managerName: p.manager_name ?? p.managerName ?? '',
+    methodology: p.methodology ?? 'Scrum',
+    sprintLength: p.sprint_length ?? p.sprintLength ?? 14,
+    storyPointScale: p.story_point_scale ?? p.storyPointScale ?? 'Fibonacci',
     members: pMembers.map(normalizeMember),
     tasks: pTasks.map(normalizeTask),
     progress,
@@ -231,6 +239,10 @@ export function useProjectData(_userEmail?: string) {
       startDate: data.startDate || null,
       endDate: data.endDate || null,
       budget: data.budget ?? null,
+      budgetCurrency: data.budgetCurrency ?? 'USD',
+      methodology: data.methodology ?? 'Scrum',
+      sprintLength: data.sprintLength ?? 14,
+      storyPointScale: data.storyPointScale ?? 'Fibonacci',
       ragStatus: data.ragStatus ?? 'Green',
       members: (data.members ?? []).map((m: any) => ({ employeeName: m.employeeName ?? m.name, employeeId: m.employeeId ?? null, role: m.role ?? 'Member' })),
     });
@@ -256,14 +268,36 @@ export function useProjectData(_userEmail?: string) {
       startDate: updates.startDate,
       endDate: updates.endDate,
       budget: updates.budget,
+      budgetCurrency: updates.budgetCurrency,
+      methodology: updates.methodology,
+      sprintLength: updates.sprintLength,
+      storyPointScale: updates.storyPointScale,
       managerName: updates.managerName,
       managerId: updates.managerId,
       progress: updates.progress,
+      members: updates.members?.map((member) => ({
+        employeeName: member.employeeName,
+        employeeId: member.employeeId || null,
+        role: member.role,
+      })),
     });
     // /update returns the raw row without nested members/tasks; reload from /all snapshot
-    const project = normalizeProject(json.data, [], []);
+    const project = normalizeProject(
+      json.data,
+      json.data?.project_members ?? [],
+      json.data?.project_tasks ?? [],
+    );
+    const hasMembers = Array.isArray(json.data?.project_members);
+    const hasTasks = Array.isArray(json.data?.project_tasks);
     setProjects(prev => {
-      const updated = prev.map(p => p.id === id ? { ...p, ...project } : p);
+      const updated = prev.map(p => p.id === id
+        ? {
+            ...p,
+            ...project,
+            members: hasMembers ? project.members : p.members,
+            tasks: hasTasks ? project.tasks : p.tasks,
+          }
+        : p);
       setStats(computeStats(updated));
       return updated;
     });

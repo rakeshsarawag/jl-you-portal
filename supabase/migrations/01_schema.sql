@@ -3096,6 +3096,12 @@ ALTER TABLE project_backlog_items ADD COLUMN IF NOT EXISTS completed_at TIMESTAM
 ALTER TABLE project_backlog_items ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES project_backlog_items(id) ON DELETE SET NULL;
 ALTER TABLE project_backlog_items ADD COLUMN IF NOT EXISTS linked_it_tickets JSONB DEFAULT '[]';
 ALTER TABLE project_backlog_items ADD COLUMN IF NOT EXISTS watchers JSONB DEFAULT '[]';
+ALTER TABLE project_backlog_items DROP CONSTRAINT IF EXISTS project_backlog_items_type_check;
+ALTER TABLE project_backlog_items ADD CONSTRAINT project_backlog_items_type_check
+  CHECK (type IN ('story','task','bug','epic','spike','research'));
+ALTER TABLE project_backlog_items DROP CONSTRAINT IF EXISTS project_backlog_items_status_check;
+ALTER TABLE project_backlog_items ADD CONSTRAINT project_backlog_items_status_check
+  CHECK (status IN ('Backlog','Open','Ready','In Progress','In Review','Testing','Done','Cancelled','Blocked'));
 
 -- ============================================================
 -- NEW TABLE: project_sprint_backlog (junction: sprint ↔ backlog items)

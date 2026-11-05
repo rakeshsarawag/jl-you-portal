@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type TextareaHTMLAttributes } from "react";
 import { InlineLoader } from "../ui/PageLoader";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
 import {
   Plus,
@@ -71,6 +71,8 @@ import { useEmployees } from "../../context/EmployeesContext";
 import { daysRemaining as daysRemainingUtil, timeAgo as timeAgoUtil, budgetOverrunPct } from "../../utils/projectUtils";
 import { Button } from "../ui/button";
 import { Card, CardContent } from "../ui/card";
+import { uploadEntityAttachments } from "../../services/attachments";
+import { AttachmentSection } from "../shared/AttachmentSection";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -260,7 +262,13 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
     () => rawEmpPF.filter((e) => e.status !== "Inactive").map((e) => ({ id: e.id, name: e.employee_name as string ?? e.fullName as string ?? e.name ?? "" })).filter((e) => e.name),
     [rawEmpPF],
   );
-  const [wizardMembers, setWizardMembers] = useState<{ name: string; role: string; employeeId?: string; employeeCode?: string }[]>([]);
+  const [wizardMembers, setWizardMembers] = useState<{ name: string; role: string; employeeId?: string; employeeCode?: string }[]>(
+    () => (initial?.members ?? []).map((member) => ({
+      name: member.employeeName,
+      role: member.role,
+      employeeId: member.employeeId,
+    })),
+  );
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberRole, setNewMemberRole] = useState(MEMBER_ROLES[0]);
   const [newMemberId, setNewMemberId] = useState("");
@@ -500,7 +508,10 @@ function ProjectForm({ initial, onSubmit, onCancel, methodologyOptions = [...PM_
             <label className="block text-sm font-medium text-foreground mb-1">{t("project.managerName")}</label>
             <EmployeeSearchDropdown
               value={form.managerName ?? ""}
-              onChange={(name) => set("managerName", name)}
+              onChange={(name, id) => {
+                set("managerName", name);
+                set("managerId", id ?? "");
+              }}
               placeholder="Search manager…"
             />
           </div>
@@ -1102,8 +1113,14 @@ function TaskDetailModal({
 }: TaskDetailProps) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description ?? "");
+  const [priority, setPriority] = useState(task.priority);
+  const [taskType, setTaskType] = useState(task.taskType ?? "task");
   const [assigneeName, setAssigneeName] = useState(task.assigneeName ?? "");
+  const [assigneeId, setAssigneeId] = useState(task.assigneeId ?? "");
+  const [startDate, setStartDate] = useState(task.startDate ?? "");
   const [dueDate, setDueDate] = useState(task.dueDate ?? "");
+  const [estimatedHours, setEstimatedHours] = useState(task.estimatedHours);
   const [status, setStatus] = useState(task.status);
   const [sprintId, setSprintId] = useState(task.sprintId ?? "");
   const [originalSprintId] = useState(task.sprintId ?? "");
@@ -1174,8 +1191,14 @@ function TaskDetailModal({
     try {
       await onUpdate({
         title,
+        description,
+        priority,
+        taskType,
         assigneeName,
+        assigneeId: assigneeId || undefined,
+        startDate,
         dueDate,
+        estimatedHours,
         status,
         sprintId: sprintId || undefined,
         sprintChangeReason: sprintId !== originalSprintId ? sprintChangeReason : undefined,
@@ -1203,23 +1226,52 @@ function TaskDetailModal({
                   onChange={(e) => setTitle(e.target.value)}
                 />
               </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">{t("project.description")}</label>
+                <MentionTextarea
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows={3}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-1">{t("projects.assignee")}</label>
-                  <input
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={assigneeName}
-                    onChange={(e) => setAssigneeName(e.target.value)}
-                  />
+                  <label className="block text-sm font-medium text-foreground mb-1">Task Type</label>
+                  <select className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={taskType} onChange={(e) => setTaskType(e.target.value)}>
+                    {TASK_TYPES.map((type) => <option key={type} value={type}>{type.charAt(0).toUpperCase() + type.slice(1)}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">{t("projects.priority")}</label>
+                  <select className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={priority} onChange={(e) => setPriority(e.target.value)}>
+                    {TASK_PRIORITIES.map((value) => <option key={value}>{value}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">{t("projects.assignee")}</label>
+                <EmployeeSearchDropdown
+                  value={assigneeName}
+                  onChange={(name, id) => {
+                    setAssigneeName(name);
+                    setAssigneeId(id ?? "");
+                  }}
+                  placeholder="Search assignee…"
+                />
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">Start Date</label>
+                  <input type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-foreground mb-1">{t("projects.dueDate")}</label>
-                  <input
-                    type="date"
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    value={dueDate}
-                    onChange={(e) => setDueDate(e.target.value)}
-                  />
+                  <input type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">{t("projects.estimatedHours")}</label>
+                  <input type="number" min="0.5" max="8" step="0.5" className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={estimatedHours ?? ""} onChange={(e) => setEstimatedHours(e.target.value ? Number(e.target.value) : undefined)} />
                 </div>
               </div>
               <div>
@@ -1276,6 +1328,7 @@ function TaskDetailModal({
           ) : (
             <div className="space-y-3 text-sm text-muted-foreground">
               <div className="flex items-center gap-2">
+                {task.taskType && <Badge className="bg-indigo-100 text-indigo-700 capitalize">{task.taskType}</Badge>}
                 <Badge className={PRIORITY_COLORS[task.priority]}>{task.priority}</Badge>
                 <Badge className={STATUS_COLORS[task.status] ?? "bg-gray-100 text-gray-700"}>
                   {task.status}
@@ -1292,6 +1345,12 @@ function TaskDetailModal({
                 <div className="flex items-center gap-1 text-muted-foreground">
                   <Calendar className="w-4 h-4" />
                   <span>{t("project.dueOn").replace("{date}", task.dueDate)}</span>
+                </div>
+              )}
+              {task.startDate && (
+                <div className="flex items-center gap-1 text-muted-foreground">
+                  <Calendar className="w-4 h-4" />
+                  <span>Starts {task.startDate}</span>
                 </div>
               )}
               {(task.estimatedHours !== undefined || task.loggedHours !== undefined) && (
@@ -2199,7 +2258,7 @@ interface BacklogItem {
   id: string;
   itemId?: string; // BLI-XXXX human-readable ID
   projectId: string;
-  type: "story" | "task" | "epic" | "spike" | "bug";
+  type: "story" | "task" | "epic" | "spike" | "bug" | "research";
   title: string;
   description?: string;
   priority: "Low" | "Medium" | "High" | "Critical";
@@ -2249,6 +2308,7 @@ interface Defect {
   regressionFlag?: boolean;
   createdAt: string;
   age?: number;
+  screenshotFile?: File;
 }
 
 const PM_API = `${API_BASE}/projects`;
@@ -2708,7 +2768,8 @@ function MilestonesTab({ projectId, canManage }: { projectId: string; canManage:
 
 // ─── Risks Tab ────────────────────────────────────────────────────────────────
 
-const RISK_CATEGORIES = ["Technical", "Resource", "Schedule", "Scope", "Budget", "External", "Compliance"] as const;
+const RISK_CATEGORIES = ["technical", "resource", "schedule", "scope", "budget", "external", "compliance"] as const;
+const riskCategoryLabel = (category: string) => category.charAt(0).toUpperCase() + category.slice(1);
 const RISK_STATUSES = ["Identified", "Assessed", "Mitigated", "Accepted", "Closed", "Triggered"] as const;
 const RISK_LIKELIHOOD_VALUES: Record<string, number> = { High: 3, Medium: 2, Low: 1 };
 const RISK_IMPACT_VALUES: Record<string, number> = { Critical: 4, High: 3, Medium: 2, Low: 1 };
@@ -2749,7 +2810,7 @@ type RiskFormState = {
 
 const DEFAULT_RISK_FORM: RiskFormState = {
   title: "",
-  category: "Technical",
+  category: "technical",
   description: "",
   likelihood: "Medium",
   impact: "Medium",
@@ -2765,6 +2826,7 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
   const [loading, setLoading] = useState(true);
   const [showSlideOver, setShowSlideOver] = useState(false);
   const [editingRisk, setEditingRisk] = useState<ProjectRisk | null>(null);
+  const [selectedRisk, setSelectedRisk] = useState<ProjectRisk | null>(null);
   const [form, setForm] = useState<RiskFormState>(DEFAULT_RISK_FORM);
   const [saving, setSaving] = useState(false);
   const [matrixFilter, setMatrixFilter] = useState<{ likelihood: string; impact: string } | null>(null);
@@ -2799,7 +2861,7 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
     setEditingRisk(r);
     setForm({
       title: r.title,
-      category: r.category ?? "Technical",
+      category: r.category ?? "technical",
       description: r.description ?? "",
       likelihood: r.likelihood,
       impact: r.impact,
@@ -2829,7 +2891,6 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
         likelihood_value: lv,
         impact: form.impact,
         impact_value: iv,
-        risk_score: score,
         status: form.status,
         owner_name: form.owner_name,
         mitigation_plan: form.mitigation_plan,
@@ -2931,7 +2992,7 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
                 return (
                   <div key={cat}>
                     <div className="flex justify-between text-xs text-muted-foreground mb-0.5">
-                      <span>{cat}</span><span>{count} ({pct}%)</span>
+                      <span>{riskCategoryLabel(cat)}</span><span>{count} ({pct}%)</span>
                     </div>
                     <div className="h-2 bg-muted rounded-full overflow-hidden">
                       <div className="h-full bg-blue-500 rounded-full" style={{ width: `${pct}%` }} />
@@ -3054,10 +3115,12 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
               {filteredRisks.map((r, i) => (
                 <tr key={r.id} className="border-b last:border-0 hover:bg-muted/30">
                   <td className="px-4 py-2 text-muted-foreground">{i + 1}</td>
-                  <td className="px-4 py-2 font-medium text-foreground max-w-[200px] truncate">{r.title}</td>
+                  <td className="px-4 py-2 font-medium text-foreground max-w-[200px]">
+                    <button onClick={() => setSelectedRisk(r)} className="truncate max-w-[200px] hover:text-blue-600 hover:underline text-left">{r.title}</button>
+                  </td>
                   <td className="px-4 py-2">
                     {r.category && (
-                      <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-700">{r.category}</span>
+                      <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-700">{riskCategoryLabel(r.category)}</span>
                     )}
                   </td>
                   <td className="px-4 py-2">
@@ -3119,7 +3182,7 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
                   value={form.category}
                   onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
                 >
-                  {RISK_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {RISK_CATEGORIES.map((c) => <option key={c} value={c}>{riskCategoryLabel(c)}</option>)}
                 </select>
               </div>
               <div>
@@ -3221,6 +3284,32 @@ function RisksTab({ projectId, canManage }: { projectId: string; canManage: bool
             </form>
           </div>
         </div>
+      )}
+      {selectedRisk && (
+        <Modal title={selectedRisk.title} onClose={() => setSelectedRisk(null)}>
+          <div className="space-y-4 text-sm">
+            <div className="flex flex-wrap gap-2">
+              <Badge className={riskScoreBadge(selectedRisk.risk_score)}>Score {selectedRisk.risk_score}</Badge>
+              <Badge className={RISK_STATUS_BADGE[selectedRisk.status]}>{selectedRisk.status}</Badge>
+              {selectedRisk.category && <Badge className="bg-purple-100 text-purple-700">{riskCategoryLabel(selectedRisk.category)}</Badge>}
+            </div>
+            {selectedRisk.description && <p className="text-muted-foreground whitespace-pre-wrap">{selectedRisk.description}</p>}
+            <div className="grid grid-cols-2 gap-3">
+              <div><span className="text-muted-foreground">Likelihood</span><p className="font-medium">{selectedRisk.likelihood}</p></div>
+              <div><span className="text-muted-foreground">Impact</span><p className="font-medium">{selectedRisk.impact}</p></div>
+              <div><span className="text-muted-foreground">Owner</span><p className="font-medium">{selectedRisk.owner_name || "—"}</p></div>
+              <div><span className="text-muted-foreground">Due Date</span><p className="font-medium">{selectedRisk.due_date || "—"}</p></div>
+            </div>
+            {selectedRisk.mitigation_plan && <div><h4 className="font-medium">Mitigation Plan</h4><p className="text-muted-foreground whitespace-pre-wrap">{selectedRisk.mitigation_plan}</p></div>}
+            {selectedRisk.contingency_plan && <div><h4 className="font-medium">Contingency Plan</h4><p className="text-muted-foreground whitespace-pre-wrap">{selectedRisk.contingency_plan}</p></div>}
+            {selectedRisk.resolution_notes && <div><h4 className="font-medium">Resolution Notes</h4><p className="text-muted-foreground whitespace-pre-wrap">{selectedRisk.resolution_notes}</p></div>}
+            {canManage && (
+              <div className="flex justify-end">
+                <button onClick={() => { openEdit(selectedRisk); setSelectedRisk(null); }} className="px-3 py-1.5 border border-border rounded-lg hover:bg-muted">Edit Risk</button>
+              </div>
+            )}
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -4256,7 +4345,7 @@ function AddBacklogSlideOver({ sprintNames, dbSprints = [], memberNames, epics, 
   const [epicId, setEpicId] = useState<string | undefined>(initialItem?.epic_id);
   const [criteria, setCriteria] = useState<string[]>(initialItem?.acceptanceCriteria ?? []);
   const [ticketInput, setTicketInput] = useState("");
-  const [linkedTickets, setLinkedTickets] = useState<string[]>([]);
+  const [linkedTickets, setLinkedTickets] = useState<string[]>(initialItem?.linkedTicketIds ?? []);
   const { employees: rawEmpBL } = useEmployees();
   const allEmployees = useMemo(
     () => rawEmpBL.filter((e) => e.status !== 'Inactive').map((e) => (e.employee_name as string) ?? (e.fullName as string) ?? e.name ?? "").filter(Boolean),
@@ -4273,6 +4362,25 @@ function AddBacklogSlideOver({ sprintNames, dbSprints = [], memberNames, epics, 
       headers: { "Content-Type": "application/json", apikey: publicAnonKey, Authorization: `Bearer ${getApiAccessToken()}` },
     }).then(r => r.json()).then(j => setAllProjectItems(j.data ?? [])).catch(() => {});
   }, [projectId]);
+
+  useEffect(() => {
+    if (!initialItem?.id || allProjectItems.length === 0) return;
+    supabase
+      .from("project_backlog_dependencies")
+      .select("source_item_id, target_item_id, dependency_type")
+      .or(`source_item_id.eq.${initialItem.id},target_item_id.eq.${initialItem.id}`)
+      .then(({ data }) => {
+        setDependencies((data ?? []).map((dependency: any) => {
+          const isSource = dependency.source_item_id === initialItem.id;
+          const targetId = isSource ? dependency.target_item_id : dependency.source_item_id;
+          return {
+            targetId,
+            targetTitle: allProjectItems.find((item) => item.id === targetId)?.title ?? targetId,
+            type: isSource ? dependency.dependency_type : "Blocked By",
+          };
+        }));
+      });
+  }, [allProjectItems, initialItem?.id]);
 
   function addCriterion() { setCriteria((c) => [...c, ""]); }
   function setCriterion(i: number, v: string) { setCriteria((c) => c.map((x, j) => j === i ? v : x)); }
@@ -4350,6 +4458,7 @@ function AddBacklogSlideOver({ sprintNames, dbSprints = [], memberNames, epics, 
                   <option value="epic">Epic</option>
                   <option value="spike">Spike</option>
                   <option value="bug">Bug</option>
+                  <option value="research">Research</option>
                 </select>
               </div>
               <div>
@@ -4516,6 +4625,7 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
   const [showEpicsView, setShowEpicsView] = useState(false);
   const [epicFilter, setEpicFilter] = useState<string | null>(null);
   const [showEpicForm, setShowEpicForm] = useState(false);
+  const [editingEpic, setEditingEpic] = useState<ProjectEpic | null>(null);
   const [blockedItemIds, setBlockedItemIds] = useState<Set<string>>(new Set());
   const [editItem, setEditItem] = useState<BacklogItem | null>(null);
   const [dbSprints, setDbSprints] = useState<{ id: string; name: string }[]>([]);
@@ -4601,10 +4711,24 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
           assigneeName: item.assigneeName,
           acceptanceCriteria: item.acceptanceCriteria,
           linkedTickets: item.linkedTicketIds,
+          epicId: item.epic_id ?? null,
         }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) { toast.error(json.error ?? "Failed to update backlog item"); return; }
+      await supabase
+        .from("project_backlog_dependencies")
+        .delete()
+        .or(`source_item_id.eq.${item.id},target_item_id.eq.${item.id}`);
+      if ((item.dependencies ?? []).length > 0) {
+        const rows = (item.dependencies ?? []).map((dependency) => ({
+          source_item_id: dependency.type === "Blocked By" ? dependency.targetId : item.id,
+          target_item_id: dependency.type === "Blocked By" ? item.id : dependency.targetId,
+          dependency_type: dependency.type === "Blocked By" ? "Blocks" : dependency.type,
+        }));
+        const { error } = await supabase.from("project_backlog_dependencies").insert(rows);
+        if (error) throw error;
+      }
       await loadBacklog();
       toast.success("Backlog item updated");
       setEditItem(null);
@@ -4780,7 +4904,7 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
           </button>
         ))}
         {canManage && (
-          <button onClick={() => setShowEpicForm(true)}
+          <button onClick={() => { setEditingEpic(null); setShowEpicForm(true); }}
             className="px-2.5 py-1 rounded-full text-xs font-medium border border-dashed hover:bg-muted transition-all">
             + Add Epic
           </button>
@@ -4814,6 +4938,22 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
                   {(e.start_date || e.end_date) && (
                     <p className="text-xs text-muted-foreground">{e.start_date ?? '—'} → {e.end_date ?? '—'}</p>
                   )}
+                  {e.description && <p className="text-xs text-muted-foreground line-clamp-2">{e.description}</p>}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted-foreground">{e.owner_name || "No owner"}</span>
+                    {canManage && (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setEditingEpic(e);
+                          setShowEpicForm(true);
+                        }}
+                        className="text-xs text-indigo-600 hover:underline"
+                      >
+                        Edit
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -4886,9 +5026,11 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
                     </td>
                     <td className="px-3 py-2.5">
                       <div className="flex items-center gap-1">
-                        <button onClick={() => setEditItem(item)} className="text-muted-foreground hover:text-blue-500" title="Edit">
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
+                        {canManage && (
+                          <button onClick={() => setEditItem(item)} className="text-muted-foreground hover:text-blue-500" title="Edit">
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         {canManage && (
                           <button onClick={() => setConfirmDelete(item)} className="text-muted-foreground hover:text-red-500" title="Delete">
                             <Trash2 className="w-3.5 h-3.5" />
@@ -5011,10 +5153,14 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
       {showEpicForm && (
         <AddEpicSlideOver
           projectId={projectId}
-          onClose={() => setShowEpicForm(false)}
+          initial={editingEpic ?? undefined}
+          onClose={() => { setShowEpicForm(false); setEditingEpic(null); }}
           onSave={(epic) => {
-            setEpics(prev => [...prev, epic]);
+            setEpics((previous) => editingEpic
+              ? previous.map((item) => item.id === epic.id ? epic : item)
+              : [...previous, epic]);
             setShowEpicForm(false);
+            setEditingEpic(null);
           }}
         />
       )}
@@ -5082,6 +5228,7 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
   const [environment, setEnvironment] = useState("QA");
   const [version, setVersion] = useState("");
   const [assigneeName, setAssigneeName] = useState("");
+  const [assigneeId, setAssigneeId] = useState("");
   const { employees: rawEmpDF } = useEmployees();
   const allEmployees = useMemo(
     () => rawEmpDF.filter((e) => e.status !== 'Inactive').map((e) => (e.employee_name as string) ?? (e.fullName as string) ?? e.name ?? "").filter(Boolean),
@@ -5090,7 +5237,7 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
   const [sprint, setSprint] = useState("Backlog");
   const [ticketInput, setTicketInput] = useState("");
   const [linkedTickets, setLinkedTickets] = useState<string[]>([]);
-  const [screenshotName, setScreenshotName] = useState("");
+  const [screenshotFile, setScreenshotFile] = useState<File | null>(null);
 
   const sprintOptions = ["Backlog", ...sprintNames.filter((s) => s !== "Backlog")];
 
@@ -5114,6 +5261,7 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
       status,
       priority,
       assigneeName,
+      assigneeId: assigneeId || undefined,
       foundInVersion: version,
       sprint,
       environment,
@@ -5123,6 +5271,7 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
       actualBehavior: actual,
       createdAt: new Date().toISOString(),
       age: 0,
+      screenshotFile: screenshotFile ?? undefined,
     };
     onSave(defect);
   }
@@ -5213,7 +5362,10 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
               <label className="block text-sm font-medium text-foreground mb-1">Assignee</label>
               <EmployeeSearchDropdown
                 value={assigneeName}
-                onChange={(name) => setAssigneeName(name)}
+                onChange={(name, id) => {
+                  setAssigneeName(name);
+                  setAssigneeId(id ?? "");
+                }}
                 placeholder="Search assignee…"
               />
             </div>
@@ -5248,15 +5400,15 @@ function AddDefectSlideOver({ sprintNames, memberNames, onClose, onSave }: AddDe
           <div>
             <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Screenshot</h4>
             <label className="flex flex-col items-center justify-center w-full border-2 border-dashed border-border rounded-xl p-6 cursor-pointer hover:border-primary/50 transition-colors text-muted-foreground text-sm">
-              {screenshotName ? (
-                <span className="text-foreground font-medium">{screenshotName}</span>
+              {screenshotFile ? (
+                <span className="text-foreground font-medium">{screenshotFile.name}</span>
               ) : (
                 <>
                   <span>Drop screenshot here or browse</span>
                   <span className="text-xs mt-1 opacity-70">PNG, JPG up to 5 MB</span>
                 </>
               )}
-              <input type="file" accept="image/*" className="hidden" onChange={(e) => setScreenshotName(e.target.files?.[0]?.name ?? "")} />
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => setScreenshotFile(e.target.files?.[0] ?? null)} />
             </label>
           </div>
         </div>
@@ -5296,6 +5448,7 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
   const [filterSeverity, setFilterSeverity] = useState("All");
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterAssignee, setFilterAssignee] = useState("All");
+  const [selectedDefect, setSelectedDefect] = useState<Defect | null>(null);
   const navigate = useNavigate();
 
   const memberNames = members.map((m) => m.employeeName);
@@ -5443,7 +5596,7 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${SEVERITY_BADGE[d.severity]}`}>{SEVERITY_LABEL[d.severity]}</span>
                     </td>
                     <td className="px-3 py-2.5">
-                      <span className="font-medium text-foreground text-sm">{d.title}</span>
+                      <button onClick={() => setSelectedDefect(d)} className="font-medium text-foreground text-sm hover:text-blue-600 hover:underline text-left">{d.title}</button>
                     </td>
                     <td className="px-3 py-2.5">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${DEFECT_STATUS_BADGE[d.status] ?? "bg-muted text-muted-foreground"}`}>{d.status}</span>
@@ -5459,13 +5612,15 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
                       {(() => { const s = computeLocalSLA(d.severity, d.createdAt, d.status); return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${SLA_BADGE[s]}`}>{s}</span>; })()}
                     </td>
                     <td className="px-3 py-2.5">
-                      <button onClick={async () => {
-                        const dbId = (d as any)._dbId;
-                        if (dbId) await supabase.from('project_defects').delete().eq('id', dbId);
-                        setDefects((prev) => prev.filter((x) => x.id !== d.id));
-                      }} className="text-muted-foreground hover:text-red-500">
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {canManage && (
+                        <button onClick={async () => {
+                          const dbId = (d as any)._dbId;
+                          if (dbId) await supabase.from('project_defects').delete().eq('id', dbId);
+                          setDefects((prev) => prev.filter((x) => x.id !== d.id));
+                        }} className="text-muted-foreground hover:text-red-500">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -5523,14 +5678,15 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
               'production': 'production', 'staging': 'staging', 'uat': 'uat',
             };
             try {
-              const { error } = await supabase.from('project_defects').insert([{
+              const { data: created, error } = await supabase.from('project_defects').insert([{
                 project_id: projectId,
                 // defect_id assigned by DB trigger (DEF-#####)
                 title: defect.title,
                 severity: defect.severity,
-                status: 'Open',
+                status: defect.status,
                 priority: PRIORITY_TO_DB[defect.priority] ?? 'Medium',
                 environment: ENV_MAP[defect.environment ?? ''] ?? 'uat',
+                assignee_id: defect.assigneeId ?? '',
                 assignee_name: defect.assigneeName ?? '',
                 steps_to_reproduce: defect.stepsToReproduce ?? [],
                 expected_result: defect.expectedBehavior ?? '',
@@ -5539,10 +5695,23 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
                 found_in_version: defect.foundInVersion ?? '',
                 sprint_name: defect.sprint ?? '',
                 description: defect.description ?? '',
-              }]);
+              }]).select().single();
               if (error) {
                 toast.error(error.message);
               } else {
+                if (defect.screenshotFile && created?.id) {
+                  const uploadResult = await uploadEntityAttachments({
+                    entityType: "defect",
+                    entityId: created.id,
+                    files: [defect.screenshotFile],
+                    uploadedBy: userEmail || "unknown",
+                    uploadedByName: userEmail || "Unknown",
+                  });
+                  if (uploadResult.failed.length > 0) {
+                    await supabase.from("project_defects").delete().eq("id", created.id);
+                    throw new Error(uploadResult.failed[0].error);
+                  }
+                }
                 await loadDefects();
                 toast.success(t("projectMgmt.defectSaved"));
                 setShowAdd(false);
@@ -5552,6 +5721,34 @@ function DefectsTab({ projectId, members, sprintNames, userEmail, canManage }: {
             }
           }}
         />
+      )}
+
+      {selectedDefect && (
+        <Modal title={selectedDefect.title} onClose={() => setSelectedDefect(null)}>
+          <div className="space-y-4 text-sm">
+            <div className="flex flex-wrap gap-2">
+              <Badge className={SEVERITY_BADGE[selectedDefect.severity]}>{selectedDefect.severity}</Badge>
+              <Badge className={DEFECT_STATUS_BADGE[selectedDefect.status]}>{selectedDefect.status}</Badge>
+              <Badge className="bg-muted text-foreground">{selectedDefect.priority}</Badge>
+            </div>
+            {selectedDefect.description && <p className="text-muted-foreground whitespace-pre-wrap">{selectedDefect.description}</p>}
+            <div className="grid grid-cols-2 gap-3">
+              <div><span className="text-muted-foreground">Assignee</span><p className="font-medium">{selectedDefect.assigneeName || "—"}</p></div>
+              <div><span className="text-muted-foreground">Sprint</span><p className="font-medium">{selectedDefect.sprint || "Backlog"}</p></div>
+              <div><span className="text-muted-foreground">Environment</span><p className="font-medium">{selectedDefect.environment || "—"}</p></div>
+              <div><span className="text-muted-foreground">Found in version</span><p className="font-medium">{selectedDefect.foundInVersion || "—"}</p></div>
+            </div>
+            {(selectedDefect.stepsToReproduce ?? []).length > 0 && (
+              <div><h4 className="font-medium mb-1">Steps to Reproduce</h4><ol className="list-decimal pl-5 space-y-1 text-muted-foreground">{selectedDefect.stepsToReproduce?.map((step, index) => <li key={index}>{step}</li>)}</ol></div>
+            )}
+            {selectedDefect.expectedBehavior && <div><h4 className="font-medium">Expected Behavior</h4><p className="text-muted-foreground whitespace-pre-wrap">{selectedDefect.expectedBehavior}</p></div>}
+            {selectedDefect.actualBehavior && <div><h4 className="font-medium">Actual Behavior</h4><p className="text-muted-foreground whitespace-pre-wrap">{selectedDefect.actualBehavior}</p></div>}
+            <div><h4 className="font-medium mb-1">Linked Tickets</h4><LinkedTicketsBadge ids={selectedDefect.linkedTicketIds ?? []} /></div>
+            {selectedDefect._dbId && (
+              <AttachmentSection entityType="defect" entityId={selectedDefect._dbId} readOnly compact title="Screenshots" />
+            )}
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -5618,6 +5815,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
 
   // ── Defects state ──
   const [defects, setDefects] = useState<any[]>([]);
+  const [milestones, setMilestones] = useState<Milestone[]>([]);
 
   // Helper: fetch via edge function (bypasses RLS)
   const pmFetch = async (path: string) => {
@@ -5689,6 +5887,11 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
       .eq("project_id", projectId)
       .order("created_at", { ascending: false })
       .then(({ data: rows }) => { if (rows) setDefects(rows); });
+  }, [projectId, reportTab]);
+
+  useEffect(() => {
+    if (reportTab !== "milestones") return;
+    pmFetch(`/milestones?projectId=${projectId}`).then((data) => setMilestones(data ?? []));
   }, [projectId, reportTab]);
 
   // ── SVG chart helpers ──
@@ -5831,7 +6034,9 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
   const burnRate = totalSpent / daysElapsed;
   const projected = burnRate * totalDays;
 
-  const budgetMaxVal = Math.max(1, ...budgetItems.map((b: any) => Math.max(b.budgeted ?? 0, b.actual ?? 0)));
+  const budgetedAmount = (item: any) => Number(item.budgeted_amount ?? item.budgeted ?? 0);
+  const actualAmount = (item: any) => Number(item.actual_amount ?? item.actual ?? 0);
+  const budgetMaxVal = Math.max(1, ...budgetItems.map((item: any) => Math.max(budgetedAmount(item), actualAmount(item))));
 
   // ── Defect calculations ──
   const openDefects = defects.filter((d: any) => !["Closed", "Resolved", "Verified"].includes(d.status));
@@ -5893,7 +6098,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
     sections.push("BUDGET ITEMS");
     sections.push(`"Category","Budgeted","Actual","Variance"`);
     for (const b of (budgetItems as any[])) {
-      sections.push(`"${b.category}","${b.budgeted}","${b.actual}","${(b.budgeted - b.actual).toFixed(2)}"`);
+      sections.push(`"${b.category}","${budgetedAmount(b)}","${actualAmount(b)}","${(budgetedAmount(b) - actualAmount(b)).toFixed(2)}"`);
     }
     sections.push("");
     sections.push("DEFECTS");
@@ -6104,7 +6309,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
                       <tr key={sp.id} className="border-b last:border-0 hover:bg-muted/30">
                         <td className="px-4 py-2 font-medium">{sp.name ?? `Sprint ${sp.sprint_number}`}</td>
                         <td className="px-4 py-2">{sp.committed_points ?? 0}</td>
-                        <td className="px-4 py-2">{sp.completed_points ?? 0}</td>
+                        <td className="px-4 py-2">{sp.velocity ?? sp.completed_points ?? 0}</td>
                         <td className="px-4 py-2">{sp.completed_points ?? 0}</td>
                         <td className="px-4 py-2">
                           <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${pct >= 80 ? "bg-green-100 text-green-700" : pct >= 50 ? "bg-yellow-100 text-yellow-700" : "bg-red-100 text-red-700"}`}>
@@ -6273,13 +6478,15 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
                     </thead>
                     <tbody>
                       {budgetItems.map((b: any) => {
-                        const variance = (b.budgeted ?? 0) - (b.actual ?? 0);
-                        const pctUsed = b.budgeted > 0 ? Math.round((b.actual ?? 0) / b.budgeted * 100) : 0;
+                        const budgeted = budgetedAmount(b);
+                        const actual = actualAmount(b);
+                        const variance = budgeted - actual;
+                        const pctUsed = budgeted > 0 ? Math.round(actual / budgeted * 100) : 0;
                         return (
                           <tr key={b.id} className="border-b last:border-0 hover:bg-muted/30">
                             <td className="px-4 py-2 font-medium">{b.category ?? b.name}</td>
-                            <td className="px-4 py-2">${(b.budgeted ?? 0).toLocaleString()}</td>
-                            <td className="px-4 py-2">${(b.actual ?? 0).toLocaleString()}</td>
+                            <td className="px-4 py-2">${budgeted.toLocaleString()}</td>
+                            <td className="px-4 py-2">${actual.toLocaleString()}</td>
                             <td className={`px-4 py-2 font-medium ${variance >= 0 ? "text-green-600" : "text-red-600"}`}>
                               {variance >= 0 ? "+" : ""}${variance.toLocaleString()}
                             </td>
@@ -6313,8 +6520,8 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
                     const slotW = CW / budgetItems.length;
                     const bw = Math.min(16, slotW / 3);
                     const cx = PL + i * slotW + slotW / 2;
-                    const budgH = budgetMaxVal > 0 ? ((b.budgeted ?? 0) / budgetMaxVal) * CH : 0;
-                    const actH = budgetMaxVal > 0 ? ((b.actual ?? 0) / budgetMaxVal) * CH : 0;
+                    const budgH = budgetMaxVal > 0 ? (budgetedAmount(b) / budgetMaxVal) * CH : 0;
+                    const actH = budgetMaxVal > 0 ? (actualAmount(b) / budgetMaxVal) * CH : 0;
                     return (
                       <g key={b.id}>
                         <rect x={cx - bw - 2} y={PT + CH - budgH} width={bw} height={budgH} fill="#9ca3af" rx="2" />
@@ -6413,11 +6620,10 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
 
       {/* ── MILESTONE COMPLETION RATE ── */}
       {reportTab === "milestones" && (() => {
-        const ms = (project as any).milestones || [];
-        // Fetch milestones from project object or show empty state
+        const ms = milestones;
         const total = ms.length;
-        const completed = ms.filter((m: any) => m.status === 'Completed' || m.actual_date).length;
-        const overdue = ms.filter((m: any) => !m.actual_date && m.planned_date && new Date(m.planned_date) < new Date()).length;
+        const completed = ms.filter((m) => m.status === "Achieved" || m.completion_date).length;
+        const overdue = ms.filter((m) => !m.completion_date && m.due_date && new Date(m.due_date) < new Date()).length;
         const onTrack = total - completed - overdue;
         const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
 
@@ -6487,13 +6693,13 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
                   </thead>
                   <tbody className="divide-y divide-border">
                     {ms.map((m: any) => {
-                      const isComplete = m.status === 'Completed' || !!m.actual_date;
-                      const isLate = !isComplete && m.planned_date && new Date(m.planned_date) < new Date();
+                      const isComplete = m.status === "Achieved" || !!m.completion_date;
+                      const isLate = !isComplete && m.due_date && new Date(m.due_date) < new Date();
                       return (
                         <tr key={m.id} className="hover:bg-muted/30">
                           <td className="px-4 py-2 font-medium">{m.name || m.title}</td>
-                          <td className="px-4 py-2 text-muted-foreground">{m.planned_date || '—'}</td>
-                          <td className="px-4 py-2 text-muted-foreground">{m.actual_date || '—'}</td>
+                          <td className="px-4 py-2 text-muted-foreground">{m.due_date || '—'}</td>
+                          <td className="px-4 py-2 text-muted-foreground">{m.completion_date || '—'}</td>
                           <td className="px-4 py-2">
                             <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${isComplete ? 'bg-green-100 text-green-700' : isLate ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
                               {isComplete ? 'Completed' : isLate ? 'Overdue' : 'On Track'}
@@ -6757,6 +6963,18 @@ function ProjectDetailPanel({
                   <div>
                     <span className="text-muted-foreground">{t("project.manager")}</span>
                     <p className="font-medium">{project.managerName}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">{t("project.methodology") || "Methodology"}</span>
+                    <p className="font-medium">{project.methodology || "—"}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Sprint Length</span>
+                    <p className="font-medium">{project.sprintLength ? `${project.sprintLength} days` : "—"}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Story Point Scale</span>
+                    <p className="font-medium">{project.storyPointScale || "—"}</p>
                   </div>
                   <div>
                     <span className="text-muted-foreground">{t("projects.ragStatus")}</span>
@@ -7436,23 +7654,6 @@ function DashboardView({
     Blocked: "bg-red-500",
   };
 
-  // Burndown chart (mock seed data, 14-day sprint)
-  const SPRINT_DAYS = 14;
-  const TOTAL_PTS = 55;
-  const actualPts = [55, 55, 50, 48, 45, 40, 38, 35, 30, 28, 22, 18, 12, 8, 5];
-  const vbW = 300;
-  const vbH = 180;
-  const vbPL = 28;
-  const vbPR = 8;
-  const vbPT = 8;
-  const vbPB = 28;
-  const vbCW = vbW - vbPL - vbPR;
-  const vbCH = vbH - vbPT - vbPB;
-  function bX(day: number) { return vbPL + (day / SPRINT_DAYS) * vbCW; }
-  function bY(pts: number) { return vbPT + (1 - pts / TOTAL_PTS) * vbCH; }
-  const idealPoly = `${bX(0)},${bY(TOTAL_PTS)} ${bX(SPRINT_DAYS)},${bY(0)}`;
-  const actualPoly = actualPts.map((p, i) => `${bX(i)},${bY(p)}`).join(" ");
-
   const TASK_PRIORITY_DOT: Record<string, string> = {
     Critical: "bg-red-500",
     High: "bg-orange-400",
@@ -7673,44 +7874,38 @@ function DashboardView({
           )}
         </div>
 
-        {/* Sprint Burndown */}
+        {/* Portfolio task progress */}
         <div className="min-h-72 rounded-2xl border border-border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-3">
               <div className="flex size-9 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
                 <GanttChartSquare className="size-4" />
               </div>
-              <h3 className="font-semibold text-foreground">{t("projectMgmt.sprintBurndown")}</h3>
+              <h3 className="font-semibold text-foreground">Portfolio Task Progress</h3>
             </div>
-            <span className="text-xs text-muted-foreground">Sprint 12</span>
+            <span className="text-xs text-muted-foreground">Live project data</span>
           </div>
-          <svg viewBox={`0 0 ${vbW} ${vbH}`} className="w-full" style={{ height: 180 }}>
-            {/* Axes */}
-            <line x1={vbPL} y1={vbPT} x2={vbPL} y2={vbPT + vbCH} stroke="currentColor" strokeOpacity="0.2" strokeWidth="1" />
-            <line x1={vbPL} y1={vbPT + vbCH} x2={vbPL + vbCW} y2={vbPT + vbCH} stroke="currentColor" strokeOpacity="0.2" strokeWidth="1" />
-            {/* Y-axis labels */}
-            {[0, 25, 50].map((pts) => (
-              <text key={pts} x={vbPL - 3} y={bY(pts) + 3} textAnchor="end" fontSize="7" fill="currentColor" opacity="0.5">{pts}</text>
-            ))}
-            {/* X-axis labels */}
-            {[0, 7, 14].map((d) => (
-              <text key={d} x={bX(d)} y={vbPT + vbCH + 11} textAnchor="middle" fontSize="7" fill="currentColor" opacity="0.5">D{d}</text>
-            ))}
-            {/* Ideal line (dashed) */}
-            <polyline points={idealPoly} fill="none" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="4,3" />
-            {/* Actual line */}
-            <polyline points={actualPoly} fill="none" stroke="#3b82f6" strokeWidth="2" />
-          </svg>
-          <div className="flex items-center gap-4 mt-1">
-            <div className="flex items-center gap-1.5">
-              <svg width="16" height="6"><line x1="0" y1="3" x2="16" y2="3" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="4,2" /></svg>
-              <span className="text-xs text-muted-foreground">Ideal</span>
+          {allTasks.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center py-16">No task data available</p>
+          ) : (
+            <div className="space-y-4 pt-3">
+              {["Todo", "In Progress", "In Review", "Done", "Blocked"].map((status) => {
+                const count = allTasks.filter((task) => task.status === status).length;
+                const percent = Math.round((count / allTasks.length) * 100);
+                return (
+                  <div key={status}>
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-muted-foreground">{status === "Todo" ? "To Do" : status}</span>
+                      <span className="font-medium">{count} ({percent}%)</span>
+                    </div>
+                    <div className="h-2 bg-muted rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full ${WORKLOAD_COLORS[status] ?? "bg-slate-400"}`} style={{ width: `${percent}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-            <div className="flex items-center gap-1.5">
-              <svg width="16" height="6"><line x1="0" y1="3" x2="16" y2="3" stroke="#3b82f6" strokeWidth="2" /></svg>
-              <span className="text-xs text-muted-foreground">Actual</span>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -8250,6 +8445,8 @@ export function ProjectManagementJira({
   onLogout: () => void;
 }) {
   const { currentUser } = useUser();
+  const navigate = useNavigate();
+  const location = useLocation();
   const {
     projects,
     stats,
@@ -8285,7 +8482,6 @@ export function ProjectManagementJira({
   const secViewAllProjects = useSectionPermission("projects", "view_all_projects");
 
   const [mainView, setMainView] = useState<"dashboard" | "projects" | "mytasks">("dashboard");
-  const [projectOpenedFromDashboard, setProjectOpenedFromDashboard] = useState(false);
   const [view, setView] = useState<View>("list");
   const [projectsViewMode, setProjectsViewMode] = useState<'grid' | 'table'>('grid');
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
@@ -8303,6 +8499,23 @@ export function ProjectManagementJira({
   const canAdminDelete = secDeleteProject;
   const userId = currentUser?.id ?? "";
   const userEmail = currentUser?.email ?? "";
+  const routeProjectId = (location.state as { projectManagementProjectId?: string } | null)
+    ?.projectManagementProjectId ?? null;
+  const previousRouteProjectId = useRef<string | null>(null);
+
+  function openProject(project: Project) {
+    setSelectedProject(project);
+    setMainView("projects");
+    navigate("/projects", {
+      state: { projectManagementProjectId: project.id },
+    });
+  }
+
+  function returnToProjectHome() {
+    setSelectedProject(null);
+    setMainView("dashboard");
+    navigate("/projects", { replace: true, state: null });
+  }
 
   // SideNav badge computations
   const today = new Date().toISOString().split("T")[0];
@@ -8351,6 +8564,22 @@ export function ProjectManagementJira({
     }
   }, [projects]);
 
+  // Opening a project creates a same-route history entry. The global header's
+  // Back action can then return to /projects instead of leaving the app.
+  useEffect(() => {
+    if (routeProjectId) {
+      const project = projects.find((item) => item.id === routeProjectId);
+      if (project) {
+        setSelectedProject(project);
+        setMainView("projects");
+      }
+    } else if (previousRouteProjectId.current) {
+      setSelectedProject(null);
+      setMainView("dashboard");
+    }
+    previousRouteProjectId.current = routeProjectId;
+  }, [projects, routeProjectId]);
+
   async function handleCreateProject(data: Partial<Project>) {
     try {
       await createProject(data);
@@ -8383,8 +8612,7 @@ export function ProjectManagementJira({
     try {
       await deleteProject(deleteConfirmProject.id);
       if (selectedProject?.id === deleteConfirmProject.id) {
-        setSelectedProject(null);
-        setProjectOpenedFromDashboard(false);
+        returnToProjectHome();
       }
       toast.success(t("project.projectDeleted"));
     } catch {
@@ -8492,7 +8720,7 @@ export function ProjectManagementJira({
           <DashboardView
             projects={projects}
             currentUser={currentUser}
-            onSelectProject={(p) => { setSelectedProject(p); setMainView("projects"); setProjectOpenedFromDashboard(true); }}
+            onSelectProject={openProject}
             onMyTasks={() => setMainView("mytasks")}
           />
         )}
@@ -8548,7 +8776,7 @@ export function ProjectManagementJira({
               <ProjectCard
                 key={p.id}
                 project={p}
-                onSelect={() => setSelectedProject(p)}
+                onSelect={() => openProject(p)}
                 canEdit={canEditProject}
                 canDelete={canAdminDelete}
                 onEdit={() => setEditingProject(p)}
@@ -8580,7 +8808,7 @@ export function ProjectManagementJira({
                   const hl = healthLabel(h);
                   const budgetPct = p.budget && p.spent ? Math.round((p.spent / p.budget) * 100) : null;
                   return (
-                    <tr key={p.id} className="border-b hover:bg-muted/30 cursor-pointer" onClick={() => setSelectedProject(p)}>
+                    <tr key={p.id} className="border-b hover:bg-muted/30 cursor-pointer" onClick={() => openProject(p)}>
                       <td className="py-2 px-3 font-medium">{p.name}</td>
                       <td className="py-2 px-3 text-muted-foreground capitalize">{(p.category ?? '').replace(/_/g, ' ')}</td>
                       <td className="py-2 px-3"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[p.status] ?? 'bg-muted text-muted-foreground'}`}>{p.status}</span></td>
@@ -8591,7 +8819,7 @@ export function ProjectManagementJira({
                       <td className="py-2 px-3 text-muted-foreground">{budgetPct !== null ? `${budgetPct}%` : '—'}</td>
                       <td className="py-2 px-3">
                         <div className="flex items-center justify-end gap-1">
-                          <Button type="button" size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); setSelectedProject(p); }}>
+                          <Button type="button" size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); openProject(p); }}>
                             {t("common.view")}
                           </Button>
                           {canEditProject && (
@@ -8691,7 +8919,7 @@ export function ProjectManagementJira({
                         >
                           <td className="px-4 py-3">
                             <button
-                              onClick={() => setSelectedProject(project)}
+                              onClick={() => openProject(project)}
                               className="font-medium text-blue-700 hover:underline text-left"
                             >
                               {project.name}
@@ -8735,7 +8963,7 @@ export function ProjectManagementJira({
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity">
                               <button
-                                onClick={() => setSelectedProject(project)}
+                                onClick={() => openProject(project)}
                                 className="p-1 text-blue-500 hover:text-blue-700"
                                 title={t("common.view")}
                               >
@@ -8836,7 +9064,7 @@ export function ProjectManagementJira({
                         {cols.map((p) => (
                           <div
                             key={p.id}
-                            onClick={() => setSelectedProject(p)}
+                            onClick={() => openProject(p)}
                             className="bg-card rounded-lg p-3 shadow-sm border border-border cursor-pointer hover:shadow-md transition-shadow"
                           >
                             <p className="text-sm font-semibold text-foreground mb-2 line-clamp-2">
@@ -8874,7 +9102,7 @@ export function ProjectManagementJira({
 
             {/* My Tasks View */}
             {view === "timeline" && (
-              <GanttTimelineView projects={projects} onSelectProject={(p) => setSelectedProject(p)} />
+              <GanttTimelineView projects={projects} onSelectProject={openProject} />
             )}
 
             {view === "mytasks" && (
@@ -8976,8 +9204,8 @@ export function ProjectManagementJira({
           secManageSprints={secManageSprints}
           secTimeLogs={secTimeLogs}
           secManageMilestones={secManageMilestones}
-          onBack={() => { setSelectedProject(null); setProjectOpenedFromDashboard(false); }}
-          onGoToDashboard={projectOpenedFromDashboard ? () => { setSelectedProject(null); setMainView("dashboard"); setProjectOpenedFromDashboard(false); } : undefined}
+          onBack={returnToProjectHome}
+          onGoToDashboard={returnToProjectHome}
           onEditProject={() => setEditingProject(projects.find(p => p.id === selectedProject.id) ?? selectedProject)}
           onDeleteProject={() => void handleDeleteProject(selectedProject.id, selectedProject.name)}
           onUpdateRAG={(ragStatus) => updateRAG(selectedProject.id, ragStatus)}
