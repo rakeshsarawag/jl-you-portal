@@ -3437,6 +3437,58 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
     });
   }, [candidates, stageFilter, search, filterExpertise]);
 
+  const exportCandidatesToExcel = async () => {
+    if (filteredCandidates.length === 0) {
+      toast.error("There are no candidates to export.");
+      return;
+    }
+
+    try {
+      const XLSX = await import("xlsx");
+      const rows = filteredCandidates.map((candidate) => ({
+        Name: candidate.name,
+        Email: candidate.email,
+        Mobile: candidate.phone,
+        Position: candidate.position,
+        Department: candidate.department,
+        Stage: candidate.stage,
+        Source: candidate.source,
+        Experience: formatCandidateExperience(candidate.experience),
+        "Current Employer": candidate.currentCompany ?? "",
+        "Previous Employer": candidate.previousCompany ?? "",
+        Skills: (candidate.skills ?? []).join(", "),
+        Expertise: candidate.expertise ?? "",
+        Nationality: candidate.nationality ?? "",
+        "Hiring Manager": candidate.hiringManager ?? "",
+        "Applied Date": candidate.appliedDate ?? "",
+        "Notice Period": candidate.noticePeriod ?? "",
+        ...(canViewSalary
+          ? {
+              "Current Salary": candidate.currentSalary ?? "",
+              "Expected Salary": candidate.expectedSalary ?? "",
+            }
+          : {}),
+      }));
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      const headers = Object.keys(rows[0]);
+      worksheet["!cols"] = headers.map((header) => ({
+        wch: Math.min(
+          42,
+          Math.max(
+            header.length + 2,
+            ...rows.map((row) => String((row as Record<string, unknown>)[header] ?? "").length + 2),
+          ),
+        ),
+      }));
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Candidates");
+      XLSX.writeFile(workbook, `recruitment-candidates-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      toast.success(`${filteredCandidates.length} candidate${filteredCandidates.length === 1 ? "" : "s"} exported`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not export candidates");
+    }
+  };
+
   const visiblePipelineStages = stageFilter === "All"
     ? RECRUITMENT_STAGES
     : RECRUITMENT_STAGES.filter((stage) => stage === stageFilter);
@@ -3505,6 +3557,17 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
             </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {canViewCandidates && (
+              <button
+                type="button"
+                onClick={exportCandidatesToExcel}
+                disabled={filteredCandidates.length === 0}
+                className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                title="Export the currently visible candidate list to Excel"
+              >
+                <Download size={14} /><span className="hidden sm:inline">Export Excel</span>
+              </button>
+            )}
             {canCreateCandidate && (
               <>
                 <button onClick={() => setShowBulkUpload(true)}
