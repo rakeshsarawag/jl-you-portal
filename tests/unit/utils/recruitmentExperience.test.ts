@@ -52,6 +52,12 @@ describe("formatCompactCandidateExperience", () => {
     expect(formatCompactCandidateExperience(9.17)).toBe("9.2 years");
   });
 
+  it("omits the decimal for complete years", () => {
+    expect(formatCompactCandidateExperience(5)).toBe("5 years");
+    expect(formatCompactCandidateExperience(6)).toBe("6 years");
+    expect(formatCompactCandidateExperience(1)).toBe("1 year");
+  });
+
   it("labels zero experience as Fresher", () => {
     expect(formatCompactCandidateExperience(0)).toBe("Fresher");
   });

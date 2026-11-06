@@ -50,5 +50,8 @@ export function formatCandidateExperience(value: number | null | undefined): str
 export function formatCompactCandidateExperience(value: number | null | undefined): string {
   const numeric = Number(value ?? 0);
   if (!Number.isFinite(numeric) || numeric <= 0) return "Fresher";
+  if (Number.isInteger(numeric)) {
+    return `${numeric} ${numeric === 1 ? "year" : "years"}`;
+  }
   return `${numeric.toFixed(1)} years`;
 }

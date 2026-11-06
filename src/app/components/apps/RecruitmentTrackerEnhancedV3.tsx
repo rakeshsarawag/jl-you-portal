@@ -411,6 +411,54 @@ function StageBadge({ stage }: { stage: string }) {
   );
 }
 
+function CompactValueChips({
+  value,
+  candidateName,
+  label,
+  onOpen,
+}: {
+  value?: string | string[];
+  candidateName: string;
+  label: string;
+  onOpen: () => void;
+}) {
+  const values = [...new Set(
+    (Array.isArray(value) ? value : [value ?? ""])
+      .flatMap((item) => item.split(","))
+      .map((item) => item.trim())
+      .filter(Boolean),
+  )];
+  const tooltip = values.join(", ");
+
+  if (values.length === 0) {
+    return <span className="text-xs text-muted-foreground">—</span>;
+  }
+
+  return (
+    <button
+      type="button"
+      title={tooltip}
+      aria-label={`View ${candidateName}'s ${label}: ${tooltip}`}
+      onClick={(event) => {
+        event.stopPropagation();
+        onOpen();
+      }}
+      className="flex w-full max-w-full items-center gap-1 overflow-hidden text-left"
+    >
+      {values.slice(0, 2).map((item) => (
+        <span key={item} className="min-w-0 flex-1 truncate rounded bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-700">
+          {item}
+        </span>
+      ))}
+      {values.length > 2 && (
+        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+          +{values.length - 2}
+        </span>
+      )}
+    </button>
+  );
+}
+
 function ConfirmDialog({ message, onConfirm, onCancel }: { message: string; onConfirm: () => void; onCancel: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
@@ -3293,18 +3341,18 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
             )}
 
             {pipelineView === "list" && <div className="bg-card rounded-xl border border-border overflow-x-auto">
-              <table className="responsive-data-table w-full min-w-[1260px] text-sm">
+              <table className="responsive-data-table table-fixed w-full min-w-[1536px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">
-                    <th className="w-64 px-4 py-3 text-left font-medium">{t("candidate")}</th>
+                    <th className="w-60 px-4 py-3 text-left font-medium">{t("candidate")}</th>
                     <th className="w-40 px-4 py-3 text-left font-medium">{t("stage")}</th>
-                    <th className="w-32 px-4 py-3 text-left font-medium">{t("source")}</th>
+                    <th className="w-28 px-4 py-3 text-left font-medium">{t("source")}</th>
                     <th className="w-28 px-4 py-3 text-left font-medium">{t("experience")}</th>
-                    <th className="w-40 px-4 py-3 text-left font-medium">{t("currentCompany")}</th>
-                    <th className="w-40 px-4 py-3 text-left font-medium">{t("previousCompany")}</th>
-                    <th className="w-48 px-4 py-3 text-left font-medium">Skills</th>
+                    <th className="w-48 px-4 py-3 text-left font-medium">Current Employer</th>
+                    <th className="w-64 px-4 py-3 text-left font-medium">Previous Employer</th>
+                    <th className="w-64 px-4 py-3 text-left font-medium">Skills</th>
                     <th className="w-36 px-4 py-3 text-left font-medium">Expertise</th>
-                    <th className="w-14 px-3 py-3 text-center font-medium">{t("common.actions")}</th>
+                    <th className="w-16 px-3 py-3 text-center font-medium">{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3314,13 +3362,6 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                   {filteredCandidates.map((c) => {
                     const needsFb = INTERVIEW_STAGES.includes(c.stage) && (c.feedback ?? []).length === 0;
                     const isBlacklisted = (c as any).blacklisted;
-                    const skillItems = [...new Set(
-                      (c.skills ?? [])
-                        .flatMap((skill) => skill.split(","))
-                        .map((skill) => skill.trim())
-                        .filter(Boolean),
-                    )];
-                    const skillTooltip = skillItems.join(", ");
                     return (
                       <tr key={c.id} onClick={() => setSelectedCandidateId(c.id)}
                         className={`group border-b border-gray-50 hover:bg-muted transition-colors cursor-pointer ${isBlacklisted ? "opacity-60" : ""}`}>
@@ -3348,37 +3389,28 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                         <td className="px-4 py-3 text-muted-foreground">{c.source}</td>
                         <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatCompactCandidateExperience(c.experience)}</td>
                         <td className="px-4 py-3 text-muted-foreground">
-                          <p className="max-w-36 truncate" title={c.currentCompany || undefined}>{c.currentCompany || "—"}</p>
+                          <CompactValueChips
+                            value={c.currentCompany}
+                            candidateName={c.name}
+                            label="current employers"
+                            onOpen={() => setSelectedCandidateId(c.id)}
+                          />
                         </td>
                         <td className="px-4 py-3 text-muted-foreground">
-                          <p className="max-w-36 truncate" title={c.previousCompany || undefined}>{c.previousCompany || "—"}</p>
+                          <CompactValueChips
+                            value={c.previousCompany}
+                            candidateName={c.name}
+                            label="previous employers"
+                            onOpen={() => setSelectedCandidateId(c.id)}
+                          />
                         </td>
                         <td className="px-4 py-3 text-muted-foreground">
-                          {skillItems.length > 0 ? (
-                            <button
-                              type="button"
-                              title={skillTooltip}
-                              aria-label={`View ${c.name}'s skills: ${skillTooltip}`}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                setSelectedCandidateId(c.id);
-                              }}
-                              className="flex max-w-44 items-center gap-1 overflow-hidden text-left"
-                            >
-                              {skillItems.slice(0, 2).map((skill) => (
-                                <span key={skill} className="max-w-20 shrink truncate rounded bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-700">
-                                  {skill}
-                                </span>
-                              ))}
-                              {skillItems.length > 2 && (
-                                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
-                                  +{skillItems.length - 2}
-                                </span>
-                              )}
-                            </button>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
+                          <CompactValueChips
+                            value={c.skills}
+                            candidateName={c.name}
+                            label="skills"
+                            onOpen={() => setSelectedCandidateId(c.id)}
+                          />
                         </td>
                         <td className="px-4 py-3">
                           {c.expertise ? (
