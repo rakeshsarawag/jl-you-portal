@@ -1904,52 +1904,54 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
   const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="adaptive-app-root min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       {/* Header */}
       <div className="bg-card border-b border-border sticky top-0 z-30">
-        <div className="w-full px-4 sm:px-6">
-          <div className="flex items-center justify-between h-14">
-            <div>
+        <div className="w-full px-3 sm:px-6">
+          <div className="flex min-h-14 flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:py-0">
+            <div className="min-w-0">
               <h1 className="font-semibold text-foreground text-sm">{t('dashboard.title')}</h1>
-              <p className="text-xs text-muted-foreground">{today}</p>
+              <p className="truncate text-xs text-muted-foreground">{today}</p>
             </div>
-            <div className="flex items-center gap-3">
-              {!dash.loading && !dash.isCheckedIn && (
-                <div className="flex items-center bg-gray-100 rounded-lg p-0.5 text-xs">
-                  <button
-                    onClick={() => setWorkMode('wfh')}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md transition-colors ${workMode === 'wfh' ? 'bg-white shadow-sm font-medium text-blue-700' : 'text-muted-foreground'}`}
-                  >
-                    🏠 WFH
-                  </button>
-                  <button
-                    onClick={() => setWorkMode('office')}
-                    className={`flex items-center gap-1 px-2 py-1 rounded-md transition-colors ${workMode === 'office' ? 'bg-white shadow-sm font-medium text-gray-700' : 'text-muted-foreground'}`}
-                  >
-                    🏢 Office
-                  </button>
-                </div>
-              )}
-              {!dash.loading && (
-                dash.isCheckedIn ? (
-                  <button
-                    onClick={dash.checkOut}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-lg text-xs font-medium transition-colors"
-                    aria-label={t('dashboard.checkOut')}
-                  >
-                    <LogOut size={13} /> Check Out
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => dash.checkIn(workMode)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded-lg text-xs font-medium transition-colors"
-                    aria-label={t('dashboard.checkIn')}
-                  >
-                    <LogIn size={13} /> Check In
-                  </button>
-                )
-              )}
-              <div className="flex items-center gap-2 text-sm">
+            <div className="flex w-full min-w-0 items-center justify-between gap-2 sm:w-auto sm:justify-end sm:gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                {!dash.loading && !dash.isCheckedIn && (
+                  <div className="flex shrink-0 items-center rounded-lg bg-gray-100 p-0.5 text-xs">
+                    <button
+                      onClick={() => setWorkMode('wfh')}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-md transition-colors ${workMode === 'wfh' ? 'bg-white shadow-sm font-medium text-blue-700' : 'text-muted-foreground'}`}
+                    >
+                      <Home size={12} /> WFH
+                    </button>
+                    <button
+                      onClick={() => setWorkMode('office')}
+                      className={`flex items-center gap-1 px-2 py-1 rounded-md transition-colors ${workMode === 'office' ? 'bg-white shadow-sm font-medium text-gray-700' : 'text-muted-foreground'}`}
+                    >
+                      <Building2 size={12} /> Office
+                    </button>
+                  </div>
+                )}
+                {!dash.loading && (
+                  dash.isCheckedIn ? (
+                    <button
+                      onClick={dash.checkOut}
+                      className="flex shrink-0 items-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-red-600"
+                      aria-label={t('dashboard.checkOut')}
+                    >
+                      <LogOut size={13} /> Check Out
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => dash.checkIn(workMode)}
+                      className="flex shrink-0 items-center gap-1.5 rounded-lg bg-green-500 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-green-600"
+                      aria-label={t('dashboard.checkIn')}
+                    >
+                      <LogIn size={13} /> Check In
+                    </button>
+                  )
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2 text-sm">
                 <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
                   <User size={14} className="text-primary" />
                 </div>
@@ -1959,12 +1961,14 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
           </div>
 
           {/* Tabs */}
-          <div className="flex gap-1 pb-0 overflow-x-auto scrollbar-hide">
+          <div role="tablist" aria-label="Employee dashboard sections" className="adaptive-tab-rail -mx-3 flex gap-1 overflow-x-auto px-3 pb-0 scrollbar-hide sm:mx-0 sm:px-0">
             {TABS.map(tab_ => (
               <button
                 key={tab_.id}
+                role="tab"
+                aria-selected={tab === tab_.id}
                 onClick={() => setTab(tab_.id)}
-                className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${
+                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-3 py-2.5 text-xs font-medium transition-colors ${
                   tab === tab_.id
                     ? 'border-primary text-primary'
                     : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -1978,7 +1982,7 @@ export function EmployeeDashboard({ accessToken, onLogout }: Props) {
         </div>
       </div>
 
-      <div className="w-full px-4 sm:px-6 py-6">
+      <div className="w-full min-w-0 px-3 py-4 sm:px-6 sm:py-6">
 
         {/* Employee record not linked warning */}
         {!currentUser?.employeeId && !currentUser?.notProvisioned && (

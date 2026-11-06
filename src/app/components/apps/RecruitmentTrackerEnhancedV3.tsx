@@ -5,6 +5,7 @@ import {
   ChevronRight, X, Eye, ArrowRight, FileText, Upload, Tag, Globe,
   Building2, Paperclip, Star, AlertCircle, Download, CheckSquare, Square,
   ChevronDown, MessageSquare, ShieldOff, Send, Phone, Mail, BarChart2,
+  MoreHorizontal,
 } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
@@ -22,7 +23,11 @@ import {
 } from "../../../constants/apps/recruitment";
 import { DEPARTMENTS, LOCATIONS } from "../../../constants/apps/directory";
 import { API_BASE, apiHeaders, safeJson, supabase } from "../../utils/constants";
-import { formatCandidateExperience, parseCandidateExperience } from "../../utils/recruitmentExperience";
+import {
+  formatCandidateExperience,
+  formatCompactCandidateExperience,
+  parseCandidateExperience,
+} from "../../utils/recruitmentExperience";
 import { useEmployees } from '../../context/EmployeesContext';
 
 // ==================== HELPERS ====================
@@ -1534,15 +1539,75 @@ function CandidateDrawer({
     { id: "communications" as const, label: `Comms${communications.length > 0 ? ` (${communications.length})` : ""}` },
   ];
 
+  const candidateInfoSections = [
+    {
+      title: "Contact and role",
+      fields: [
+        [t("email"), candidate.email],
+        [t("phone"), candidate.phone],
+        [t("nationality"), candidate.nationality],
+        ["Position", candidate.position],
+        ["Department", candidate.department],
+        ["Expertise / Profile", candidate.expertise],
+        [t("hiringManager"), candidate.hiringManager],
+      ],
+    },
+    {
+      title: "Application",
+      fields: [
+        [t("source"), candidate.source],
+        ["Stage", candidate.stage],
+        ["Status", candidate.status],
+        [t("appliedDate"), candidate.appliedDate],
+        ["Rating", candidate.rating != null ? `${candidate.rating}/5` : null],
+        ["Created", candidate.createdAt ? new Date(candidate.createdAt).toLocaleString() : null],
+        ["Last updated", candidate.updatedAt ? new Date(candidate.updatedAt).toLocaleString() : null],
+      ],
+    },
+    {
+      title: "Employment history",
+      fields: [
+        [t("experience"), formatCandidateExperience(candidate.experience)],
+        [t("currentCompany"), candidate.currentCompany],
+        [t("previousCompany"), candidate.previousCompany],
+        [t("noticePeriod"), candidate.noticePeriod],
+        ["Serving notice period", candidate.servingNoticePeriod ? "Yes" : "No"],
+        [t("noticePeriodEndDate"), candidate.noticePeriodEndDate],
+        ["Previously part of this organization", candidate.partOfOrganization ? "Yes" : "No"],
+      ],
+    },
+    ...(canViewSalary ? [{
+      title: "Compensation",
+      fields: [
+        [t("currentSalary"), candidate.currentSalary],
+        [t("expectedSalary"), candidate.expectedSalary],
+        ["Agency Fee", candidate.agency_fee != null ? String(candidate.agency_fee) : null],
+      ],
+    }] : []),
+    {
+      title: "Agency details",
+      fields: [
+        ["Agency", candidate.agency_name],
+        ["Agency Email", candidate.agency_email],
+      ],
+    },
+  ] as { title: string; fields: [string, string | number | null | undefined][] }[];
+
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
-      <div className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-lg bg-card shadow-2xl flex flex-col">
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-2 backdrop-blur-sm sm:p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Candidate details for ${candidate.name}`}
+        onClick={(event) => event.stopPropagation()}
+        className="adaptive-dialog-panel flex h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl sm:h-[min(90dvh,820px)]"
+      >
         {/* Header */}
-        <div className="flex items-start justify-between p-4 border-b border-border shrink-0">
+        <div className="flex items-start justify-between gap-3 border-b border-border p-4 sm:px-5 shrink-0">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-0.5 flex-wrap">
-              <h2 className="font-semibold text-foreground">{candidate.name}</h2>
+              <h2 className="text-base font-semibold text-foreground sm:text-lg">{candidate.name}</h2>
               <StageBadge stage={candidate.stage} />
               {(candidate as any).blacklisted && (
                 <span className="flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-xs font-medium">
@@ -1618,36 +1683,46 @@ function CandidateDrawer({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-3 sm:p-5">
 
           {/* ── INFO TAB ── */}
           {tab === "info" && (
-            <div className="space-y-4 text-sm">
-              <div className="grid grid-cols-2 gap-3">
-                {([
-                  [t("email"), candidate.email],
-                  [t("phone"), candidate.phone],
-                  [t("nationality"), candidate.nationality],
-                  [t("source"), candidate.source],
-                  [t("experience"), formatCandidateExperience(candidate.experience)],
-                  [t("currentCompany"), candidate.currentCompany],
-                  [t("currentSalary"), candidate.currentSalary],
-                  [t("expectedSalary"), candidate.expectedSalary],
-                  [t("noticePeriod"), candidate.noticePeriod],
-                  [t("noticePeriodEndDate"), candidate.noticePeriodEndDate],
-                  [t("appliedDate"), candidate.appliedDate],
-                  [t("hiringManager"), candidate.hiringManager],
-                  ["Expertise / Profile", candidate.expertise],
-                  ["Agency", candidate.agency_name],
-                  ["Agency Email", candidate.agency_email],
-                  ["Agency Fee", candidate.agency_fee != null ? String(candidate.agency_fee) : null],
-                ] as [string, string | null | undefined][]).filter(([, v]) => v).map(([label, val]) => (
-                  <div key={label}>
-                    <p className="text-xs text-muted-foreground">{label}</p>
-                    <p className="text-foreground font-medium truncate">{val}</p>
-                  </div>
+            <div className="space-y-5 text-sm">
+              <div className="grid gap-4 lg:grid-cols-2">
+                {candidateInfoSections.map((section) => (
+                  <section key={section.title} className="rounded-xl border border-border bg-muted/20 p-3 sm:p-4">
+                    <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{section.title}</h3>
+                    <dl className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2">
+                      {section.fields.map(([label, value]) => (
+                        <div key={label} className="min-w-0">
+                          <dt className="text-xs text-muted-foreground">{label}</dt>
+                          <dd className="break-words font-medium text-foreground">{value === null || value === undefined || value === "" ? "—" : String(value)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </section>
                 ))}
               </div>
+
+              {candidate.resumeUrl && (
+                <div className="rounded-xl border border-border p-3 sm:p-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Resume</p>
+                  <a
+                    href={candidate.resumeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 text-sm font-medium text-blue-600 hover:underline"
+                  >
+                    <FileText size={14} /> Open candidate resume
+                  </a>
+                </div>
+              )}
+
+              {(candidate as any).blacklisted && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  <strong>{t("recruitment.blacklisted")}:</strong> {(candidate as any).blacklist_reason || "No reason recorded"}
+                </div>
+              )}
 
               {candidate.servingNoticePeriod && (
                 <div className="flex items-center gap-2 bg-orange-50 rounded-lg px-3 py-2 text-xs text-orange-700">
@@ -1664,7 +1739,7 @@ function CandidateDrawer({
               )}
 
               {(candidate.skills ?? []).length > 0 && (
-                <div>
+                <div className="rounded-xl border border-border p-3 sm:p-4">
                   <p className="text-xs text-muted-foreground mb-1.5">{t("skills")}</p>
                   <div className="flex flex-wrap gap-1.5">
                     {(candidate.skills ?? []).map((s) => (
@@ -1675,7 +1750,7 @@ function CandidateDrawer({
               )}
 
               {candidate.userNotes && (
-                <div>
+                <div className="rounded-xl border border-border p-3 sm:p-4">
                   <p className="text-xs text-muted-foreground mb-1">{t("userNotes")}</p>
                   <p className="text-xs text-foreground bg-muted rounded-lg px-3 py-2 whitespace-pre-wrap">{candidate.userNotes}</p>
                 </div>
@@ -2122,6 +2197,7 @@ function CandidateDrawer({
             </div>
           )}
         </div>
+      </div>
       </div>
 
       {/* Offer Modal */}
@@ -2961,6 +3037,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
   const [showCandidateForm, setShowCandidateForm] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(null);
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
+  const [openCandidateActions, setOpenCandidateActions] = useState<string | null>(null);
   const selectedCandidate = selectedCandidateId ? (candidates.find((c) => c.id === selectedCandidateId) ?? null) : null;
   const [confirmDelete, setConfirmDelete] = useState<{ type: "candidate" | "job"; id: string } | null>(null);
   const [confirmHire, setConfirmHire] = useState<Candidate | null>(null);
@@ -2988,6 +3065,8 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
         c.position,
         c.department,
         c.expertise,
+        c.currentCompany,
+        c.previousCompany,
         ...(c.skills ?? []),
       ];
       const matchSearch = !q || searchableValues.some((value) =>
@@ -3166,13 +3245,13 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
             </div>
 
             {pipelineView === "kanban" && (
-              <div className="flex gap-4 overflow-x-auto pb-4">
+              <div className="mobile-kanban-rail flex snap-x snap-mandatory gap-3 overflow-x-auto pb-4 sm:gap-4">
                 {visiblePipelineStages.map((stage) => {
                   const stageCandidates = filteredCandidates.filter((c) => c.stage === stage);
                   const stageIndex = RECRUITMENT_STAGES.indexOf(stage);
                   const nextStage = stageIndex < RECRUITMENT_STAGES.length - 1 ? RECRUITMENT_STAGES[stageIndex + 1] : null;
                   return (
-                    <div key={stage} className="min-w-[220px] flex-1 flex flex-col gap-2">
+                    <section key={stage} className="mobile-kanban-column flex w-[min(18rem,calc(100vw-2.5rem))] shrink-0 snap-start flex-col gap-2 sm:w-72">
                       <div className="flex items-center justify-between px-1">
                         <span className="text-xs font-semibold text-foreground">{stage}</span>
                         <span className="text-xs bg-muted text-muted-foreground rounded-full px-2 py-0.5">{stageCandidates.length}</span>
@@ -3207,25 +3286,25 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                           <div className="text-xs text-muted-foreground text-center py-4 border border-dashed border-border rounded-lg">No candidates</div>
                         )}
                       </div>
-                    </div>
+                    </section>
                   );
                 })}
               </div>
             )}
 
             {pipelineView === "list" && <div className="bg-card rounded-xl border border-border overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="responsive-data-table w-full min-w-[1260px] text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">
-                    <th className="text-left px-4 py-3 font-medium">{t("candidate")}</th>
-                    <th className="text-left px-4 py-3 font-medium">{t("stage")}</th>
-                    <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">{t("source")}</th>
-                    <th className="text-left px-4 py-3 font-medium hidden sm:table-cell">{t("appliedDate")}</th>
-                    <th className="text-left px-4 py-3 font-medium hidden md:table-cell">{t("experience")}</th>
-                    <th className="text-left px-4 py-3 font-medium hidden md:table-cell">{t("salary")}</th>
-                    <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">Skills</th>
-                    <th className="text-left px-4 py-3 font-medium hidden lg:table-cell">Expertise</th>
-                    <th className="px-4 py-3" />
+                    <th className="w-64 px-4 py-3 text-left font-medium">{t("candidate")}</th>
+                    <th className="w-40 px-4 py-3 text-left font-medium">{t("stage")}</th>
+                    <th className="w-32 px-4 py-3 text-left font-medium">{t("source")}</th>
+                    <th className="w-28 px-4 py-3 text-left font-medium">{t("experience")}</th>
+                    <th className="w-40 px-4 py-3 text-left font-medium">{t("currentCompany")}</th>
+                    <th className="w-40 px-4 py-3 text-left font-medium">{t("previousCompany")}</th>
+                    <th className="w-48 px-4 py-3 text-left font-medium">Skills</th>
+                    <th className="w-36 px-4 py-3 text-left font-medium">Expertise</th>
+                    <th className="w-14 px-3 py-3 text-center font-medium">{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3259,55 +3338,68 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                           </div>
                         </td>
                         <td className="px-4 py-3"><StageBadge stage={c.stage} /></td>
-                        <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground">{c.source}</td>
-                        <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground">{c.appliedDate}</td>
-                        <td className="px-4 py-3 hidden md:table-cell text-muted-foreground">{formatCandidateExperience(c.experience)}</td>
-                        <td className="px-4 py-3 hidden md:table-cell text-muted-foreground">{c.expectedSalary || "—"}</td>
-                        <td className="px-4 py-3 hidden lg:table-cell">
-                          <div className="flex flex-wrap gap-1">
-                            {(c.skills ?? []).slice(0, 3).map((s) => (
-                              <span key={s} className="px-1.5 py-0.5 bg-blue-50 text-blue-700 rounded text-xs">{s}</span>
-                            ))}
-                            {(c.skills ?? []).length > 3 && (
-                              <span className="text-xs text-muted-foreground">+{(c.skills ?? []).length - 3}</span>
-                            )}
-                          </div>
+                        <td className="px-4 py-3 text-muted-foreground">{c.source}</td>
+                        <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatCompactCandidateExperience(c.experience)}</td>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          <p className="max-w-36 truncate" title={c.currentCompany || undefined}>{c.currentCompany || "—"}</p>
                         </td>
-                        <td className="px-4 py-3 hidden lg:table-cell">
-                          {c.expertise ? (
-                            <span className="px-2 py-0.5 text-xs rounded-full bg-indigo-100 text-indigo-700 font-medium">{c.expertise}</span>
-                          ) : <span className="text-muted-foreground text-xs">—</span>}
+                        <td className="px-4 py-3 text-muted-foreground">
+                          <p className="max-w-36 truncate" title={c.previousCompany || undefined}>{c.previousCompany || "—"}</p>
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground">
+                          <p className="max-w-44 truncate" title={(c.skills ?? []).join(", ") || undefined}>
+                            {(c.skills ?? []).join(", ") || "—"}
+                          </p>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity justify-end">
-                            <button title={t("view")} onClick={(e) => { e.stopPropagation(); setSelectedCandidateId(c.id); }}
-                              className="p-1.5 text-muted-foreground hover:text-blue-600 rounded"><Eye size={14} /></button>
-                            {canCreateCandidate && (
-                              <>
-                                <button title={t("edit")} onClick={(e) => { e.stopPropagation(); setEditingCandidate(c); setShowCandidateForm(true); }}
-                                  className="p-1.5 text-muted-foreground hover:text-blue-600 rounded"><Edit2 size={14} /></button>
-                                <button title={needsFb ? t("feedbackRequired") : t("nextStage")}
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    try { await moveToNextStage(c.id); await refresh(); }
-                                    catch (err: unknown) { toast.error(err instanceof Error ? err.message : "Cannot advance stage"); }
-                                  }}
-                                  className={`p-1.5 rounded ${needsFb ? "text-amber-400 hover:text-amber-600" : "text-muted-foreground hover:text-orange-500"}`}>
-                                  <ArrowRight size={14} />
-                                </button>
-                                {canMakeOffers && (c.stage === "Offer Sent" || c.stage === "Offer Accepted") && (
-                                  <button title={t("hire")} onClick={(e) => { e.stopPropagation(); setConfirmHire(c); }}
-                                    className="p-1.5 text-muted-foreground hover:text-green-600 rounded"><CheckCircle size={14} /></button>
-                                )}
-                                {canMakeOffers && (
-                                  <button title={t("generateOffer")} onClick={(e) => { e.stopPropagation(); setSelectedCandidateId(c.id); }}
-                                    className="p-1.5 text-muted-foreground hover:text-purple-600 rounded"><FileText size={14} /></button>
-                                )}
-                                <button title={t("delete")} onClick={(e) => { e.stopPropagation(); setConfirmDelete({ type: "candidate", id: c.id }); }}
-                                  className="p-1.5 text-muted-foreground hover:text-red-500 rounded"><Trash2 size={14} /></button>
-                              </>
-                            )}
+                          {c.expertise ? (
+                            <span title={c.expertise} className="block max-w-32 truncate rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">{c.expertise}</span>
+                          ) : <span className="text-muted-foreground text-xs">—</span>}
+                        </td>
+                        <td className="relative px-3 py-3" onClick={(event) => event.stopPropagation()}>
+                          <div className="flex justify-center">
+                            <button
+                              type="button"
+                              title={openCandidateActions === c.id ? "Hide actions" : "Show actions"}
+                              aria-label={openCandidateActions === c.id ? `Hide actions for ${c.name}` : `Show actions for ${c.name}`}
+                              aria-expanded={openCandidateActions === c.id}
+                              onClick={() => setOpenCandidateActions((current) => current === c.id ? null : c.id)}
+                              className={`rounded-lg p-1.5 transition-colors ${openCandidateActions === c.id ? "bg-blue-50 text-blue-600" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                            >
+                              <MoreHorizontal size={16} />
+                            </button>
                           </div>
+                          {openCandidateActions === c.id && (
+                            <div className="absolute right-10 top-1/2 z-20 flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg">
+                              <button title={t("view")} onClick={() => { setOpenCandidateActions(null); setSelectedCandidateId(c.id); }}
+                                className="rounded p-1.5 text-muted-foreground hover:bg-blue-50 hover:text-blue-600"><Eye size={14} /></button>
+                              {canCreateCandidate && (
+                                <>
+                                  <button title={t("edit")} onClick={() => { setOpenCandidateActions(null); setEditingCandidate(c); setShowCandidateForm(true); }}
+                                    className="rounded p-1.5 text-muted-foreground hover:bg-blue-50 hover:text-blue-600"><Edit2 size={14} /></button>
+                                  <button title={needsFb ? t("feedbackRequired") : t("nextStage")}
+                                    onClick={async () => {
+                                      setOpenCandidateActions(null);
+                                      try { await moveToNextStage(c.id); await refresh(); }
+                                      catch (err: unknown) { toast.error(err instanceof Error ? err.message : "Cannot advance stage"); }
+                                    }}
+                                    className={`rounded p-1.5 ${needsFb ? "text-amber-400 hover:bg-amber-50 hover:text-amber-600" : "text-muted-foreground hover:bg-orange-50 hover:text-orange-500"}`}>
+                                    <ArrowRight size={14} />
+                                  </button>
+                                  {canMakeOffers && (c.stage === "Offer Sent" || c.stage === "Offer Accepted") && (
+                                    <button title={t("hire")} onClick={() => { setOpenCandidateActions(null); setConfirmHire(c); }}
+                                      className="rounded p-1.5 text-muted-foreground hover:bg-green-50 hover:text-green-600"><CheckCircle size={14} /></button>
+                                  )}
+                                  {canMakeOffers && (
+                                    <button title={t("generateOffer")} onClick={() => { setOpenCandidateActions(null); setSelectedCandidateId(c.id); }}
+                                      className="rounded p-1.5 text-muted-foreground hover:bg-purple-50 hover:text-purple-600"><FileText size={14} /></button>
+                                  )}
+                                  <button title={t("delete")} onClick={() => { setOpenCandidateActions(null); setConfirmDelete({ type: "candidate", id: c.id }); }}
+                                    className="rounded p-1.5 text-muted-foreground hover:bg-red-50 hover:text-red-500"><Trash2 size={14} /></button>
+                                </>
+                              )}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );

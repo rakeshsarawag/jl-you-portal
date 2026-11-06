@@ -2991,15 +2991,15 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
         {/* List view */}
         {!loading && view === 'list' && (
           <div className="bg-card rounded-xl border border-border overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="responsive-data-table w-full min-w-[900px] text-sm">
               <thead>
                 <tr className="border-b border-border text-left">
                   <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Name / Position</th>
-                  <th className="hidden px-4 py-3 text-xs font-medium text-muted-foreground uppercase md:table-cell">Dept</th>
-                  <th className="hidden px-4 py-3 text-xs font-medium text-muted-foreground uppercase md:table-cell">Joining Date</th>
-                  <th className="hidden px-4 py-3 text-xs font-medium text-muted-foreground uppercase min-w-[120px] sm:table-cell">Progress</th>
+                  <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Dept</th>
+                  <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Joining Date</th>
+                  <th className="min-w-[120px] px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Progress</th>
                   <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Status</th>
-                  <th className="hidden md:table-cell px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Buddy</th>
+                  <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Buddy</th>
                   <th className="w-28 px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Actions</th>
                 </tr>
               </thead>
@@ -3018,15 +3018,15 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                       <p className="text-xs text-muted-foreground">{emp.position}</p>
                       {emp.employeeCode && <p className="text-xs text-muted-foreground">ID: {emp.employeeCode}</p>}
                     </td>
-                    <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">{emp.department}</td>
-                    <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">{emp.joiningDate}</td>
-                    <td className="hidden px-4 py-3 min-w-[120px] sm:table-cell">
+                    <td className="px-4 py-3 text-muted-foreground">{emp.department}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{emp.joiningDate}</td>
+                    <td className="min-w-[120px] px-4 py-3">
                       <ProgressBar value={emp.progress} />
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={emp.status} />
                     </td>
-                    <td className="hidden md:table-cell px-4 py-3 text-muted-foreground">{emp.buddy || '—'}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{emp.buddy || '—'}</td>
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         <button
@@ -3081,11 +3081,11 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
 
         {/* Kanban view */}
         {!loading && view === 'kanban' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="mobile-kanban-rail flex snap-x snap-mandatory gap-3 overflow-x-auto pb-3 lg:grid lg:grid-cols-4 lg:gap-4 lg:overflow-visible lg:pb-0">
             {kanbanColumns.map(col => {
               const colEmployees = displayEmployees.filter(e => e.status === col.status);
               return (
-                <div key={col.status} className={`rounded-xl border-t-4 ${col.color} bg-muted p-3`}>
+                <section key={col.status} className={`mobile-kanban-column w-[min(18rem,calc(100vw-2.5rem))] shrink-0 snap-start rounded-xl border-t-4 ${col.color} bg-muted p-3 lg:w-auto`}>
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-semibold text-foreground">{col.label}</h3>
                     <span className="text-xs bg-card border border-border rounded-full px-2 py-0.5 text-muted-foreground">
@@ -3106,7 +3106,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                       <p className="text-xs text-muted-foreground text-center py-6">No joiners</p>
                     )}
                   </div>
-                </div>
+                </section>
               );
             })}
           </div>

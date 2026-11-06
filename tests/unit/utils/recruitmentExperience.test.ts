@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatCompactCandidateExperience,
   formatCandidateExperience,
   parseCandidateExperience,
 } from "../../../src/app/utils/recruitmentExperience";
@@ -42,5 +43,16 @@ describe("formatCandidateExperience", () => {
 
   it("labels zero experience as Fresher", () => {
     expect(formatCandidateExperience(0)).toBe("Fresher");
+  });
+});
+
+describe("formatCompactCandidateExperience", () => {
+  it("formats stored experience as compact decimal years", () => {
+    expect(formatCompactCandidateExperience(6.5)).toBe("6.5 years");
+    expect(formatCompactCandidateExperience(9.17)).toBe("9.2 years");
+  });
+
+  it("labels zero experience as Fresher", () => {
+    expect(formatCompactCandidateExperience(0)).toBe("Fresher");
   });
 });

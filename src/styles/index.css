@@ -212,6 +212,39 @@ body {
   -webkit-overflow-scrolling: touch;
 }
 
+.responsive-data-table {
+  display: table !important;
+  max-width: none !important;
+}
+
+.mobile-kanban-rail {
+  width: 100%;
+  max-width: 100%;
+  scroll-padding-inline: 0.125rem;
+  scrollbar-width: thin;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-kanban-column {
+  min-width: min(18rem, calc(100vw - 2.5rem));
+  max-width: min(18rem, calc(100vw - 2.5rem));
+}
+
+@media (min-width: 640px) {
+  .mobile-kanban-column {
+    min-width: 18rem;
+    max-width: 18rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .mobile-kanban-rail.grid .mobile-kanban-column {
+    min-width: 0;
+    max-width: none;
+  }
+}
+
 @media (max-width: 767px) {
   .adaptive-dialog-shell {
     padding: 0.5rem !important;

@@ -295,6 +295,7 @@ export function LoginPage({
                     required
                     disabled={loading}
                     autoComplete="email"
+                    autoFocus
                   />
                 </div>
                 <Button type="submit" className="w-full" disabled={loading || resetEmailSent}>
@@ -353,6 +354,8 @@ export function LoginPage({
                     onChange={e => setEmail(e.target.value)}
                     required
                     disabled={loading}
+                    autoComplete="username"
+                    autoFocus
                   />
                 </div>
                 <div className="space-y-2">
@@ -409,6 +412,8 @@ export function LoginPage({
                     onChange={e => setEmail(e.target.value)}
                     required
                     disabled={loading}
+                    autoComplete="email"
+                    autoFocus
                   />
                 </div>
                 <Button type="submit" className="w-full" disabled={loading}>
