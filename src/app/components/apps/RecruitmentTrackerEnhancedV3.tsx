@@ -561,9 +561,11 @@ function CandidateMassEditModal({
   onSave: (values: CandidateMassEditValues) => Promise<void>;
 }) {
   const [enabled, setEnabled] = useState<Record<string, boolean>>({});
+  const employees = useEmployeeList();
   const [form, setForm] = useState({
     stage: "",
     source: "",
+    hiringManager: "",
     department: "",
     position: "",
     currentCompany: "",
@@ -587,7 +589,7 @@ function CandidateMassEditModal({
       setFormError("Select at least one field to update.");
       return;
     }
-    if ((enabled.stage && !form.stage) || (enabled.source && !form.source)) {
+    if ((enabled.stage && !form.stage) || (enabled.source && !form.source) || (enabled.hiringManager && !form.hiringManager)) {
       setFormError("Choose a value for each selected dropdown field.");
       return;
     }
@@ -600,6 +602,7 @@ function CandidateMassEditModal({
     const updates: Partial<Candidate> = {};
     if (enabled.stage) updates.stage = form.stage;
     if (enabled.source) updates.source = form.source;
+    if (enabled.hiringManager) updates.hiringManager = form.hiringManager;
     if (enabled.department) updates.department = form.department;
     if (enabled.position) updates.position = form.position;
     if (enabled.currentCompany) updates.currentCompany = form.currentCompany;
@@ -649,6 +652,22 @@ function CandidateMassEditModal({
             <select disabled={!enabled.source} value={form.source} onChange={(event) => setForm((current) => ({ ...current, source: event.target.value }))} className={fieldClass}>
               <option value="">Select source</option>
               {RECRUITMENT_SOURCES.map((source) => <option key={source}>{source}</option>)}
+            </select>
+          </div>
+          <div className={rowClass}>
+            {fieldToggle("hiringManager", "Hiring Manager")}
+            <select
+              disabled={!enabled.hiringManager}
+              value={form.hiringManager}
+              onChange={(event) => setForm((current) => ({ ...current, hiringManager: event.target.value }))}
+              className={fieldClass}
+            >
+              <option value="">Select hiring manager</option>
+              {employees.map((employee) => (
+                <option key={employee.id} value={employee.name}>
+                  {employee.name}{employee.designation ? ` — ${employee.designation}` : ""}
+                </option>
+              ))}
             </select>
           </div>
           {([
