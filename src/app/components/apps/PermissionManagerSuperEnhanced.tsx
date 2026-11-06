@@ -298,17 +298,17 @@ function SectionPermissionsPanel({ matrix, onChange }: {
   };
 
   return (
-    <div className="flex min-h-0 h-full gap-0">
+    <div className="flex min-h-0 h-full flex-col gap-0 md:flex-row">
       {/* Role sidebar */}
-      <div className="w-36 shrink-0 border-r border-border bg-muted/20 overflow-y-auto">
-        <div className="px-3 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Role</div>
+      <div className="flex w-full shrink-0 overflow-x-auto border-b border-border bg-muted/20 md:block md:w-36 md:overflow-y-auto md:border-b-0 md:border-r">
+        <div className="hidden px-3 py-2.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider md:block">Role</div>
         {ALL_ROLES.map(role => (
           <button
             key={role}
             onClick={() => setSelectedRole(role)}
-            className={`w-full text-left px-3 py-2 text-xs font-medium transition-colors ${
+            className={`w-auto shrink-0 border-b-2 px-3 py-2 text-left text-xs font-medium transition-colors md:w-full md:border-b-0 md:border-r-2 ${
               selectedRole === role
-                ? `${ROLE_META[role].bg} ${ROLE_META[role].color} border-r-2 border-primary`
+                ? `${ROLE_META[role].bg} ${ROLE_META[role].color} border-primary`
                 : 'text-muted-foreground hover:bg-muted/40 hover:text-foreground'
             }`}
           >
@@ -480,7 +480,7 @@ function TempGrantsPanel() {
   const expired = grants.filter(g => g.is_revoked || new Date(g.expires_at) <= now);
 
   return (
-    <div className="h-full overflow-y-auto p-6">
+    <div className="h-full overflow-y-auto p-4 sm:p-6">
       <div className="max-w-3xl mx-auto space-y-4">
         {/* Toolbar */}
         <div className="flex items-center justify-between">
@@ -497,7 +497,7 @@ function TempGrantsPanel() {
         {showForm && (
           <form onSubmit={handleCreate} className="border border-border rounded-xl p-4 bg-card space-y-3">
             <h3 className="text-sm font-medium text-foreground">New Temporary Access Grant</h3>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">User ID</label>
                 <input
@@ -647,7 +647,7 @@ function AuditPanel() {
   );
 
   return (
-    <div className="overflow-y-auto">
+    <div className="max-w-full overflow-auto">
       <table className="w-full text-xs">
         <thead className="sticky top-0 bg-muted/60 backdrop-blur">
           <tr>
@@ -781,10 +781,10 @@ export default function PermissionManagerSuperEnhanced() {
   ];
 
   return (
-    <div className="flex flex-col h-screen bg-background overflow-hidden">
+    <div className="adaptive-app-root flex h-[100dvh] min-h-0 w-full max-w-full flex-col overflow-hidden bg-background">
     <div className="flex min-h-0 w-full flex-1 flex-col">
       {/* Header */}
-      <div className="shrink-0 px-6 py-4 border-b border-border bg-card">
+      <div className="shrink-0 border-b border-border bg-card px-4 py-4 sm:px-6">
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
@@ -795,7 +795,7 @@ export default function PermissionManagerSuperEnhanced() {
               <p className="text-xs text-muted-foreground">Role-based access control — changes persist to the database</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {hasChanges && (
               <span className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
                 <AlertCircle size={12} />
@@ -840,7 +840,7 @@ export default function PermissionManagerSuperEnhanced() {
 
       {/* Table-missing banner */}
       {tableMissing && (
-        <div className="shrink-0 px-6 py-3 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800 flex items-start gap-3">
+        <div className="shrink-0 px-4 py-3 sm:px-6 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-800 flex flex-wrap items-start gap-3">
           <AlertCircle size={16} className="text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-amber-800 dark:text-amber-200">Database table not found</p>
@@ -863,7 +863,7 @@ export default function PermissionManagerSuperEnhanced() {
 
       {/* DB-empty banner — table exists but no permissions seeded yet */}
       {!tableMissing && dbEmpty && (
-        <div className="shrink-0 px-6 py-3 bg-blue-50 dark:bg-blue-950/30 border-b border-blue-200 dark:border-blue-800 flex items-start gap-3">
+        <div className="shrink-0 px-4 py-3 sm:px-6 bg-blue-50 dark:bg-blue-950/30 border-b border-blue-200 dark:border-blue-800 flex flex-wrap items-start gap-3">
           <Info size={16} className="text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-blue-800 dark:text-blue-200">No permissions in database</p>
@@ -884,8 +884,8 @@ export default function PermissionManagerSuperEnhanced() {
       )}
 
       {/* Tab bar */}
-      <div className="shrink-0 border-b border-border bg-card px-6">
-        <div className="flex gap-1">
+      <div className="shrink-0 border-b border-border bg-card px-4 sm:px-6">
+        <div className="adaptive-tab-rail flex gap-1 overflow-x-auto">
           {TABS.map(t => (
             <button
               key={t.id}
@@ -902,7 +902,7 @@ export default function PermissionManagerSuperEnhanced() {
       </div>
 
       {/* Info bar */}
-      <div className="shrink-0 px-6 py-2 bg-muted/30 border-b border-border text-xs text-muted-foreground flex items-center gap-1.5">
+      <div className="shrink-0 px-4 py-2 sm:px-6 bg-muted/30 border-b border-border text-xs text-muted-foreground flex items-start gap-1.5">
         <Info size={12} />
         {TABS.find(t_ => t_.id === tab)?.desc}
       </div>

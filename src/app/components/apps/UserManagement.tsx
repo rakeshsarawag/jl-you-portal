@@ -1115,7 +1115,7 @@ function ProvisionForm({ onClose, onDone, existingUserEmails }: {
             </div>
 
             {useCustomPassword && (
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs text-muted-foreground mb-1">Password *</label>
                   <div className="relative">
@@ -1454,8 +1454,8 @@ function AuditLogTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-48">
+      <div className="adaptive-toolbar flex flex-wrap items-center gap-2">
+        <div className="relative w-full min-w-0 flex-1 sm:min-w-48">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             value={search}
@@ -1650,8 +1650,8 @@ function SessionsTab({ currentUserId }: { currentUserId?: string }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-48">
+      <div className="adaptive-toolbar flex flex-wrap items-center gap-2">
+        <div className="relative w-full min-w-0 flex-1 sm:min-w-48">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             value={userFilter}
@@ -1859,8 +1859,8 @@ function LoginHistoryTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-48">
+      <div className="adaptive-toolbar flex flex-wrap items-center gap-2">
+        <div className="relative w-full min-w-0 flex-1 sm:min-w-48">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <input
             value={userFilter}
@@ -2083,7 +2083,7 @@ function CreateCycleModal({ onClose, onDone, currentUserId }: { onClose: () => v
             />
             {errors.name && <p className="text-xs text-red-500 mt-0.5">{errors.name}</p>}
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">Start Date *</label>
               <input
@@ -2607,7 +2607,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
 
   if (primaryRole !== 'admin' || !canViewUsers) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+      <div className="adaptive-app-root flex min-h-screen w-full max-w-full items-center justify-center overflow-x-hidden bg-background p-6">
         <div className="text-center max-w-sm">
           <Shield size={40} className="text-muted-foreground mx-auto mb-3 opacity-40" />
           <h2 className="font-semibold text-foreground mb-1">Access Denied</h2>
@@ -2619,16 +2619,16 @@ export function UserManagement({ accessToken, onLogout }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="adaptive-app-root min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       {/* Header */}
       <div className="bg-card border-b border-border sticky top-0 z-30">
-        <div className="w-full px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+        <div className="flex min-h-14 w-full flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+          <div className="flex min-w-0 items-center gap-2">
             <Shield size={18} className="text-primary" />
             <h1 className="font-semibold text-foreground text-sm">{t('userMgmt.title')}</h1>
             {!um.loading && <span className="text-xs text-muted-foreground">({um.users.length} users)</span>}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="adaptive-toolbar flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
             {activeTab === 'users' && (
               <>
                 <button
@@ -2661,7 +2661,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
           </div>
         </div>
         {/* Tabs */}
-        <div className="w-full px-4 sm:px-6 flex gap-1 border-t border-border overflow-x-auto">
+        <div className="adaptive-tab-rail flex w-full gap-1 overflow-x-auto border-t border-border px-4 sm:px-6">
           {([
             { key: 'users' as const, label: 'Users', icon: Users },
             { key: 'sessions' as const, label: 'Sessions', icon: Activity },
@@ -2701,7 +2701,7 @@ export function UserManagement({ accessToken, onLogout }: Props) {
         {/* Users Tab */}
         {activeTab === 'users' && <>
           {/* Stats */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:grid-cols-4">
             {[
               { label: 'Total Users', value: stats.total },
               { label: 'Active', value: stats.active },
@@ -2716,8 +2716,8 @@ export function UserManagement({ accessToken, onLogout }: Props) {
           </div>
 
           {/* Filters */}
-          <div className="flex flex-wrap gap-2 items-center">
-            <div className="relative flex-1 min-w-48">
+          <div className="adaptive-toolbar flex flex-wrap items-center gap-2">
+            <div className="relative w-full min-w-0 flex-1 sm:min-w-48">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input
                 value={search}

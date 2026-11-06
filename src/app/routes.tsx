@@ -46,7 +46,7 @@ const PageSpinner = (
 
 function Suspense({ children }: { children: React.ReactNode }) {
   return (
-    <div className="route-viewport min-w-0 w-full max-w-full">
+    <div className="route-viewport adaptive-app-root min-w-0 w-full max-w-full overflow-x-hidden">
       <React.Suspense fallback={PageSpinner}>{children}</React.Suspense>
     </div>
   );

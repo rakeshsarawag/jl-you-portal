@@ -433,7 +433,7 @@ function ProjectForm({ initial, onSubmit, onCancel, onDelete, methodologyOptions
   return (
     <div className="space-y-5">
       {/* Step indicator */}
-      <div className="flex items-center gap-2 justify-center">
+      <div className="flex items-center gap-1 justify-center sm:gap-2">
         {STEP_LABELS.map((label, i) => {
           const n = i + 1;
           const active = step === n;
@@ -443,8 +443,8 @@ function ProjectForm({ initial, onSubmit, onCancel, onDelete, methodologyOptions
               <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors ${done ? "bg-indigo-500 border-indigo-500 text-white" : active ? "border-indigo-500 text-indigo-600 bg-indigo-50" : "border-border text-muted-foreground bg-muted"}`}>
                 {done ? "✓" : n}
               </div>
-              <span className={`text-xs ${active ? "font-semibold text-indigo-600" : "text-muted-foreground"}`}>{label}</span>
-              {i < STEP_LABELS.length - 1 && <div className="w-6 h-px bg-border mx-1" />}
+              <span className={`hidden text-xs sm:inline ${active ? "font-semibold text-indigo-600" : "text-muted-foreground"}`}>{label}</span>
+              {i < STEP_LABELS.length - 1 && <div className="w-3 h-px bg-border sm:mx-1 sm:w-6" />}
             </div>
           );
         })}
@@ -518,7 +518,7 @@ function ProjectForm({ initial, onSubmit, onCancel, onDelete, methodologyOptions
           </div>
           <div>
             <label className="block text-sm font-medium text-foreground mb-2">{t("projects.ragStatus")}</label>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {RAG_STATUSES.map((r) => (
                 <button
                   key={r}
@@ -598,7 +598,7 @@ function ProjectForm({ initial, onSubmit, onCancel, onDelete, methodologyOptions
           {hasPoints && (
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">Story Point Scale</label>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 {["Fibonacci", "T-Shirt", "Linear"].map(scale => (
                   <button
                     key={scale}
@@ -631,7 +631,7 @@ function ProjectForm({ initial, onSubmit, onCancel, onDelete, methodologyOptions
           </div>
           <div className="border border-border rounded-lg p-3 space-y-3">
             <p className="text-sm font-medium text-foreground">Add Members</p>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <EmployeeSearchDropdown
                 value={newMemberName}
                 onChange={(name, id, code) => { setNewMemberName(name); setNewMemberId(id ?? ""); setNewMemberCode(code ?? ""); }}
@@ -685,8 +685,8 @@ function ProjectForm({ initial, onSubmit, onCancel, onDelete, methodologyOptions
       )}
 
       {/* Navigation */}
-      <div className="flex justify-between pt-2 border-t">
-        <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-2 pt-2 border-t sm:flex-row sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
           {initial?.id && onDelete && (
             <button
               type="button"
@@ -1077,14 +1077,14 @@ function LogTimeModal({ onSubmit, onClose, task }: LogTimeModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div className="pm-dialog-shell fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-2 sm:p-4">
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="bg-card rounded-xl shadow-xl w-full max-w-md mx-4 p-6"
+        className="pm-dialog-panel bg-card rounded-xl shadow-xl w-full max-w-md max-h-[calc(100dvh-1rem)] overflow-y-auto p-4 sm:p-6"
       >
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -1219,22 +1219,22 @@ function Modal({
   const titleId = useId();
   const dialogRef = useDialogFocus(onClose);
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 overflow-y-auto py-8">
+    <div className="pm-dialog-shell fixed inset-0 z-50 flex items-start justify-center bg-black/40 overflow-y-auto p-2 sm:p-4 md:py-8">
       <div
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="bg-card rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto"
+        className="pm-dialog-panel bg-card rounded-xl shadow-xl w-full max-w-lg max-h-[calc(100dvh-1rem)] md:max-h-[90vh] overflow-y-auto"
       >
-        <div className="flex items-center justify-between p-6 border-b">
-          <h3 id={titleId} className="text-lg font-semibold">{title}</h3>
+        <div className="pm-dialog-header flex items-center justify-between gap-3 p-4 sm:p-6 border-b">
+          <h3 id={titleId} className="min-w-0 break-words text-base font-semibold sm:text-lg">{title}</h3>
           <button onClick={onClose} aria-label={`Close ${title}`} className="text-muted-foreground hover:text-muted-foreground">
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-6">{children}</div>
+        <div className="pm-dialog-body p-4 sm:p-6">{children}</div>
       </div>
     </div>
   );
@@ -2054,7 +2054,7 @@ function KanbanBoard({
   return (
     <div className="space-y-4">
       {/* Toolbar */}
-      <div className="flex items-center justify-between gap-2 flex-wrap">
+      <div className="pm-adaptive-toolbar flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">{tasks.length} task{tasks.length !== 1 ? "s" : ""}</span>
           {groupByAssignee && assigneeGroups.length > 0 && (
@@ -2069,8 +2069,8 @@ function KanbanBoard({
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-lg border border-border overflow-hidden text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex max-w-full rounded-lg border border-border overflow-x-auto text-xs">
             <button
               onClick={() => setGroupByAssignee(false)}
               className={`px-3 py-1.5 flex items-center gap-1.5 transition-colors ${!groupByAssignee ? "bg-blue-600 text-white" : "bg-card text-muted-foreground hover:bg-muted"}`}
@@ -2242,7 +2242,7 @@ function TeamTab({
           onSubmit={handleAdd}
           className="p-4 bg-muted rounded-xl border space-y-3"
         >
-          <div className="flex items-end gap-3">
+          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-end">
             <div className="flex-1">
               <label className="block text-sm font-medium text-foreground mb-1">
                 {t("project.employeeName")}
@@ -3820,13 +3820,13 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
   if (loading) return <InlineLoader />;
 
   return (
-    <div className="flex gap-0 h-full min-h-[600px]">
+    <div className="flex h-full min-h-0 min-w-0 flex-col gap-0 md:min-h-[600px] md:flex-row">
       {/* Left sidebar — sprint list */}
-      <div className="w-60 flex-shrink-0 border-r border-border bg-muted/30 flex flex-col">
+      <div className="flex w-full flex-shrink-0 flex-col border-b border-border bg-muted/30 md:w-60 md:border-b-0 md:border-r">
         <div className="p-3 border-b border-border">
           <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Sprints</span>
         </div>
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex max-w-full overflow-x-auto md:block md:flex-1 md:overflow-x-hidden md:overflow-y-auto">
           {sprints.length === 0 && (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">No sprints yet</div>
           )}
@@ -3834,7 +3834,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
             <button
               key={s.id}
               onClick={() => setSelectedSprintId(s.id)}
-              className={`w-full text-left px-3 py-2.5 border-b border-border/50 hover:bg-muted/60 transition-colors ${selectedSprintId === s.id ? "bg-indigo-50 border-l-2 border-l-indigo-500" : ""}`}
+              className={`w-52 flex-shrink-0 border-b border-border/50 px-3 py-2.5 text-left transition-colors hover:bg-muted/60 md:w-full ${selectedSprintId === s.id ? "bg-indigo-50 border-l-2 border-l-indigo-500" : ""}`}
             >
               <div className="flex items-center justify-between gap-1">
                 <span className="text-xs font-medium text-foreground truncate">{s.name}</span>
@@ -3857,7 +3857,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
       </div>
 
       {/* Right main area */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="min-w-0 flex-1 overflow-y-auto">
         {!selectedSprint ? (
           <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
             <Zap className="w-10 h-10 mb-3 opacity-30" />
@@ -3870,9 +3870,9 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
               <Badge className={SPRINT_STATUS_BADGE["Planning"]}>Planning</Badge>
               <span className="text-sm font-semibold text-foreground">{selectedSprint.name}</span>
             </div>
-            <div className="flex gap-4">
+            <div className="flex flex-col gap-4 lg:flex-row">
               {/* Left: available backlog */}
-              <div className="w-2/5 flex flex-col gap-2">
+              <div className="flex w-full flex-col gap-2 lg:w-2/5">
                 <h4 className="text-xs font-semibold text-muted-foreground uppercase">Available Backlog</h4>
                 <div className="flex gap-1 flex-wrap">
                   {(["All", "Stories", "Bugs", "Tasks"] as const).map((f) => (
@@ -3995,15 +3995,15 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
                 </div>
 
                 {/* Footer */}
-                <div className="flex items-center justify-between pt-2 border-t border-border mt-2">
-                  <div className="flex gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 mt-2">
+                  <div className="flex flex-wrap gap-2">
                     {canManage && (
                       <button onClick={handleCancelSprint} className="px-3 py-1.5 text-xs text-muted-foreground border border-border rounded-lg hover:bg-muted">
                         Cancel Sprint
                       </button>
                     )}
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <button onClick={handleSaveDraft} disabled={savingPlan} className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-muted disabled:opacity-50">
                       {savingPlan ? "Saving..." : "Save Draft"}
                     </button>
@@ -4022,7 +4022,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
           <div className="p-4 space-y-4">
             {/* Sprint header card */}
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-start">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <Zap className="w-4 h-4 text-blue-600 flex-shrink-0" />
@@ -4065,7 +4065,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
                       setCompleteChoices(init);
                       setShowCompleteModal(true);
                     }}
-                    className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs text-white bg-green-600 rounded-lg hover:bg-green-700"
+                    className="flex flex-shrink-0 items-center justify-center gap-1.5 rounded-lg bg-green-600 px-3 py-1.5 text-xs text-white hover:bg-green-700"
                   >
                     <CheckCircle className="w-3.5 h-3.5" /> Complete Sprint
                   </button>
@@ -4079,7 +4079,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
               {(() => {
                 const sprintTasks = tasks.filter(t => t.sprintId === selectedSprintId);
                 return (
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 lg:grid-cols-4">
                     {(["To Do", "In Progress", "In Review", "Done"] as const).map((col) => {
                       const colItems = sprintItems.filter((si) => {
                         const s = si.item?.status ?? "Open";
@@ -4260,14 +4260,14 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
 
       {/* Complete Sprint Modal */}
       {showCompleteModal && selectedSprint && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="pm-dialog-shell fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-2 sm:p-4">
           <div
             ref={completeDialogRef}
             role="dialog"
             aria-modal="true"
             aria-labelledby={completeTitleId}
             tabIndex={-1}
-            className="bg-background rounded-2xl shadow-xl border w-full max-w-md mx-4 p-6 space-y-4"
+            className="pm-dialog-panel bg-background rounded-2xl shadow-xl border w-full max-w-md max-h-[calc(100dvh-1rem)] overflow-y-auto p-4 sm:p-6 space-y-4"
           >
             <div className="flex items-center justify-between">
               <h3 id={completeTitleId} className="text-base font-semibold text-foreground">Complete Sprint</h3>
@@ -4294,7 +4294,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
                 <h4 className="text-xs font-semibold text-muted-foreground mb-2">Incomplete Items</h4>
                 <div className="space-y-1 max-h-48 overflow-y-auto">
                   {sprintItems.filter((si) => si.item?.status !== "Done").map((si) => (
-                    <div key={si.id} className="flex items-center gap-2 p-2 rounded-lg border bg-card text-xs">
+                    <div key={si.id} className="flex flex-col items-stretch gap-2 p-2 rounded-lg border bg-card text-xs sm:flex-row sm:items-center">
                       <span className="flex-1 truncate text-foreground">{si.item?.title}</span>
                       <span className="text-muted-foreground">{si.item?.story_points ?? 0}pt</span>
                       <select
@@ -4311,7 +4311,7 @@ function SprintsTab({ projectId, tasks, canManage }: { projectId: string; tasks:
               </div>
             )}
 
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
               <button onClick={() => setShowCompleteModal(false)} className="px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted">Cancel</button>
               <button onClick={handleCompleteSprint} disabled={completing} className="px-3 py-1.5 text-sm text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50">
                 {completing ? "Completing..." : "Complete Sprint"}
@@ -4376,7 +4376,7 @@ function ConfirmDialog({
   const descriptionId = useId();
   const dialogRef = useDialogFocus(onCancel);
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center">
+    <div className="pm-dialog-shell fixed inset-0 z-[300] flex items-center justify-center p-2 sm:p-4">
       <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={onCancel} />
       <div
         ref={dialogRef}
@@ -4385,13 +4385,13 @@ function ConfirmDialog({
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="relative z-10 w-full max-w-md mx-4 bg-card border border-border rounded-2xl shadow-2xl overflow-hidden"
+        className="pm-dialog-panel relative z-10 w-full max-w-md max-h-[calc(100dvh-1rem)] bg-card border border-border rounded-2xl shadow-2xl overflow-y-auto"
       >
-        <div className="px-6 pt-6 pb-2">
+        <div className="px-4 pt-4 pb-2 sm:px-6 sm:pt-6">
           <h3 id={titleId} className="text-base font-semibold text-foreground">{title}</h3>
           <p id={descriptionId} className="mt-2 text-sm text-muted-foreground leading-relaxed">{message}</p>
         </div>
-        <div className="flex justify-end gap-2 px-6 py-4 border-t border-border bg-muted/30">
+        <div className="flex flex-col-reverse gap-2 px-4 py-4 border-t border-border bg-muted/30 sm:flex-row sm:justify-end sm:px-6">
           <button
             type="button"
             onClick={onCancel}
@@ -5052,7 +5052,7 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
     <div className="space-y-4">
       {/* Toolbar */}
       <div className="space-y-2">
-        <div className="flex items-center gap-3 flex-wrap">
+        <div className="pm-adaptive-toolbar flex items-center gap-3 flex-wrap">
           <div className="flex gap-1 bg-muted rounded-lg p-1">
             <button onClick={() => setViewMode("table")} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${viewMode === "table" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
               <LayoutList className="w-4 h-4" /> Table
@@ -5069,7 +5069,7 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
             placeholder="Search backlog..."
             value={filter.search}
             onChange={(e) => setFilter((f) => ({ ...f, search: e.target.value }))}
-            className="border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 w-44"
+            className="w-full border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 sm:w-44"
           />
           <select className="bg-input-background border border-border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" value={filter.priority} onChange={(e) => setFilter((f) => ({ ...f, priority: e.target.value }))}>
             <option value="All">All Priorities</option>
@@ -5101,7 +5101,7 @@ function BacklogTab({ projectId, members, sprintNames, userEmail, canManage }: {
             <input type="number" min="0" placeholder="Max" value={filter.pointsMax} onChange={(e) => setFilter((f) => ({ ...f, pointsMax: e.target.value }))}
               className="border border-border rounded px-2 py-1.5 text-xs w-16 focus:outline-none focus:ring-1 focus:ring-primary/30" />
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             {savedViews.length > 0 && (
               <select onChange={(e) => {
                 const v = savedViews.find((sv) => sv.id === e.target.value);
@@ -6561,15 +6561,15 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {/* Sub-tab bar + export buttons */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex gap-1 bg-muted rounded-lg p-1 w-fit">
+      <div className="pm-adaptive-toolbar flex flex-col items-stretch gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="pm-tab-rail flex w-full max-w-full gap-1 overflow-x-auto rounded-lg bg-muted p-1 lg:w-auto">
           {SUB_TABS.map(t => (
             <button
               key={t.key}
               onClick={() => setReportTab(t.key)}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              className={`flex-shrink-0 whitespace-nowrap rounded-md px-4 py-2 text-sm font-medium transition-colors ${
                 reportTab === t.key ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
               }`}
             >
@@ -6577,11 +6577,11 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={exportFullReportCSV} className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-border rounded-lg hover:bg-muted transition-colors text-muted-foreground">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <button onClick={exportFullReportCSV} className="flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-border px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-muted sm:flex-none">
             <Download className="w-3.5 h-3.5" /> Export Excel (CSV)
           </button>
-          <button onClick={exportFullReportPrint} className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+          <button onClick={exportFullReportPrint} className="flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-indigo-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-indigo-700 sm:flex-none">
             <Download className="w-3.5 h-3.5" /> Export PDF
           </button>
         </div>
@@ -6590,7 +6590,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
       {/* ── BURNDOWN ── */}
       {reportTab === "burndown" && (
         <div className="space-y-4">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <label className="text-sm font-medium text-muted-foreground">Sprint:</label>
             <select
               value={selectedSprintId}
@@ -6771,31 +6771,31 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
           </div>
 
           {/* Filter bar */}
-          <div className="flex flex-wrap gap-2 items-center">
-            <select value={tlMember} onChange={e => setTlMember(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-card w-44">
+          <div className="pm-adaptive-toolbar flex flex-wrap items-center gap-2">
+            <select value={tlMember} onChange={e => setTlMember(e.target.value)} className="w-full rounded-md border bg-card px-3 py-1.5 text-sm sm:w-44">
               <option value="">All members</option>
               {empOptions.map(e => <option key={e.value} value={e.label}>{e.displayLabel ?? e.label}</option>)}
             </select>
-            <select value={tlType} onChange={e => setTlType(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-card">
+            <select value={tlType} onChange={e => setTlType(e.target.value)} className="w-full rounded-md border bg-card px-3 py-1.5 text-sm sm:w-auto">
               <option value="">All types</option>
               {["Development", "Review", "Testing", "Meeting", "Documentation", "Other"].map(t => (
                 <option key={t} value={t}>{t}</option>
               ))}
             </select>
-            <input type="date" value={tlFrom} onChange={e => setTlFrom(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-card" />
-            <span className="text-muted-foreground text-sm">–</span>
-            <input type="date" value={tlTo} onChange={e => setTlTo(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-card" />
-            <select value={tlBillable} onChange={e => setTlBillable(e.target.value as "all" | "yes" | "no")} className="border rounded-md px-3 py-1.5 text-sm bg-card">
+            <input type="date" value={tlFrom} onChange={e => setTlFrom(e.target.value)} className="w-full rounded-md border bg-card px-3 py-1.5 text-sm sm:w-auto" />
+            <span className="hidden text-sm text-muted-foreground sm:inline">–</span>
+            <input type="date" value={tlTo} onChange={e => setTlTo(e.target.value)} className="w-full rounded-md border bg-card px-3 py-1.5 text-sm sm:w-auto" />
+            <select value={tlBillable} onChange={e => setTlBillable(e.target.value as "all" | "yes" | "no")} className="w-full rounded-md border bg-card px-3 py-1.5 text-sm sm:w-auto">
               <option value="all">All</option>
               <option value="yes">Billable</option>
               <option value="no">Non-billable</option>
             </select>
-            <button onClick={exportTimeLogCsv} className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-sm bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors">
+            <button onClick={exportTimeLogCsv} className="ml-auto flex w-full items-center justify-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-indigo-700 sm:w-auto">
               <Download className="w-3.5 h-3.5" /> Export CSV
             </button>
           </div>
 
-          <div className="flex gap-4 items-start">
+          <div className="flex flex-col items-stretch gap-4 xl:flex-row xl:items-start">
             {/* Table */}
             <div className="flex-1 bg-card border rounded-xl overflow-hidden">
               <div className="overflow-x-auto">
@@ -6829,7 +6829,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
 
             {/* Donut chart */}
             {logTypeTotals.length > 0 && (
-              <div className="bg-card border rounded-xl p-4 flex-shrink-0">
+              <div className="flex-shrink-0 self-center rounded-xl border bg-card p-4 xl:self-auto">
                 <h4 className="text-xs font-medium text-muted-foreground mb-2">By Type</h4>
                 <svg role="img" aria-label="Project report chart with equivalent summary data below" viewBox="0 0 160 160" width="160" height="160">
                   {donutSegments().map(seg => (
@@ -7107,7 +7107,7 @@ function ReportsTab({ projectId, project }: { projectId: string; project: Projec
 
             {/* Milestone list */}
             {ms.length > 0 && (
-              <div className="bg-card border rounded-xl overflow-hidden">
+              <div className="bg-card border rounded-xl overflow-x-auto">
                 <table className="w-full min-w-[760px] table-auto text-sm">
                   <caption className="sr-only">Project management data table</caption>
                   <thead>
@@ -7278,10 +7278,10 @@ function ProjectDetailPanel({
   };
 
   return (
-    <div className="fixed inset-0 z-40 bg-card overflow-y-auto">
+    <div className="pm-responsive-root fixed inset-0 z-40 bg-card overflow-x-hidden overflow-y-auto">
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-card border-b px-6 py-4 flex items-center gap-4">
-        <div className="flex items-center gap-1 text-sm text-muted-foreground flex-shrink-0">
+      <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 border-b bg-card px-3 py-3 sm:gap-4 sm:px-6 sm:py-4">
+        <div className="order-1 flex w-full min-w-0 items-center gap-1 overflow-hidden text-xs text-muted-foreground sm:w-auto sm:flex-shrink-0 sm:text-sm">
           {onGoToDashboard && (
             <>
               <button onClick={onGoToDashboard} className="hover:text-foreground transition-colors">
@@ -7296,32 +7296,34 @@ function ProjectDetailPanel({
           <ChevronRight className="w-3.5 h-3.5 flex-shrink-0" />
           <span className="text-foreground font-medium truncate max-w-[180px]">{project.name}</span>
         </div>
-        <div className="flex-1 min-w-0">
+        <div className="order-2 min-w-0 flex-1 basis-40">
           <h2 className="text-lg font-bold text-foreground truncate">{project.name}</h2>
         </div>
-        <Badge className={STATUS_COLORS[project.status] ?? "bg-gray-100 text-gray-700"}>
+        <Badge className={`order-3 ${STATUS_COLORS[project.status] ?? "bg-gray-100 text-gray-700"}`}>
           {project.status}
         </Badge>
-        {(() => { const hs = computeHealthScore(project); const hl = healthLabel(hs); return <span className={`text-xs font-medium px-2 py-0.5 rounded border ${hl.bg} ${hl.color}`}>{hl.label} {hs}</span>; })()}
-        <ReportDefectButton
-          appName="Project Management"
-          featureName={project.name}
-          projectId={project.id}
-        />
+        {(() => { const hs = computeHealthScore(project); const hl = healthLabel(hs); return <span className={`order-3 text-xs font-medium px-2 py-0.5 rounded border ${hl.bg} ${hl.color}`}>{hl.label} {hs}</span>; })()}
+        <div className="order-4">
+          <ReportDefectButton
+            appName="Project Management"
+            featureName={project.name}
+            projectId={project.id}
+          />
+        </div>
         {canEditProject && (
-          <Button type="button" size="sm" variant="outline" onClick={onEditProject}>
+          <Button type="button" size="sm" variant="outline" className="order-4" onClick={onEditProject}>
             <Edit2 />
             <span className="hidden sm:inline">{t("common.edit")}</span>
           </Button>
         )}
         {isAdminUser && (
-          <Button type="button" size="sm" variant="outline" className="text-red-600 hover:text-red-700" onClick={onDeleteProject}>
+          <Button type="button" size="sm" variant="outline" className="order-4 text-red-600 hover:text-red-700" onClick={onDeleteProject}>
             <Trash2 />
             <span className="hidden sm:inline">{t("common.delete")}</span>
           </Button>
         )}
         {canManage && (
-          <div className="flex items-center gap-2">
+          <div className="order-5 flex items-center gap-2">
             <span className="text-sm text-muted-foreground">{t("project.rag")}:</span>
             <div className="flex gap-1">
               {RAG_STATUSES.map((r) => (
@@ -7339,13 +7341,15 @@ function ProjectDetailPanel({
       </div>
 
       {/* Tabs */}
-      <div className="w-full px-6 py-6">
-        <div className="flex gap-1 mb-6 bg-muted rounded-lg p-1 w-fit">
+      <div className="w-full min-w-0 px-3 py-4 sm:px-6 sm:py-6">
+        <div role="tablist" aria-label="Project sections" className="pm-tab-rail mb-4 flex w-full max-w-full gap-1 overflow-x-auto rounded-lg bg-muted p-1 sm:mb-6 sm:w-fit">
           {(["overview", "backlog", "defects", "tasks", "team", "milestones", "sprints", "risks", ...(secReports ? ["reports" as const] : [])] as const).map((tab) => (
             <button
               key={tab}
+              role="tab"
+              aria-selected={activeTab === tab}
               onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 rounded-md text-sm font-medium capitalize transition-colors ${
+              className={`shrink-0 px-3 py-2 rounded-md text-sm font-medium capitalize transition-colors sm:px-4 ${
                 activeTab === tab
                   ? "bg-card text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -9060,7 +9064,7 @@ export function ProjectManagementJira({
   );
 
   return (
-    <div ref={appRootRef} className="min-h-screen bg-muted">
+    <div ref={appRootRef} className="pm-responsive-root min-h-screen w-full max-w-full overflow-x-hidden bg-muted">
       {/* Header */}
       <div className="sticky top-0 z-30 border-b border-border/80 bg-background/90 backdrop-blur-xl">
         <div className="flex w-full flex-wrap items-center gap-3 px-4 py-3 sm:px-6 md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-4">
@@ -9075,7 +9079,7 @@ export function ProjectManagementJira({
             </div>
           </div>
           {/* Main view toggle */}
-          <div className="order-3 flex w-full justify-center gap-1 rounded-lg border border-border/70 bg-muted/60 p-1 md:order-2 md:w-auto">
+          <div className="order-3 flex w-full justify-start gap-1 overflow-x-auto rounded-lg border border-border/70 bg-muted/60 p-1 md:order-2 md:w-auto md:justify-center">
             <Button
               size="sm"
               variant={mainView === "dashboard" ? "secondary" : "ghost"}
@@ -9171,8 +9175,8 @@ export function ProjectManagementJira({
         </div>
 
         {/* Export CSV + Grid/Table toggle */}
-        <div className="flex items-center justify-between">
-          <div className="flex gap-1 bg-muted rounded-lg p-1">
+        <div className="pm-adaptive-toolbar flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex max-w-full gap-1 overflow-x-auto rounded-lg bg-muted p-1">
             <button onClick={() => setProjectsViewMode('grid')} className={`px-3 py-1.5 text-xs rounded font-medium flex items-center gap-1 ${projectsViewMode === 'grid' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
               <LayoutList className="w-3.5 h-3.5" /> Grid
             </button>
@@ -9256,7 +9260,7 @@ export function ProjectManagementJira({
         )}
 
         {/* View switcher */}
-        <div className="flex gap-1 bg-muted rounded-lg p-1 w-fit">
+        <div role="tablist" aria-label="Project views" className="pm-tab-rail flex w-full max-w-full gap-1 overflow-x-auto rounded-lg bg-muted p-1 sm:w-fit">
           {(
             [
               { id: "list", label: t("project.viewList"), icon: LayoutList },
@@ -9267,8 +9271,10 @@ export function ProjectManagementJira({
           ).map(({ id, label, icon: Icon }) => (
             <button
               key={id}
+              role="tab"
+              aria-selected={view === id}
               onClick={() => setView(id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              className={`flex shrink-0 items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
                 view === id
                   ? "bg-card text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
@@ -9519,7 +9525,7 @@ export function ProjectManagementJira({
       )}
 
       {deleteConfirmProject && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50">
+        <div className="pm-dialog-shell fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4">
           <div
             ref={deleteProjectDialogRef}
             role="alertdialog"
@@ -9527,7 +9533,7 @@ export function ProjectManagementJira({
             aria-labelledby={deleteProjectTitleId}
             aria-describedby={deleteProjectDescriptionId}
             tabIndex={-1}
-            className="bg-card border border-border rounded-xl shadow-xl p-6 w-full max-w-[440px] mx-4"
+            className="pm-dialog-panel bg-card border border-border rounded-xl shadow-xl p-4 sm:p-6 w-full max-w-[440px] max-h-[calc(100dvh-1rem)] overflow-y-auto"
           >
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
@@ -9548,7 +9554,7 @@ export function ProjectManagementJira({
               placeholder="Type project name..."
               className="w-full bg-input-background border border-border rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-red-500/30"
             />
-            <div className="flex gap-3 justify-end">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
               <button
                 onClick={() => { setDeleteConfirmProject(null); setDeleteNameInput(""); }}
                 className="px-4 py-2 text-sm bg-card border border-border rounded-lg text-foreground hover:bg-muted"

@@ -54,6 +54,17 @@ body {
   max-width: 100%;
 }
 
+.route-viewport :where(input, select, textarea) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.route-viewport :where(.overflow-x-auto) {
+  max-width: 100%;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 @media (max-width: 767px) {
   /*
    * Dense app toolbars should form additional rows rather than allowing
@@ -98,6 +109,46 @@ body {
   }
 
   .route-viewport :where(input, select, textarea) {
+    width: auto;
+    max-width: 100%;
+  }
+
+  /*
+   * Legacy dialogs use several panel widths but share a centered fixed shell.
+   * Bound every panel to the dynamic viewport and allow its content to scroll.
+   */
+  .route-viewport .fixed.inset-0.items-center {
+    padding: 0.5rem !important;
+    overscroll-behavior: contain;
+  }
+
+  .route-viewport .fixed.inset-0.items-center > :where(.bg-card, [class*='max-w-']) {
+    width: 100%;
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 1rem);
+    margin: 0;
+    overflow-y: auto;
+  }
+
+  .route-viewport .fixed.inset-0.items-center > :where(.bg-card, [class*='max-w-']) > :where(.p-5, .p-6) {
+    padding: 1rem !important;
+  }
+
+  .route-viewport .fixed.inset-0.items-center > :where(.bg-card, [class*='max-w-']) > :where(.px-5, .px-6) {
+    padding-inline: 1rem !important;
+  }
+
+  .route-viewport .fixed.inset-0 :where(.flex.justify-end, .flex.items-center.justify-between) {
+    flex-wrap: wrap;
+    row-gap: 0.75rem;
+  }
+
+  .route-viewport :where(.fixed.inset-y-0.right-0, .fixed.right-0.top-0.bottom-0, .fixed.right-0.top-0.h-full) {
+    width: 100%;
+    max-width: 100vw;
+  }
+
+  .route-viewport :where([class*='min-w-['], [class*='w-[']) {
     max-width: 100%;
   }
 }
@@ -108,12 +159,216 @@ body {
    * by responsive Tailwind variants. Collapse only those dense grids; two-up
    * KPI tiles remain compact and balanced on common phone widths.
    */
-  .route-viewport :where(.grid-cols-3, .grid-cols-4, .grid-cols-5, .grid-cols-6, .grid-cols-7) {
+  .route-viewport :where(.grid-cols-3, .grid-cols-4, .grid-cols-5, .grid-cols-6) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .route-viewport .fixed.inset-0 :where(.grid-cols-2, .grid-cols-3, .grid-cols-4) {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .route-viewport :where(button, [role='button']) {
     max-width: 100%;
+  }
+}
+
+@media (max-width: 359px) {
+  .route-viewport :where(.grid-cols-2) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Project Management contains dense boards, timelines, and reporting tables.
+ * Keep wide data inside its own scroll region and reflow shared controls so
+ * the application viewport itself never becomes horizontally scrollable. */
+.pm-responsive-root {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+/* Shared responsive contract for the operational apps with dense forms,
+ * action bars, data tables, and modal workflows. */
+.adaptive-app-root {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.adaptive-app-root :where(.flex, .grid) > * {
+  min-width: 0;
+}
+
+.adaptive-app-root :where(input, select, textarea) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.adaptive-app-root :where(.overflow-x-auto) {
+  max-width: 100%;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 767px) {
+  .adaptive-dialog-shell {
+    padding: 0.5rem !important;
+  }
+
+  .adaptive-dialog-panel {
+    width: 100%;
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 1rem);
+    margin: 0;
+    overflow-y: auto;
+  }
+
+  .adaptive-dialog-panel > :where(.p-5, .p-6) {
+    padding: 1rem !important;
+  }
+
+  .adaptive-dialog-panel > :where(.px-5, .px-6) {
+    padding-inline: 1rem !important;
+  }
+
+  .adaptive-drawer-panel {
+    width: 100%;
+    max-width: 100vw;
+  }
+
+  .adaptive-dialog-panel :where(.flex.items-center.justify-between, .flex.justify-end) {
+    flex-wrap: wrap;
+    row-gap: 0.75rem;
+  }
+}
+
+.pm-responsive-root :where(.overflow-x-auto) {
+  max-width: 100%;
+  overscroll-behavior-inline: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.pm-responsive-root :where(input, select, textarea) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 767px) {
+  .adaptive-app-root :where(.flex.items-center.justify-between) {
+    flex-wrap: wrap;
+    row-gap: 0.75rem;
+  }
+
+  .adaptive-app-root .adaptive-toolbar {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .adaptive-app-root .adaptive-toolbar > :where(input, select) {
+    width: 100%;
+    flex: 1 1 10rem;
+  }
+
+  .adaptive-app-root .adaptive-tab-rail {
+    width: 100%;
+    max-width: 100%;
+    scrollbar-width: thin;
+    scroll-snap-type: x proximity;
+  }
+
+  .adaptive-app-root .adaptive-tab-rail > * {
+    min-width: max-content;
+    flex: 0 0 auto;
+    scroll-snap-align: start;
+  }
+
+  .adaptive-app-root .fixed.inset-0.items-center {
+    padding: 0.5rem;
+  }
+
+  .adaptive-app-root .fixed.inset-0.items-center > .bg-card {
+    width: 100%;
+    max-width: calc(100vw - 1rem);
+    max-height: calc(100dvh - 1rem);
+    margin: 0;
+    overflow-y: auto;
+  }
+
+  .adaptive-app-root .fixed.inset-0.items-center > .bg-card > :where(.p-5, .p-6) {
+    padding: 1rem !important;
+  }
+
+  .adaptive-app-root .fixed.inset-0.items-center > .bg-card > :where(.px-5, .px-6) {
+    padding-inline: 1rem !important;
+  }
+
+  .adaptive-app-root :where(.fixed.inset-y-0.right-0, .fixed.right-0.top-0.bottom-0) {
+    max-width: 100vw;
+  }
+
+  .pm-responsive-root :where(.flex.items-center.justify-between) {
+    flex-wrap: wrap;
+    row-gap: 0.75rem;
+  }
+
+  .pm-responsive-root .pm-adaptive-toolbar {
+    width: 100%;
+    align-items: stretch;
+  }
+
+  .pm-responsive-root .pm-adaptive-toolbar > :where(input, select) {
+    width: 100%;
+    flex: 1 1 10rem;
+  }
+
+  .pm-responsive-root .pm-adaptive-toolbar > .ml-auto {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .pm-responsive-root .pm-tab-rail {
+    scrollbar-width: thin;
+    scroll-snap-type: x proximity;
+  }
+
+  .pm-responsive-root .pm-tab-rail > * {
+    min-width: max-content;
+    scroll-snap-align: start;
+  }
+
+  .pm-responsive-root .pm-dialog-shell {
+    overscroll-behavior: contain;
+  }
+
+  .pm-responsive-root .pm-dialog-panel {
+    margin: 0;
+    max-width: 100%;
+  }
+
+  .pm-responsive-root :where(.fixed.inset-y-0.right-0, .fixed.right-0.top-0.h-full) {
+    max-width: 100vw;
+  }
+}
+
+@media (max-width: 479px) {
+  .adaptive-dialog-panel :where(.grid-cols-2, .grid-cols-3) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adaptive-app-root .fixed.inset-0 :where(.grid-cols-2, .grid-cols-3) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .adaptive-app-root .fixed.inset-0 :where(.flex.justify-end, .flex.items-center.justify-between) {
+    flex-wrap: wrap;
+  }
+
+  /* Calendar views remain seven compact day columns rather than inheriting
+   * the generic single-column mobile grid fallback. */
+  .pm-responsive-root .grid-cols-7 {
+    grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
   }
 }
 

@@ -475,7 +475,7 @@ function VHRowModal({ initial, defaultEntity, defaultField, onClose, onSaved }: 
           <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <label className="block text-sm font-medium text-foreground">{t('masterData.entityLabel')} <span className="text-red-500">*</span></label>
               <input value={entity} onChange={e => setEntity(e.target.value)} placeholder="e.g. leave"
@@ -497,7 +497,7 @@ function VHRowModal({ initial, defaultEntity, defaultField, onClose, onSaved }: 
             <input value={value} onChange={e => setValue(e.target.value)} placeholder="e.g. Annual Leave"
               className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <label className="block text-sm font-medium text-foreground">{t('masterData.sortOrder')}</label>
               <input type="number" value={sortOrder} onChange={e => setSortOrder(e.target.value)} min={1}
@@ -621,9 +621,9 @@ function ValueHelpsPanel({ canMutate }: { canMutate: boolean }) {
       </div>
 
       {/* Two-column layout */}
-      <div className="flex gap-4 min-h-[600px]">
+      <div className="flex min-h-0 flex-col gap-4 lg:min-h-[600px] lg:flex-row">
         {/* Left — entity list */}
-        <div className="w-52 shrink-0 bg-card rounded-xl border border-border flex flex-col overflow-hidden">
+        <div className="flex max-h-64 w-full shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card lg:max-h-none lg:w-52">
           <div className="px-3 py-2.5 border-b border-border">
             <div className="relative">
               <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -976,7 +976,7 @@ function EntityPanel({ entity, canMutate, canExport }: { entity: EntityDef; canM
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="bg-card rounded-xl border border-border px-4 py-3">
           <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">{t('Total')}</p>
           <p className="text-2xl font-bold text-foreground mt-0.5">{loading ? '—' : data.length}</p>
@@ -1609,7 +1609,7 @@ export function MasterDataManagementExpanded({ onLogout }: MasterDataManagementE
 
   return (
     <AppLayout title="Master Data Management" icon={<Building2 className="h-6 w-6" />} onLogout={onLogout ?? (() => {})}>
-      <div className="w-full px-4 sm:px-6 py-6">
+      <div className="adaptive-app-root min-h-screen w-full max-w-full overflow-x-hidden px-4 py-6 sm:px-6">
 
         {/* Mobile: category pills → entity pills */}
         <div className="md:hidden mb-4 space-y-2">
@@ -1637,7 +1637,7 @@ export function MasterDataManagementExpanded({ onLogout }: MasterDataManagementE
           )}
         </div>
 
-        <div className="flex gap-6 items-start">
+        <div className="flex min-w-0 items-start gap-6">
           <Sidebar activeId={activeId} onSelect={setActiveId} />
           {activeId === 'value-helps' ? (
             <ValueHelpsPanel canMutate={canMutate} />

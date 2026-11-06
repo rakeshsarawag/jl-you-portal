@@ -2319,7 +2319,7 @@ function BulkImportModal({ onClose, onImported, existingEmails }: {
               {/* Column reference */}
               <div>
                 <p className="text-sm font-semibold text-foreground mb-2">Column Reference</p>
-                <div className="rounded-lg border border-border overflow-hidden">
+                <div className="rounded-lg border border-border overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-muted">
                       <tr>
@@ -2750,11 +2750,11 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
   }
 
   return (
-    <div className="min-h-screen bg-muted">
+    <div className="adaptive-app-root min-h-screen w-full max-w-full overflow-x-hidden bg-muted">
       {/* Header */}
       <header className="bg-card border-b border-border sticky top-0 z-30">
-        <div className="w-full px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 px-3 py-3 sm:gap-4 sm:px-6 sm:py-4">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
               <Users size={18} className="text-white" />
             </div>
@@ -2767,9 +2767,9 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
               </span>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
             {/* Tab switcher */}
-            <div className="flex items-center gap-1 bg-muted p-1 rounded-lg">
+            <div className="flex max-w-full items-center gap-1 overflow-x-auto bg-muted p-1 rounded-lg">
               <button
                 onClick={() => setMainTab('onboarding')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors ${mainTab === 'onboarding' ? 'bg-card shadow text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}`}
@@ -2803,7 +2803,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
         </div>
       </header>
 
-      <main className="w-full px-4 sm:px-6 py-6 space-y-6">
+      <main className="w-full min-w-0 space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-6">
         {/* Offboarding tab */}
         {mainTab === 'offboarding' && (
           <OffboardingTab
@@ -2956,7 +2956,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
         </div>
 
         {/* View toggle */}
-        <div className="flex items-center justify-between">
+        <div className="adaptive-toolbar flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1 bg-muted p-1 rounded-lg">
             <button
               onClick={() => setView('list')}
@@ -2995,12 +2995,12 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
               <thead>
                 <tr className="border-b border-border text-left">
                   <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Name / Position</th>
-                  <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Dept</th>
-                  <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Joining Date</th>
-                  <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase min-w-[120px]">Progress</th>
+                  <th className="hidden px-4 py-3 text-xs font-medium text-muted-foreground uppercase md:table-cell">Dept</th>
+                  <th className="hidden px-4 py-3 text-xs font-medium text-muted-foreground uppercase md:table-cell">Joining Date</th>
+                  <th className="hidden px-4 py-3 text-xs font-medium text-muted-foreground uppercase min-w-[120px] sm:table-cell">Progress</th>
                   <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Status</th>
                   <th className="hidden md:table-cell px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Buddy</th>
-                  <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Actions</th>
+                  <th className="w-28 px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -3018,9 +3018,9 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                       <p className="text-xs text-muted-foreground">{emp.position}</p>
                       {emp.employeeCode && <p className="text-xs text-muted-foreground">ID: {emp.employeeCode}</p>}
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">{emp.department}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{emp.joiningDate}</td>
-                    <td className="px-4 py-3 min-w-[120px]">
+                    <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">{emp.department}</td>
+                    <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">{emp.joiningDate}</td>
+                    <td className="hidden px-4 py-3 min-w-[120px] sm:table-cell">
                       <ProgressBar value={emp.progress} />
                     </td>
                     <td className="px-4 py-3">
@@ -3028,7 +3028,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                     </td>
                     <td className="hidden md:table-cell px-4 py-3 text-muted-foreground">{emp.buddy || '—'}</td>
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center gap-1">
                         <button
                           onClick={() => setDetailEmployee(emp)}
                           title="View Checklist"

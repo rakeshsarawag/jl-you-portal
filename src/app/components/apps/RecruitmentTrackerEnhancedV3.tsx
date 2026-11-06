@@ -3027,10 +3027,10 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
   }
 
   return (
-    <div className="min-h-screen bg-muted">
+    <div className="adaptive-app-root min-h-screen w-full max-w-full overflow-x-hidden bg-muted">
       {/* Header */}
       <div className="bg-card border-b border-border sticky top-0 z-30">
-        <div className="w-full px-4 sm:px-6 py-3 flex items-center justify-between gap-3">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-6">
           <div className="flex items-center gap-3 min-w-0">
             <div className="bg-blue-600 text-white rounded-lg p-1.5 shrink-0"><Users size={18} /></div>
             <div className="min-w-0">
@@ -3042,7 +3042,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
               )}
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {canCreateCandidate && (
               <>
                 <button onClick={() => setShowBulkUpload(true)}
@@ -3059,7 +3059,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
         </div>
       </div>
 
-      <div className="w-full px-4 sm:px-6 py-6 space-y-6">
+      <div className="w-full min-w-0 space-y-5 px-3 py-4 sm:space-y-6 sm:px-6 sm:py-6">
         {/* Stat cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <StatCard icon={Users} label={t("totalCandidates")} value={derivedStats.total} color="bg-blue-50 text-blue-600" />
@@ -3069,14 +3069,14 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 border-b border-border overflow-x-auto scrollbar-hide">
+        <div role="tablist" aria-label="Recruitment sections" className="adaptive-tab-rail flex gap-1 border-b border-border overflow-x-auto scrollbar-hide">
           {([
             { id: "pipeline", label: "Pipeline" },
             { id: "jobs", label: "Jobs" },
             { id: "requisitions", label: t("recruitment.requisitions") },
             { id: "analytics", label: "Analytics" },
           ] as const).map((tab) => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            <button key={tab.id} role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)}
               className={`shrink-0 px-4 py-2 text-sm font-medium transition-colors ${activeTab === tab.id ? "border-b-2 border-blue-600 text-blue-600" : "text-muted-foreground hover:text-foreground"}`}>
               {tab.label}
             </button>
@@ -3321,15 +3321,15 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
         {/* Requisitions tab */}
         {activeTab === "requisitions" && (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2 flex-wrap">
+            <div className="adaptive-toolbar flex flex-wrap items-center justify-between gap-3">
+              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
                 <select value={reqStatusFilter} onChange={(e) => setReqStatusFilter(e.target.value)}
-                  className="text-sm border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  className="w-full text-sm border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-auto">
                   <option value="All">All Statuses</option>
                   {REQUISITION_STATUSES.map((s) => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
                 </select>
                 <select value={reqDeptFilter} onChange={(e) => setReqDeptFilter(e.target.value)}
-                  className="text-sm border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  className="w-full text-sm border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 sm:w-auto">
                   <option value="All">All Departments</option>
                   {[...new Set(requisitions.map((r) => r.department))].filter(Boolean).map((d) => <option key={d}>{d}</option>)}
                 </select>

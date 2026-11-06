@@ -172,8 +172,8 @@ function Avatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' | 'lg'
 
 function ConfirmDialog({ message, onConfirm, onCancel }: { message: string; onConfirm: () => void; onCancel: () => void }) {
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-card border border-border rounded-xl shadow-xl p-6 max-w-sm w-full">
+    <div className="adaptive-dialog-shell fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="adaptive-dialog-panel bg-card border border-border rounded-xl shadow-xl p-4 sm:p-6 max-w-sm w-full">
         <div className="flex items-start gap-3 mb-4">
           <AlertCircle size={20} className="text-orange-500 flex-shrink-0 mt-0.5" />
           <p className="text-sm text-foreground">{message}</p>
@@ -299,8 +299,8 @@ function EmployeeForm({
   const inp = "w-full text-sm border border-border rounded-lg px-3 py-2 bg-input focus:outline-none focus:ring-2 focus:ring-primary/30";
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+    <div className="adaptive-dialog-shell fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="adaptive-dialog-panel bg-card border border-border rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 bg-card border-b border-border px-6 py-4 flex items-center justify-between">
           <h3 className="font-semibold text-foreground">{initial?.id ? 'Edit Employee' : t('directory.addEmployee')}</h3>
           <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors"><X size={16} /></button>
@@ -1284,9 +1284,9 @@ function SelfEditModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
+    <div className="adaptive-dialog-shell fixed inset-0 z-[400] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={onClose}>
       <div
-        className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto"
+        className="adaptive-dialog-panel bg-card border border-border rounded-xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
       >
         <div className="sticky top-0 bg-card border-b border-border px-5 py-4 flex items-center justify-between z-10">
@@ -1401,7 +1401,7 @@ function EmployeeDetailDrawer({
   return (
     <div className="fixed inset-0 z-[300] flex justify-end bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="bg-card border-l border-border w-full max-w-lg h-full overflow-y-auto shadow-2xl animate-in slide-in-from-right duration-200"
+        className="adaptive-drawer-panel bg-card border-l border-border w-full max-w-lg h-full overflow-y-auto shadow-2xl animate-in slide-in-from-right duration-200"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -2004,8 +2004,8 @@ function EmpBulkUploadModal({ onClose, onUpload }: { onClose: () => void; onUplo
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
-      <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+    <div className="adaptive-dialog-shell fixed inset-0 z-[300] flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+      <div className="adaptive-dialog-panel bg-card border border-border rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between p-5 border-b border-border shrink-0">
           <div>
             <h2 className="font-semibold text-foreground">Bulk Upload Employees</h2>
@@ -2302,20 +2302,20 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="adaptive-app-root min-h-screen w-full max-w-full overflow-x-hidden bg-background">
       {/* Header */}
       <div className="bg-card border-b border-border sticky top-0 z-30">
-        <div className="w-full px-4 sm:px-6 h-14 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2">
             <Users size={18} className="text-primary" />
             <h1 className="font-semibold text-foreground text-sm">{t('directory.title')}</h1>
             {!dir.loading && (
               <span className="text-xs text-muted-foreground">({dir.employees.length} employees)</span>
             )}
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
             {/* View toggle */}
-            <div className="flex items-center bg-muted rounded-lg p-0.5">
+            <div className="flex max-w-full items-center overflow-x-auto bg-muted rounded-lg p-0.5">
               {([
                 { mode: 'list', icon: List, label: 'List view' },
                 { mode: 'card', icon: LayoutGrid, label: 'Card view' },
@@ -2374,7 +2374,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
         </div>
       </div>
 
-      <div className="w-full px-4 sm:px-6 py-6 space-y-4">
+      <div className="w-full min-w-0 space-y-4 px-3 py-4 sm:px-6 sm:py-6">
         {/* Celebrations This Month */}
         {(() => {
           const now = new Date();
@@ -2437,8 +2437,8 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
 
         {/* Filters */}
         {(viewMode === 'list' || viewMode === 'card') && (
-          <div className="flex flex-wrap gap-2">
-            <div className="relative flex-1 min-w-48">
+          <div className="adaptive-toolbar flex flex-wrap gap-2">
+            <div className="relative w-full flex-1 sm:min-w-48">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <input value={dir.search} onChange={e => dir.setSearch(e.target.value)}
                 placeholder={t('directory.searchEmployees')}
@@ -2470,17 +2470,18 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
               </div>
             ) : (
               <div className="bg-card border border-border rounded-xl overflow-hidden">
-                <div className="flex items-center gap-3 border-b border-border bg-muted/40 px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  <div className="w-64 shrink-0">Employee</div>
+                <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-2 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide sm:gap-3 sm:px-4">
+                  <div className="w-[38vw] min-w-0 shrink-0 sm:w-64">Employee</div>
                   {visibleCols.has('employee_code') && <div className="hidden sm:block w-28 shrink-0">Code</div>}
                   {visibleCols.has('department') && <div className="hidden sm:block w-36 shrink-0">Department</div>}
                   {visibleCols.has('manager') && <div className="hidden xl:block w-40 shrink-0">Manager</div>}
                   {visibleCols.has('email') && <div className="hidden md:block w-52 shrink-0">Contact</div>}
                   {visibleCols.has('location') && <div className="hidden lg:block w-32 shrink-0">Location</div>}
-                  {visibleCols.has('status') && <div className="w-24 shrink-0">Status</div>}
+                  {visibleCols.has('status') && <div className="w-18 shrink-0 sm:w-24">Status</div>}
                   {(canEdit || canDelete) && (
-                    <div className="w-20 shrink-0 text-right">
-                      {canEdit && canDelete ? 'Edit / Delete' : canEdit ? 'Edit' : 'Delete'}
+                    <div className="w-16 shrink-0 text-right sm:w-20">
+                      <span className="sm:hidden">Actions</span>
+                      <span className="hidden sm:inline">{canEdit && canDelete ? 'Edit / Delete' : canEdit ? 'Edit' : 'Delete'}</span>
                     </div>
                   )}
                 </div>
@@ -2493,12 +2494,12 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                         <div
                           key={emp.id}
                           style={{ position: 'absolute', top: virtualRow.start, left: 0, right: 0, height: virtualRow.size }}
-                          className="flex items-center gap-3 px-4 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer group"
+                          className="flex items-center gap-2 px-2 border-b border-border hover:bg-muted/30 transition-colors cursor-pointer group sm:gap-3 sm:px-4"
                           onClick={() => openDetail(emp)}
                           onMouseEnter={e => handleHoverStart(e as any, emp)}
                           onMouseLeave={handleHoverEnd}
                         >
-                          <div className="flex w-64 shrink-0 items-center gap-3 min-w-0">
+                          <div className="flex w-[38vw] min-w-0 shrink-0 items-center gap-2 sm:w-64 sm:gap-3">
                             <Avatar name={emp.name} size="sm" />
                             <div className="min-w-0">
                               <p className="font-medium text-foreground truncate">{emp.name}</p>
@@ -2532,14 +2533,14 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                             </div>
                           )}
                           {visibleCols.has('status') && (
-                            <div className="flex w-24 shrink-0 flex-wrap gap-1">
+                            <div className="flex w-18 shrink-0 flex-wrap gap-1 sm:w-24">
                               <StatusBadge status={emp.status} />
                               {onLeaveIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">🌴</span>}
                               {wfhIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">🏠</span>}
                             </div>
                           )}
                           {(canEdit || canDelete) && (
-                            <div className="flex w-20 shrink-0 justify-end gap-1" onClick={e => e.stopPropagation()}>
+                            <div className="flex w-16 shrink-0 justify-end gap-1 sm:w-20" onClick={e => e.stopPropagation()}>
                               {canEdit && <button title={`Edit ${emp.name}`} aria-label={`Edit ${emp.name}`} onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors">
                                 <Edit2 size={13} className="text-muted-foreground" />
@@ -2564,7 +2565,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
         {viewMode === 'card' && (
           <>
             {dir.loading ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 {[1,2,3,4,5,6,7,8].map(i => <div key={i} className="h-52 bg-muted animate-pulse rounded-xl" />)}
               </div>
             ) : dir.filtered.length === 0 ? (
@@ -2573,7 +2574,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                 <p className="text-sm">{dir.search || dir.filterDept || dir.filterStatus ? 'No employees match your filters.' : 'No employees in the directory yet.'}</p>
               </div>
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 {dir.filtered.map(emp => (
                   <EmployeeCard key={emp.id} emp={emp} canEdit={canEdit} canDelete={canDelete}
                     onView={() => openDetail(emp)}
