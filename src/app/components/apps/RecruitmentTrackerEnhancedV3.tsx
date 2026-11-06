@@ -3314,6 +3314,13 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                   {filteredCandidates.map((c) => {
                     const needsFb = INTERVIEW_STAGES.includes(c.stage) && (c.feedback ?? []).length === 0;
                     const isBlacklisted = (c as any).blacklisted;
+                    const skillItems = [...new Set(
+                      (c.skills ?? [])
+                        .flatMap((skill) => skill.split(","))
+                        .map((skill) => skill.trim())
+                        .filter(Boolean),
+                    )];
+                    const skillTooltip = skillItems.join(", ");
                     return (
                       <tr key={c.id} onClick={() => setSelectedCandidateId(c.id)}
                         className={`group border-b border-gray-50 hover:bg-muted transition-colors cursor-pointer ${isBlacklisted ? "opacity-60" : ""}`}>
@@ -3347,16 +3354,38 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                           <p className="max-w-36 truncate" title={c.previousCompany || undefined}>{c.previousCompany || "—"}</p>
                         </td>
                         <td className="px-4 py-3 text-muted-foreground">
-                          <p className="max-w-44 truncate" title={(c.skills ?? []).join(", ") || undefined}>
-                            {(c.skills ?? []).join(", ") || "—"}
-                          </p>
+                          {skillItems.length > 0 ? (
+                            <button
+                              type="button"
+                              title={skillTooltip}
+                              aria-label={`View ${c.name}'s skills: ${skillTooltip}`}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setSelectedCandidateId(c.id);
+                              }}
+                              className="flex max-w-44 items-center gap-1 overflow-hidden text-left"
+                            >
+                              {skillItems.slice(0, 2).map((skill) => (
+                                <span key={skill} className="max-w-20 shrink truncate rounded bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-700">
+                                  {skill}
+                                </span>
+                              ))}
+                              {skillItems.length > 2 && (
+                                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+                                  +{skillItems.length - 2}
+                                </span>
+                              )}
+                            </button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </td>
                         <td className="px-4 py-3">
                           {c.expertise ? (
                             <span title={c.expertise} className="block max-w-32 truncate rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">{c.expertise}</span>
                           ) : <span className="text-muted-foreground text-xs">—</span>}
                         </td>
-                        <td className="relative px-3 py-3" onClick={(event) => event.stopPropagation()}>
+                        <td className={`relative px-3 py-3 ${openCandidateActions === c.id ? "z-30" : ""}`} onClick={(event) => event.stopPropagation()}>
                           <div className="flex justify-center">
                             <button
                               type="button"
@@ -3364,38 +3393,38 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                               aria-label={openCandidateActions === c.id ? `Hide actions for ${c.name}` : `Show actions for ${c.name}`}
                               aria-expanded={openCandidateActions === c.id}
                               onClick={() => setOpenCandidateActions((current) => current === c.id ? null : c.id)}
-                              className={`rounded-lg p-1.5 transition-colors ${openCandidateActions === c.id ? "bg-blue-50 text-blue-600" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+                              className={`flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors ${openCandidateActions === c.id ? "bg-blue-50 text-blue-600" : "text-slate-600 hover:bg-muted hover:text-foreground dark:text-slate-300"}`}
                             >
-                              <MoreHorizontal size={16} />
+                              <MoreHorizontal size={18} strokeWidth={2.25} />
                             </button>
                           </div>
                           {openCandidateActions === c.id && (
-                            <div className="absolute right-10 top-1/2 z-20 flex -translate-y-1/2 items-center gap-0.5 rounded-lg border border-border bg-card p-1 shadow-lg">
+                            <div className="absolute right-12 top-1/2 z-40 flex w-max min-w-max -translate-y-1/2 items-center gap-1 rounded-lg border border-border bg-card p-1.5 text-slate-600 shadow-xl dark:text-slate-300">
                               <button title={t("view")} onClick={() => { setOpenCandidateActions(null); setSelectedCandidateId(c.id); }}
-                                className="rounded p-1.5 text-muted-foreground hover:bg-blue-50 hover:text-blue-600"><Eye size={14} /></button>
+                                className="flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-blue-50 hover:text-blue-600"><Eye size={18} /></button>
                               {canCreateCandidate && (
                                 <>
                                   <button title={t("edit")} onClick={() => { setOpenCandidateActions(null); setEditingCandidate(c); setShowCandidateForm(true); }}
-                                    className="rounded p-1.5 text-muted-foreground hover:bg-blue-50 hover:text-blue-600"><Edit2 size={14} /></button>
+                                    className="flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-blue-50 hover:text-blue-600"><Edit2 size={18} /></button>
                                   <button title={needsFb ? t("feedbackRequired") : t("nextStage")}
                                     onClick={async () => {
                                       setOpenCandidateActions(null);
                                       try { await moveToNextStage(c.id); await refresh(); }
                                       catch (err: unknown) { toast.error(err instanceof Error ? err.message : "Cannot advance stage"); }
                                     }}
-                                    className={`rounded p-1.5 ${needsFb ? "text-amber-400 hover:bg-amber-50 hover:text-amber-600" : "text-muted-foreground hover:bg-orange-50 hover:text-orange-500"}`}>
-                                    <ArrowRight size={14} />
+                                    className={`flex size-9 shrink-0 items-center justify-center rounded-md ${needsFb ? "text-amber-500 hover:bg-amber-50 hover:text-amber-700" : "hover:bg-orange-50 hover:text-orange-600"}`}>
+                                    <ArrowRight size={18} />
                                   </button>
                                   {canMakeOffers && (c.stage === "Offer Sent" || c.stage === "Offer Accepted") && (
                                     <button title={t("hire")} onClick={() => { setOpenCandidateActions(null); setConfirmHire(c); }}
-                                      className="rounded p-1.5 text-muted-foreground hover:bg-green-50 hover:text-green-600"><CheckCircle size={14} /></button>
+                                      className="flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-green-50 hover:text-green-600"><CheckCircle size={18} /></button>
                                   )}
                                   {canMakeOffers && (
                                     <button title={t("generateOffer")} onClick={() => { setOpenCandidateActions(null); setSelectedCandidateId(c.id); }}
-                                      className="rounded p-1.5 text-muted-foreground hover:bg-purple-50 hover:text-purple-600"><FileText size={14} /></button>
+                                      className="flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-purple-50 hover:text-purple-600"><FileText size={18} /></button>
                                   )}
                                   <button title={t("delete")} onClick={() => { setOpenCandidateActions(null); setConfirmDelete({ type: "candidate", id: c.id }); }}
-                                    className="rounded p-1.5 text-muted-foreground hover:bg-red-50 hover:text-red-500"><Trash2 size={14} /></button>
+                                    className="flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-red-50 hover:text-red-600"><Trash2 size={18} /></button>
                                 </>
                               )}
                             </div>

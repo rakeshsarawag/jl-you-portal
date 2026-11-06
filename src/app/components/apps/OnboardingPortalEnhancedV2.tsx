@@ -9,6 +9,7 @@ import {
   ChevronDown, Briefcase, Loader2, Search,
   LogOut, Calendar, DollarSign, ClipboardList, UserMinus,
   Kanban, MessageSquare, Clock, Download, Table2, CheckCircle2, XCircle,
+  MoreHorizontal,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useUser } from '../../context/UserContext';
@@ -2579,6 +2580,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
   const [showForm, setShowForm] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<OnboardingCandidate | null>(null);
   const [detailEmployee, setDetailEmployee] = useState<OnboardingCandidate | null>(null);
+  const [openEmployeeActions, setOpenEmployeeActions] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<OnboardingCandidate | null>(null);
   const [enableTarget, setEnableTarget] = useState<OnboardingCandidate | null>(null);
   const [enableTargetRoles, setEnableTargetRoles] = useState<string[]>(['employee']);
@@ -3000,7 +3002,7 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                   <th className="min-w-[120px] px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Progress</th>
                   <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Status</th>
                   <th className="px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Buddy</th>
-                  <th className="w-28 px-4 py-3 text-xs font-medium text-muted-foreground uppercase">Actions</th>
+                  <th className="w-14 px-3 py-3 text-center text-xs font-medium text-muted-foreground uppercase">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -3027,43 +3029,57 @@ export function OnboardingPortalDB({ accessToken, onLogout }: { accessToken: str
                       <StatusBadge status={emp.status} />
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{emp.buddy || '—'}</td>
-                    <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
-                      <div className="flex items-center gap-1">
+                    <td className={`relative px-3 py-3 ${openEmployeeActions === emp.id ? "z-30" : ""}`} onClick={e => e.stopPropagation()}>
+                      <div className="flex justify-center">
                         <button
-                          onClick={() => setDetailEmployee(emp)}
-                          title="View Checklist"
-                          className="p-1.5 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 rounded"
+                          type="button"
+                          onClick={() => setOpenEmployeeActions((current) => current === emp.id ? null : emp.id)}
+                          title={openEmployeeActions === emp.id ? "Hide actions" : "Show actions"}
+                          aria-label={openEmployeeActions === emp.id ? `Hide actions for ${emp.name}` : `Show actions for ${emp.name}`}
+                          aria-expanded={openEmployeeActions === emp.id}
+                          className={`flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors ${openEmployeeActions === emp.id ? "bg-blue-50 text-blue-600" : "text-slate-600 hover:bg-muted hover:text-foreground dark:text-slate-300"}`}
                         >
-                          <Eye size={14} />
+                          <MoreHorizontal size={18} strokeWidth={2.25} />
                         </button>
-                        {permManageOnboarding && (
-                          <button
-                            onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
-                            title="Edit"
-                            className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded"
-                          >
-                            <Edit2 size={14} />
-                          </button>
-                        )}
-                        {(permManageOnboarding || permPortalAccess) && (
-                          <>
-                            {permPortalAccess && <button
-                              onClick={() => { setEnableTarget(emp); setEnableTargetRoles(['employee']); }}
-                              title="Enable Access"
-                              className="p-1.5 text-muted-foreground hover:text-green-600 hover:bg-green-50 rounded"
-                            >
-                              <UserCheck size={14} />
-                            </button>}
-                            {permManageOnboarding && <button
-                              onClick={() => setDeleteTarget(emp)}
-                              title="Delete"
-                              className="p-1.5 text-muted-foreground hover:text-red-600 hover:bg-red-50 rounded"
-                            >
-                              <Trash2 size={14} />
-                            </button>}
-                          </>
-                        )}
                       </div>
+                      {openEmployeeActions === emp.id && (
+                        <div className="absolute right-12 top-1/2 z-40 flex w-max min-w-max -translate-y-1/2 items-center gap-1 rounded-lg border border-border bg-card p-1.5 text-slate-600 shadow-xl dark:text-slate-300">
+                          <button
+                            onClick={() => { setOpenEmployeeActions(null); setDetailEmployee(emp); }}
+                            title="View Checklist"
+                            className="flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-blue-50 hover:text-blue-600"
+                          >
+                            <Eye size={18} />
+                          </button>
+                          {permManageOnboarding && (
+                            <button
+                              onClick={() => { setOpenEmployeeActions(null); setEditingEmployee(emp); setShowForm(true); }}
+                              title="Edit"
+                              className="flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-muted hover:text-foreground"
+                            >
+                              <Edit2 size={18} />
+                            </button>
+                          )}
+                          {permPortalAccess && (
+                            <button
+                              onClick={() => { setOpenEmployeeActions(null); setEnableTarget(emp); setEnableTargetRoles(['employee']); }}
+                              title="Enable Access"
+                              className="flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-green-50 hover:text-green-600"
+                            >
+                              <UserCheck size={18} />
+                            </button>
+                          )}
+                          {permManageOnboarding && (
+                            <button
+                              onClick={() => { setOpenEmployeeActions(null); setDeleteTarget(emp); }}
+                              title="Delete"
+                              className="flex size-9 shrink-0 items-center justify-center rounded-md hover:bg-red-50 hover:text-red-600"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}

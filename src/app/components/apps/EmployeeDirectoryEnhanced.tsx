@@ -239,12 +239,13 @@ function ManagerPicker({ value, managers, onChange }: {
 
 // ── Employee form ──────────────────────────────────────────────────────────
 function EmployeeForm({
-  initial, managers, onSubmit, onClose,
+  initial, managers, onSubmit, onClose, onDelete,
 }: {
   initial?: Partial<DirectoryEmployee>;
   managers: DirectoryEmployee[];
   onSubmit: (data: Partial<DirectoryEmployee>) => Promise<void>;
   onClose: () => void;
+  onDelete?: () => void;
 }) {
   const [form, setForm] = useState<Partial<DirectoryEmployee>>({
     name: '', email: '', phone: '', department: '',
@@ -422,12 +423,19 @@ function EmployeeForm({
             </F>
           </div>
 
-          <div className="flex justify-end gap-2 pt-2 border-t border-border">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors">Cancel</button>
-            <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors flex items-center gap-1.5 disabled:opacity-60">
-              {saving && <Loader2 size={14} className="animate-spin" />}
-              {initial?.id ? 'Save Changes' : 'Add Employee'}
-            </button>
+          <div className="flex flex-col-reverse gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+            {initial?.id && onDelete ? (
+              <button type="button" onClick={onDelete} className="flex items-center justify-center gap-1.5 rounded-lg border border-red-200 px-4 py-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50">
+                <Trash2 size={14} /> Delete Employee
+              </button>
+            ) : <span />}
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted transition-colors">Cancel</button>
+              <button type="submit" disabled={saving} className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-60">
+                {saving && <Loader2 size={14} className="animate-spin" />}
+                {initial?.id ? 'Save Changes' : 'Add Employee'}
+              </button>
+            </div>
           </div>
         </form>
       </div>
@@ -1354,7 +1362,7 @@ function SelfEditModal({
   );
 }
 
-// ── Employee Detail Drawer ─────────────────────────────────────────────────
+// ── Employee Detail Modal ──────────────────────────────────────────────────
 type DetailTab = 'profile' | 'professional' | 'documents' | 'emergency' | 'audit';
 
 function LabelValue({ label, value }: { label: string; value: string | null | undefined }) {
@@ -1399,13 +1407,16 @@ function EmployeeDetailDrawer({
   ];
 
   return (
-    <div className="fixed inset-0 z-[300] flex justify-end bg-black/40 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/40 p-2 backdrop-blur-sm sm:p-4" onClick={onClose}>
       <div
-        className="adaptive-drawer-panel bg-card border-l border-border w-full max-w-lg h-full overflow-y-auto shadow-2xl animate-in slide-in-from-right duration-200"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Employee profile for ${employee.name}`}
+        className="adaptive-dialog-panel flex h-[calc(100dvh-1rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-2xl sm:h-[min(90dvh,840px)]"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="sticky top-0 bg-card border-b border-border px-5 py-4 flex items-center justify-between z-10">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-4 py-3 sm:px-5 sm:py-4">
           <h3 className="font-semibold text-foreground text-sm">Employee Profile</h3>
           <div className="flex items-center gap-1">
             {canSelfEdit && !canHREdit && (
@@ -1423,7 +1434,7 @@ function EmployeeDetailDrawer({
         </div>
 
         {/* Profile hero */}
-        <div className="px-5 py-6 border-b border-border">
+        <div className="shrink-0 border-b border-border px-4 py-4 sm:px-5 sm:py-5">
           <div className="flex items-start gap-4">
             <Avatar name={employee.name} size="xl" />
             <div className="min-w-0 flex-1">
@@ -1442,19 +1453,19 @@ function EmployeeDetailDrawer({
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-border overflow-x-auto scrollbar-hide">
+        <div role="tablist" aria-label="Employee profile sections" className="adaptive-tab-rail flex shrink-0 overflow-x-auto border-b border-border scrollbar-hide">
           {tabs.map(t => (
-            <button key={t.key} onClick={() => setTab(t.key)}
+            <button key={t.key} role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
               className={`flex-shrink-0 px-4 py-2.5 text-xs font-medium transition-colors border-b-2 whitespace-nowrap ${tab === t.key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
               {t.label}
             </button>
           ))}
         </div>
 
-        <div className="px-5 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-4 sm:px-5">
           {tab === 'profile' && (
-            <div className="space-y-4">
-              <section>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <section className="rounded-xl border border-border bg-muted/20 p-4">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Contact Information</p>
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-sm">
@@ -1483,7 +1494,7 @@ function EmployeeDetailDrawer({
                 </div>
               </section>
 
-              <section>
+              <section className="rounded-xl border border-border bg-muted/20 p-4">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Employment Details</p>
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-sm"><Building2 size={13} className="text-muted-foreground flex-shrink-0" /><span className="text-foreground">{employee.department}</span></div>
@@ -1506,7 +1517,7 @@ function EmployeeDetailDrawer({
               </section>
 
               {(employee.skills ?? []).length > 0 && (
-                <section>
+                <section className="rounded-xl border border-border p-4 lg:col-span-2">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Skills</p>
                   <div className="flex flex-wrap gap-1.5">
                     {employee.skills.map(s => <span key={s} className="px-2 py-0.5 bg-primary/10 text-primary rounded-full text-xs font-medium">{s}</span>)}
@@ -1515,7 +1526,7 @@ function EmployeeDetailDrawer({
               )}
 
               {(role === 'hr_admin' || role === 'hr_manager') ? (
-                <div className="border border-red-200 rounded-lg p-4 mt-4 bg-red-50 dark:bg-red-950/20 dark:border-red-800">
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-800 dark:bg-red-950/20 lg:col-span-2">
                   <div className="flex items-center gap-2 mb-3">
                     <ShieldCheck className="w-4 h-4 text-red-600" />
                     <span className="text-xs font-semibold text-red-600 uppercase tracking-wide">{t('directory.hrConfidential')}</span>
@@ -1531,7 +1542,7 @@ function EmployeeDetailDrawer({
                   <p className="text-xs text-red-500 mt-3 italic">{t('directory.hrConfidentialNote')}</p>
                 </div>
               ) : (
-                <div className="border border-border rounded-lg p-4 mt-4">
+                <div className="rounded-xl border border-border p-4 lg:col-span-2">
                   <div className="flex items-center gap-2 mb-1">
                     <ShieldCheck className="w-4 h-4 text-muted-foreground" />
                     <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{t('directory.hrConfidential')}</span>
@@ -1540,7 +1551,7 @@ function EmployeeDetailDrawer({
                 </div>
               )}
 
-              <section>
+              <section className="lg:col-span-2">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">System</p>
                 <p className="text-xs text-muted-foreground font-mono bg-muted/40 px-2 py-1 rounded">{employee.id}</p>
               </section>
@@ -1645,15 +1656,13 @@ function OrgChartNode({ node, depth = 0, isMobile }: { node: OrgNode; depth?: nu
 
 // ── Employee Card ──────────────────────────────────────────────────────────
 function EmployeeCard({
-  emp, canEdit, canDelete, onView, onEdit, onDelete, onHoverStart, onHoverEnd,
+  emp, canEdit, onView, onEdit, onHoverStart, onHoverEnd,
   isOnLeave, isWFH,
 }: {
   emp: DirectoryEmployee;
   canEdit: boolean;
-  canDelete: boolean;
   onView: () => void;
   onEdit: () => void;
-  onDelete: () => void;
   onHoverStart: (e: React.MouseEvent, emp: DirectoryEmployee) => void;
   onHoverEnd: () => void;
   isOnLeave?: boolean;
@@ -1673,10 +1682,9 @@ function EmployeeCard({
       onMouseEnter={e => onHoverStart(e, emp)}
       onMouseLeave={onHoverEnd}
     >
-      {(canEdit || canDelete) && (
+      {canEdit && (
         <div className="absolute top-3 right-3 flex gap-1 sm:opacity-0 group-hover:opacity-100 transition-opacity" onClick={e => e.stopPropagation()}>
-          {canEdit && <button onClick={onEdit} className="w-7 h-7 flex items-center justify-center rounded-lg bg-card border border-border hover:bg-muted transition-colors shadow-sm"><Edit2 size={12} className="text-muted-foreground" /></button>}
-          {canDelete && <button onClick={onDelete} className="w-7 h-7 flex items-center justify-center rounded-lg bg-card border border-border hover:bg-red-50 transition-colors shadow-sm"><Trash2 size={12} className="text-red-400" /></button>}
+          <button onClick={onEdit} className="w-7 h-7 flex items-center justify-center rounded-lg bg-card border border-border hover:bg-muted transition-colors shadow-sm"><Edit2 size={12} className="text-muted-foreground" /></button>
         </div>
       )}
       <div className="flex flex-col items-center text-center gap-2">
@@ -2471,17 +2479,16 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
             ) : (
               <div className="bg-card border border-border rounded-xl overflow-hidden">
                 <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-2 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wide sm:gap-3 sm:px-4">
-                  <div className="w-[38vw] min-w-0 shrink-0 sm:w-64">Employee</div>
+                  <div className="min-w-0 flex-1 sm:min-w-52">Employee</div>
                   {visibleCols.has('employee_code') && <div className="hidden sm:block w-28 shrink-0">Code</div>}
                   {visibleCols.has('department') && <div className="hidden sm:block w-36 shrink-0">Department</div>}
                   {visibleCols.has('manager') && <div className="hidden xl:block w-40 shrink-0">Manager</div>}
                   {visibleCols.has('email') && <div className="hidden md:block w-52 shrink-0">Contact</div>}
                   {visibleCols.has('location') && <div className="hidden lg:block w-32 shrink-0">Location</div>}
                   {visibleCols.has('status') && <div className="w-18 shrink-0 sm:w-24">Status</div>}
-                  {(canEdit || canDelete) && (
-                    <div className="w-16 shrink-0 text-right sm:w-20">
-                      <span className="sm:hidden">Actions</span>
-                      <span className="hidden sm:inline">{canEdit && canDelete ? 'Edit / Delete' : canEdit ? 'Edit' : 'Delete'}</span>
+                  {canEdit && (
+                    <div className="w-12 shrink-0 text-right">
+                      Edit
                     </div>
                   )}
                 </div>
@@ -2499,7 +2506,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                           onMouseEnter={e => handleHoverStart(e as any, emp)}
                           onMouseLeave={handleHoverEnd}
                         >
-                          <div className="flex w-[38vw] min-w-0 shrink-0 items-center gap-2 sm:w-64 sm:gap-3">
+                          <div className="flex min-w-0 flex-1 items-center gap-2 sm:min-w-52 sm:gap-3">
                             <Avatar name={emp.name} size="sm" />
                             <div className="min-w-0">
                               <p className="font-medium text-foreground truncate">{emp.name}</p>
@@ -2539,16 +2546,12 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                               {wfhIds.has(emp.id) && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">🏠</span>}
                             </div>
                           )}
-                          {(canEdit || canDelete) && (
-                            <div className="flex w-16 shrink-0 justify-end gap-1 sm:w-20" onClick={e => e.stopPropagation()}>
-                              {canEdit && <button title={`Edit ${emp.name}`} aria-label={`Edit ${emp.name}`} onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
+                          {canEdit && (
+                            <div className="flex w-12 shrink-0 justify-end" onClick={e => e.stopPropagation()}>
+                              <button title={`Edit ${emp.name}`} aria-label={`Edit ${emp.name}`} onClick={() => { setEditingEmployee(emp); setShowForm(true); }}
                                 className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-muted transition-colors">
                                 <Edit2 size={13} className="text-muted-foreground" />
-                              </button>}
-                              {canDelete && <button title={`Delete ${emp.name}`} aria-label={`Delete ${emp.name}`} onClick={() => setDeletingId(emp.id)}
-                                className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-red-50 transition-colors">
-                                <Trash2 size={13} className="text-red-400" />
-                              </button>}
+                              </button>
                             </div>
                           )}
                         </div>
@@ -2576,10 +2579,9 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
                 {dir.filtered.map(emp => (
-                  <EmployeeCard key={emp.id} emp={emp} canEdit={canEdit} canDelete={canDelete}
+                  <EmployeeCard key={emp.id} emp={emp} canEdit={canEdit}
                     onView={() => openDetail(emp)}
                     onEdit={() => { setEditingEmployee(emp); setShowForm(true); }}
-                    onDelete={() => setDeletingId(emp.id)}
                     onHoverStart={handleHoverStart}
                     onHoverEnd={handleHoverEnd}
                     isOnLeave={onLeaveIds.has(emp.id)}
@@ -2639,7 +2641,7 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
         />
       )}
 
-      {/* Detail Drawer */}
+      {/* Employee detail modal */}
       {selectedEmployee && createPortal(
         <EmployeeDetailDrawer
           employee={selectedEmployee}
@@ -2675,6 +2677,13 @@ export function EmployeeDirectoryEnhanced({ accessToken, onLogout }: Props) {
                 await updateEmployeeWithAudit(editingEmployee.id, data);
               }
             : dir.createEmployee}
+          onDelete={editingEmployee && canDelete
+            ? () => {
+                setShowForm(false);
+                setDeletingId(editingEmployee.id);
+                setEditingEmployee(undefined);
+              }
+            : undefined}
           onClose={() => { setShowForm(false); setEditingEmployee(undefined); }}
         />,
         document.body
