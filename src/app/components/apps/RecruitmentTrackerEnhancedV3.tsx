@@ -443,10 +443,10 @@ function CompactValueChips({
         event.stopPropagation();
         onOpen();
       }}
-      className="flex w-full max-w-full items-center gap-1 overflow-hidden text-left"
+      className="inline-flex max-w-full items-center gap-1 overflow-hidden text-left align-middle"
     >
       {values.slice(0, 2).map((item) => (
-        <span key={item} className="min-w-0 flex-1 truncate rounded bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-700">
+        <span key={item} className="max-w-36 shrink-0 truncate rounded bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-700">
           {item}
         </span>
       ))}
@@ -467,6 +467,218 @@ function ConfirmDialog({ message, onConfirm, onCancel }: { message: string; onCo
         <div className="flex justify-end gap-3">
           <button onClick={onCancel} className="px-4 py-2 text-sm rounded-lg border border-border hover:bg-muted">{t("cancel")}</button>
           <button onClick={onConfirm} className="px-4 py-2 text-sm rounded-lg bg-red-600 text-white hover:bg-red-700">{t("delete")}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BulkUploadFailureDialog({
+  result,
+  onClose,
+  onRetry,
+}: {
+  result: BulkUploadResult;
+  onClose: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="bulk-upload-result-title">
+      <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl bg-card shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
+          <div>
+            <h2 id="bulk-upload-result-title" className="font-semibold text-foreground">Candidate import completed with errors</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {result.successCount} imported · {result.failureCount} not uploaded. This report remains open until you close it.
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="Close import results">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-red-800">
+            <AlertCircle size={16} className="mt-0.5 shrink-0" />
+            <div>
+              <p className="text-sm font-semibold">Correct these records before uploading them again</p>
+              <p className="mt-0.5 text-xs">Each entry shows the original spreadsheet row and the reason it was rejected.</p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full min-w-[680px] table-auto text-left text-sm">
+              <thead className="sticky top-0 bg-muted text-xs text-muted-foreground">
+                <tr>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-semibold">Row</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-semibold">Candidate</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-semibold">Email</th>
+                  <th className="whitespace-nowrap px-3 py-2.5 font-semibold">Mobile</th>
+                  <th className="px-3 py-2.5 font-semibold">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.failed.map((failure, index) => {
+                  const name = failure.data?.name ?? failure.data?.Name ?? "—";
+                  const email = failure.data?.email ?? failure.data?.Email ?? "—";
+                  const phone = failure.data?.phone ?? failure.data?.Phone ?? "—";
+                  return (
+                    <tr key={`${failure.row}-${index}`} className="border-t border-border align-top">
+                      <td className="whitespace-nowrap px-3 py-3 font-semibold text-red-700">{failure.row > 0 ? failure.row : "—"}</td>
+                      <td className="whitespace-nowrap px-3 py-3 font-medium text-foreground">{name}</td>
+                      <td className="px-3 py-3 text-muted-foreground">{email}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{phone}</td>
+                      <td className="min-w-72 px-3 py-3 leading-relaxed text-red-700">{failure.error}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap justify-end gap-2 border-t border-border px-5 py-4">
+          <button type="button" onClick={onClose} className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted">Close report</button>
+          <button type="button" onClick={onRetry} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700">Upload corrected file</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+interface CandidateMassEditValues {
+  updates: Partial<Candidate>;
+  skillsToAdd: string[];
+}
+
+function CandidateMassEditModal({
+  candidates,
+  onClose,
+  onSave,
+}: {
+  candidates: Candidate[];
+  onClose: () => void;
+  onSave: (values: CandidateMassEditValues) => Promise<void>;
+}) {
+  const [enabled, setEnabled] = useState<Record<string, boolean>>({});
+  const [form, setForm] = useState({
+    stage: "",
+    source: "",
+    department: "",
+    position: "",
+    currentCompany: "",
+    previousCompany: "",
+    expertise: "",
+    skills: "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const toggle = (field: keyof typeof form) => {
+    setEnabled((current) => ({ ...current, [field]: !current[field] }));
+  };
+
+  const fieldClass = "w-full rounded-lg border border-border bg-background px-3 py-2 text-sm disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground";
+  const rowClass = "grid gap-2 rounded-lg border border-border p-3 sm:grid-cols-[150px_minmax(0,1fr)] sm:items-center";
+
+  const submit = async () => {
+    const selectedFields = Object.entries(enabled).filter(([, value]) => value).map(([key]) => key);
+    if (selectedFields.length === 0) {
+      setFormError("Select at least one field to update.");
+      return;
+    }
+    if ((enabled.stage && !form.stage) || (enabled.source && !form.source)) {
+      setFormError("Choose a value for each selected dropdown field.");
+      return;
+    }
+    if (enabled.skills && !form.skills.trim()) {
+      setFormError("Enter at least one skill to add.");
+      return;
+    }
+    setSaving(true);
+    setFormError("");
+    const updates: Partial<Candidate> = {};
+    if (enabled.stage) updates.stage = form.stage;
+    if (enabled.source) updates.source = form.source;
+    if (enabled.department) updates.department = form.department;
+    if (enabled.position) updates.position = form.position;
+    if (enabled.currentCompany) updates.currentCompany = form.currentCompany;
+    if (enabled.previousCompany) updates.previousCompany = form.previousCompany;
+    if (enabled.expertise) updates.expertise = form.expertise;
+    try {
+      await onSave({
+        updates,
+        skillsToAdd: enabled.skills ? form.skills.split(",").map((skill) => skill.trim()).filter(Boolean) : [],
+      });
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Mass update failed");
+      setSaving(false);
+    }
+  };
+
+  const fieldToggle = (field: keyof typeof form, label: string) => (
+    <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-foreground">
+      <input type="checkbox" checked={Boolean(enabled[field])} onChange={() => toggle(field)} className="size-4 rounded border-border" />
+      {label}
+    </label>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="mass-edit-title">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-card shadow-2xl">
+        <div className="flex items-start justify-between border-b border-border px-5 py-4">
+          <div>
+            <h2 id="mass-edit-title" className="font-semibold text-foreground">Mass edit candidates</h2>
+            <p className="mt-1 text-xs text-muted-foreground">{candidates.length} selected: {candidates.slice(0, 3).map((candidate) => candidate.name).join(", ")}{candidates.length > 3 ? ` +${candidates.length - 3} more` : ""}</p>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-muted-foreground hover:bg-muted"><X size={18} /></button>
+        </div>
+
+        <div className="flex-1 space-y-3 overflow-y-auto p-5">
+          <p className="text-xs text-muted-foreground">Check only the fields you want to update. Unchecked fields remain unchanged.</p>
+
+          <div className={rowClass}>
+            {fieldToggle("stage", "Stage")}
+            <select disabled={!enabled.stage} value={form.stage} onChange={(event) => setForm((current) => ({ ...current, stage: event.target.value }))} className={fieldClass}>
+              <option value="">Select stage</option>
+              {RECRUITMENT_STAGES.map((stage) => <option key={stage}>{stage}</option>)}
+            </select>
+          </div>
+          <div className={rowClass}>
+            {fieldToggle("source", "Source")}
+            <select disabled={!enabled.source} value={form.source} onChange={(event) => setForm((current) => ({ ...current, source: event.target.value }))} className={fieldClass}>
+              <option value="">Select source</option>
+              {RECRUITMENT_SOURCES.map((source) => <option key={source}>{source}</option>)}
+            </select>
+          </div>
+          {([
+            ["department", "Department", "Enter department"],
+            ["position", "Position", "Enter position"],
+            ["currentCompany", "Current Employer", "Enter current employer"],
+            ["previousCompany", "Previous Employer", "Enter previous employer"],
+            ["expertise", "Expertise", "Enter expertise"],
+            ["skills", "Add skills", "Comma-separated skills"],
+          ] as const).map(([field, label, placeholder]) => (
+            <div key={field} className={rowClass}>
+              {fieldToggle(field, label)}
+              <input
+                disabled={!enabled[field]}
+                value={form[field]}
+                onChange={(event) => setForm((current) => ({ ...current, [field]: event.target.value }))}
+                placeholder={placeholder}
+                className={fieldClass}
+              />
+            </div>
+          ))}
+
+          {formError && <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{formError}</p>}
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
+          <button type="button" onClick={onClose} disabled={saving} className="rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted disabled:opacity-50">Cancel</button>
+          <button type="button" onClick={submit} disabled={saving} className="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white hover:bg-blue-700 disabled:opacity-50">
+            {saving ? "Updating…" : `Update ${candidates.length} candidates`}
+          </button>
         </div>
       </div>
     </div>
@@ -641,9 +853,10 @@ function validateRow(row: Record<string, string>, index: number): ParsedRow {
 interface BulkUploadModalProps {
   onClose: () => void;
   onUpload: (rows: Record<string, string>[]) => Promise<BulkUploadResult>;
+  onResult: (result: BulkUploadResult) => void;
 }
 
-function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
+function BulkUploadModal({ onClose, onUpload, onResult }: BulkUploadModalProps) {
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [fileError, setFileError] = useState("");
   const [uploadError, setUploadError] = useState("");
@@ -739,6 +952,8 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
       }
 
       setResult(combinedResult);
+      onResult(combinedResult);
+      onClose();
       const failureSummary = `${combinedResult.failureCount} row${combinedResult.failureCount === 1 ? "" : "s"} not uploaded`;
       if (combinedResult.successCount > 0) {
         toast.warning(`${combinedResult.successCount} imported; ${failureSummary}. The details will remain open below.`);
@@ -3161,9 +3376,12 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [openCandidateActions, setOpenCandidateActions] = useState<string | null>(null);
   const selectedCandidate = selectedCandidateId ? (candidates.find((c) => c.id === selectedCandidateId) ?? null) : null;
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<Set<string>>(() => new Set());
+  const [showMassEdit, setShowMassEdit] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{ type: "candidate" | "job"; id: string } | null>(null);
   const [confirmHire, setConfirmHire] = useState<Candidate | null>(null);
   const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [bulkUploadResult, setBulkUploadResult] = useState<BulkUploadResult | null>(null);
 
   const [showJobForm, setShowJobForm] = useState(false);
   const [editingJob, setEditingJob] = useState<JobPosting | null>(null);
@@ -3206,6 +3424,30 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
   const activePipelineFilterCount = Number(stageFilter !== "All")
     + Number(Boolean(filterExpertise))
     + Number(Boolean(search.trim()));
+  const selectedCandidates = candidates.filter((candidate) => selectedCandidateIds.has(candidate.id));
+  const allVisibleCandidatesSelected = filteredCandidates.length > 0
+    && filteredCandidates.every((candidate) => selectedCandidateIds.has(candidate.id));
+
+  const toggleCandidateSelection = (candidateId: string) => {
+    setSelectedCandidateIds((current) => {
+      const next = new Set(current);
+      if (next.has(candidateId)) next.delete(candidateId);
+      else next.add(candidateId);
+      return next;
+    });
+  };
+
+  const toggleVisibleCandidateSelection = () => {
+    setSelectedCandidateIds((current) => {
+      const next = new Set(current);
+      if (allVisibleCandidatesSelected) {
+        filteredCandidates.forEach((candidate) => next.delete(candidate.id));
+      } else {
+        filteredCandidates.forEach((candidate) => next.add(candidate.id));
+      }
+      return next;
+    });
+  };
 
   const derivedStats = useMemo(() => ({
     total: stats?.totalCandidates ?? candidates.length,
@@ -3366,6 +3608,25 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
               )}
             </div>
 
+            {pipelineView === "list" && selectedCandidateIds.size > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3">
+                <div>
+                  <p className="text-sm font-semibold text-blue-900">{selectedCandidateIds.size} candidate{selectedCandidateIds.size === 1 ? "" : "s"} selected</p>
+                  <p className="text-xs text-blue-700">Apply the same updates to all selected records.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => setSelectedCandidateIds(new Set())} className="rounded-lg px-3 py-1.5 text-sm text-blue-700 hover:bg-blue-100">
+                    Clear selection
+                  </button>
+                  {canCreateCandidate && (
+                    <button type="button" onClick={() => setShowMassEdit(true)} className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm text-white hover:bg-blue-700">
+                      <Edit2 size={14} />Mass edit
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             {pipelineView === "kanban" && (
               <div className="mobile-kanban-rail flex snap-x snap-mandatory gap-3 overflow-x-auto pb-4 sm:gap-4">
                 {visiblePipelineStages.map((stage) => {
@@ -3415,23 +3676,32 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
             )}
 
             {pipelineView === "list" && <div className="bg-card rounded-xl border border-border overflow-x-auto">
-              <table className="responsive-data-table table-fixed w-full min-w-[1536px] text-sm">
+              <table className="responsive-data-table w-max min-w-full table-auto text-sm">
                 <thead>
                   <tr className="border-b border-border text-xs text-muted-foreground">
-                    <th className="w-60 px-4 py-3 text-left font-medium">{t("candidate")}</th>
-                    <th className="w-40 px-4 py-3 text-left font-medium">{t("stage")}</th>
-                    <th className="w-28 px-4 py-3 text-left font-medium">{t("source")}</th>
-                    <th className="w-28 px-4 py-3 text-left font-medium">{t("experience")}</th>
-                    <th className="w-48 px-4 py-3 text-left font-medium">Current Employer</th>
-                    <th className="w-64 px-4 py-3 text-left font-medium">Previous Employer</th>
-                    <th className="w-64 px-4 py-3 text-left font-medium">Skills</th>
-                    <th className="w-36 px-4 py-3 text-left font-medium">Expertise</th>
-                    <th className="w-16 px-3 py-3 text-center font-medium">{t("common.actions")}</th>
+                    <th className="w-11 px-3 py-3 text-center font-medium">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleCandidatesSelected}
+                        onChange={toggleVisibleCandidateSelection}
+                        aria-label={allVisibleCandidatesSelected ? "Deselect all visible candidates" : "Select all visible candidates"}
+                        className="size-4 rounded border-border"
+                      />
+                    </th>
+                    <th className="min-w-52 whitespace-nowrap px-3 py-3 text-left font-medium">{t("candidate")}</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-left font-medium">{t("stage")}</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-left font-medium">{t("source")}</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-left font-medium">{t("experience")}</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-left font-medium">Current Employer</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-left font-medium">Previous Employer</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-left font-medium">Skills</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-left font-medium">Expertise</th>
+                    <th className="whitespace-nowrap px-3 py-3 text-center font-medium">{t("common.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredCandidates.length === 0 && (
-                    <tr><td colSpan={9} className="text-center py-10 text-muted-foreground text-sm">{t("noCandidates")}</td></tr>
+                    <tr><td colSpan={10} className="text-center py-10 text-muted-foreground text-sm">{t("noCandidates")}</td></tr>
                   )}
                   {filteredCandidates.map((c) => {
                     const needsFb = INTERVIEW_STAGES.includes(c.stage) && (c.feedback ?? []).length === 0;
@@ -3439,7 +3709,16 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                     return (
                       <tr key={c.id} onClick={() => setSelectedCandidateId(c.id)}
                         className={`group border-b border-gray-50 hover:bg-muted transition-colors cursor-pointer ${isBlacklisted ? "opacity-60" : ""}`}>
-                        <td className="px-4 py-3">
+                        <td className="px-3 py-3 text-center" onClick={(event) => event.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedCandidateIds.has(c.id)}
+                            onChange={() => toggleCandidateSelection(c.id)}
+                            aria-label={`Select ${c.name}`}
+                            className="size-4 rounded border-border"
+                          />
+                        </td>
+                        <td className="px-3 py-3">
                           <div className="flex items-center gap-2">
                             <div>
                               <div className="flex items-center gap-1.5">
@@ -3459,10 +3738,10 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                             )}
                           </div>
                         </td>
-                        <td className="px-4 py-3"><StageBadge stage={c.stage} /></td>
-                        <td className="px-4 py-3 text-muted-foreground">{c.source}</td>
-                        <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{formatCompactCandidateExperience(c.experience)}</td>
-                        <td className="px-4 py-3 text-muted-foreground">
+                        <td className="whitespace-nowrap px-3 py-3"><StageBadge stage={c.stage} /></td>
+                        <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{c.source}</td>
+                        <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">{formatCompactCandidateExperience(c.experience)}</td>
+                        <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
                           <CompactValueChips
                             value={c.currentCompany}
                             candidateName={c.name}
@@ -3470,7 +3749,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                             onOpen={() => setSelectedCandidateId(c.id)}
                           />
                         </td>
-                        <td className="px-4 py-3 text-muted-foreground">
+                        <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
                           <CompactValueChips
                             value={c.previousCompany}
                             candidateName={c.name}
@@ -3478,7 +3757,7 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                             onOpen={() => setSelectedCandidateId(c.id)}
                           />
                         </td>
-                        <td className="px-4 py-3 text-muted-foreground">
+                        <td className="whitespace-nowrap px-3 py-3 text-muted-foreground">
                           <CompactValueChips
                             value={c.skills}
                             candidateName={c.name}
@@ -3486,12 +3765,12 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
                             onOpen={() => setSelectedCandidateId(c.id)}
                           />
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="whitespace-nowrap px-3 py-3">
                           {c.expertise ? (
-                            <span title={c.expertise} className="block max-w-32 truncate rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700">{c.expertise}</span>
+                            <span title={c.expertise} className="inline-block max-w-36 truncate rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700 align-middle">{c.expertise}</span>
                           ) : <span className="text-muted-foreground text-xs">—</span>}
                         </td>
-                        <td className={`relative px-3 py-3 ${openCandidateActions === c.id ? "z-30" : ""}`} onClick={(event) => event.stopPropagation()}>
+                        <td className={`relative whitespace-nowrap px-3 py-3 ${openCandidateActions === c.id ? "z-30" : ""}`} onClick={(event) => event.stopPropagation()}>
                           <div className="flex justify-center">
                             <button
                               type="button"
@@ -3993,6 +4272,39 @@ export function RecruitmentTracker({ accessToken, onLogout }: { accessToken: str
         <BulkUploadModal
           onClose={() => setShowBulkUpload(false)}
           onUpload={bulkUpload}
+          onResult={setBulkUploadResult}
+        />
+      )}
+
+      {bulkUploadResult && (
+        <BulkUploadFailureDialog
+          result={bulkUploadResult}
+          onClose={() => setBulkUploadResult(null)}
+          onRetry={() => {
+            setBulkUploadResult(null);
+            setShowBulkUpload(true);
+          }}
+        />
+      )}
+
+      {showMassEdit && selectedCandidates.length > 0 && (
+        <CandidateMassEditModal
+          candidates={selectedCandidates}
+          onClose={() => setShowMassEdit(false)}
+          onSave={async ({ updates, skillsToAdd }) => {
+            for (const candidate of selectedCandidates) {
+              await updateCandidate(candidate.id, {
+                ...updates,
+                ...(skillsToAdd.length > 0
+                  ? { skills: [...new Set([...(candidate.skills ?? []), ...skillsToAdd])] }
+                  : {}),
+              });
+            }
+            await refresh();
+            toast.success(`${selectedCandidates.length} candidate${selectedCandidates.length === 1 ? "" : "s"} updated`);
+            setShowMassEdit(false);
+            setSelectedCandidateIds(new Set());
+          }}
         />
       )}
 
