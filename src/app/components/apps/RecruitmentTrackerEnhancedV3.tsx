@@ -616,7 +616,11 @@ const TEMPLATE_HEADERS = [
 ];
 const REQUIRED_COLS = ["Name", "Email", "Position", "Department"];
 
-interface ParsedRow { data: Record<string, string>; errors: string[] }
+interface ParsedRow {
+  data: Record<string, string>;
+  errors: string[];
+  rowNumber: number;
+}
 
 function validateRow(row: Record<string, string>, index: number): ParsedRow {
   const errors: string[] = [];
@@ -631,7 +635,7 @@ function validateRow(row: Record<string, string>, index: number): ParsedRow {
   } catch (error) {
     errors.push(`Row ${index + 2}: ${error instanceof Error ? error.message : "Invalid experience"}`);
   }
-  return { data: row, errors };
+  return { data: row, errors, rowNumber: index + 2 };
 }
 
 interface BulkUploadModalProps {
@@ -699,19 +703,47 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
     setUploading(true);
     setUploadError("");
     try {
-      const res = await onUpload(validRows.map((r) => r.data));
-      if (res.failureCount === 0) {
-        toast.success(`${res.successCount} candidate${res.successCount === 1 ? "" : "s"} imported successfully`);
+      const res = await onUpload(validRows.map((r) => ({
+        ...r.data,
+        __sourceRow: String(r.rowNumber),
+      })));
+      const validationFailures = errorRows.map((row) => ({
+        row: row.rowNumber,
+        error: row.errors
+          .map((error) => error.replace(/^Row \d+:\s*/, ""))
+          .join("; "),
+        data: row.data,
+      }));
+      const reportedFailures = Array.isArray(res.failed) ? res.failed : [];
+      const unreportedFailureCount = Math.max(0, res.failureCount - reportedFailures.length);
+      const combinedResult: BulkUploadResult = {
+        totalProcessed: parsedRows.length,
+        successCount: res.successCount,
+        failureCount: validationFailures.length + res.failureCount,
+        successful: Array.isArray(res.successful) ? res.successful : [],
+        failed: [
+          ...validationFailures,
+          ...reportedFailures,
+          ...Array.from({ length: unreportedFailureCount }, () => ({
+            row: 0,
+            error: "The server did not return a row-specific reason. Please retry this record or contact support.",
+            data: {},
+          })),
+        ],
+      };
+
+      if (combinedResult.failureCount === 0) {
+        toast.success(`${combinedResult.successCount} candidate${combinedResult.successCount === 1 ? "" : "s"} imported successfully`);
         onClose();
         return;
       }
 
-      setResult(res);
-      const failureSummary = `${res.failureCount} row${res.failureCount === 1 ? "" : "s"} not uploaded`;
-      if (res.successCount > 0) {
-        toast.warning(`${res.successCount} imported; ${failureSummary}. Review the reasons below.`);
+      setResult(combinedResult);
+      const failureSummary = `${combinedResult.failureCount} row${combinedResult.failureCount === 1 ? "" : "s"} not uploaded`;
+      if (combinedResult.successCount > 0) {
+        toast.warning(`${combinedResult.successCount} imported; ${failureSummary}. The details will remain open below.`);
       } else {
-        toast.error(`${failureSummary}. Review the reasons below.`);
+        toast.error(`${failureSummary}. The details will remain open below.`);
       }
     } catch (err: unknown) {
       let message = err instanceof Error ? err.message : "Upload failed";
@@ -753,14 +785,43 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
                 </div>
               </div>
               {result.failed.length > 0 && (
-                <div>
-                  <p className="text-xs font-semibold text-red-600 mb-2">Records not uploaded</p>
-                  <div className="space-y-1 max-h-40 overflow-y-auto">
-                    {result.failed.map((f, i) => (
-                      <div key={i} className="text-xs bg-red-50 text-red-700 rounded px-3 py-1.5">
-                        Row {f.row}{f.data?.name ? ` — ${f.data.name}` : ""}: {f.error}
-                      </div>
-                    ))}
+                <div role="alert" className="rounded-lg border border-red-200 bg-red-50/50 p-3">
+                  <div className="mb-3 flex items-start gap-2">
+                    <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-600" />
+                    <div>
+                      <p className="text-sm font-semibold text-red-700">Records not uploaded</p>
+                      <p className="text-xs text-red-600">Correct the rows listed below, then upload the file again.</p>
+                    </div>
+                  </div>
+                  <div className="max-h-64 overflow-auto rounded-md border border-red-200 bg-white">
+                    <table className="w-full min-w-[560px] text-left text-xs">
+                      <thead className="sticky top-0 bg-red-100 text-red-800">
+                        <tr>
+                          <th className="w-16 px-3 py-2 font-semibold">Row</th>
+                          <th className="px-3 py-2 font-semibold">Candidate</th>
+                          <th className="px-3 py-2 font-semibold">Email / Mobile</th>
+                          <th className="px-3 py-2 font-semibold">Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {result.failed.map((failure, index) => {
+                          const name = failure.data?.name ?? failure.data?.Name ?? "—";
+                          const email = failure.data?.email ?? failure.data?.Email ?? "";
+                          const phone = failure.data?.phone ?? failure.data?.Phone ?? "";
+                          return (
+                            <tr key={`${failure.row}-${index}`} className="border-t border-red-100 align-top text-red-900">
+                              <td className="px-3 py-2 font-semibold">{failure.row > 0 ? failure.row : "—"}</td>
+                              <td className="px-3 py-2">{name}</td>
+                              <td className="px-3 py-2">
+                                <div>{email || "—"}</div>
+                                {phone && <div className="mt-0.5 text-red-600">{phone}</div>}
+                              </td>
+                              <td className="px-3 py-2 leading-relaxed">{failure.error}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               )}
@@ -886,6 +947,19 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
 
         <div className="flex justify-end gap-3 p-5 border-t border-border shrink-0">
           <button onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-muted">{t("cancel")}</button>
+          {result && (
+            <button
+              onClick={() => {
+                setResult(null);
+                setParsedRows([]);
+                setFileName("");
+                setUploadError("");
+              }}
+              className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            >
+              Upload corrected file
+            </button>
+          )}
           {!result && validRows.length > 0 && (
             <button onClick={handleImport} disabled={uploading}
               className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-60 flex items-center gap-2">

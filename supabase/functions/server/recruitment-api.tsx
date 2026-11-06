@@ -294,7 +294,8 @@ app.post('/bulk-upload', async (c) => {
 
     for (let i = 0; i < candidatesData.length; i++) {
       const cd = candidatesData[i];
-      const row = i + 2;
+      const sourceRow = Number(cd.sourceRow || cd.__sourceRow);
+      const row = Number.isInteger(sourceRow) && sourceRow >= 2 ? sourceRow : i + 2;
 
       const missing = ['name', 'email', 'position', 'department'].filter(f => !cd[f]);
       if (missing.length) {

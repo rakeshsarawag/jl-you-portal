@@ -544,6 +544,7 @@ export function useRecruitmentData(userEmail?: string) {
     const mapped = rows.map((r) => {
       const parsedExperience = parseCandidateExperience(r.Experience ?? r.experience ?? 0);
       return {
+        sourceRow: Number(r.__sourceRow) || undefined,
         name: r.Name ?? r.name ?? "",
         email: r.Email ?? r.email ?? "",
         phone: r.Phone ?? r.phone ?? "",
@@ -576,7 +577,16 @@ export function useRecruitmentData(userEmail?: string) {
       body: JSON.stringify({ candidates: mapped }),
     }, userEmail);
 
-    const result: BulkUploadResult = res?.data ?? res;
+    const rawResult = res?.data ?? res ?? {};
+    const failed = Array.isArray(rawResult.failed) ? rawResult.failed : [];
+    const successful = Array.isArray(rawResult.successful) ? rawResult.successful : [];
+    const result: BulkUploadResult = {
+      totalProcessed: Number(rawResult.totalProcessed) || mapped.length,
+      successCount: Number(rawResult.successCount) || 0,
+      failureCount: Number(rawResult.failureCount) || failed.length,
+      successful,
+      failed,
+    };
     // Reload after bulk upload
     await loadAll();
     return result;
