@@ -707,7 +707,7 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
       }
 
       setResult(res);
-      const failureSummary = `${res.failureCount} row${res.failureCount === 1 ? "" : "s"} failed to import`;
+      const failureSummary = `${res.failureCount} row${res.failureCount === 1 ? "" : "s"} not uploaded`;
       if (res.successCount > 0) {
         toast.warning(`${res.successCount} imported; ${failureSummary}. Review the reasons below.`);
       } else {
@@ -749,16 +749,16 @@ function BulkUploadModal({ onClose, onUpload }: BulkUploadModalProps) {
                 </div>
                 <div className="bg-red-50 rounded-lg p-4 text-center">
                   <p className="text-3xl font-bold text-red-700">{result.failureCount}</p>
-                  <p className="text-xs text-red-600 mt-1">{t("rowsFailed")}</p>
+                  <p className="text-xs text-red-600 mt-1">Not uploaded</p>
                 </div>
               </div>
               {result.failed.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-red-600 mb-2">{t("errorRows")}</p>
+                  <p className="text-xs font-semibold text-red-600 mb-2">Records not uploaded</p>
                   <div className="space-y-1 max-h-40 overflow-y-auto">
                     {result.failed.map((f, i) => (
                       <div key={i} className="text-xs bg-red-50 text-red-700 rounded px-3 py-1.5">
-                        Row {f.row}: {f.error}
+                        Row {f.row}{f.data?.name ? ` — ${f.data.name}` : ""}: {f.error}
                       </div>
                     ))}
                   </div>

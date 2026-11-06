@@ -29,6 +29,14 @@ function normalizedCandidateExperience(candidate: Record<string, any>): number {
   return Number.isFinite(experience) && experience >= 0 ? experience : 0;
 }
 
+function normalizedEmail(value: unknown): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizedMobile(value: unknown): string {
+  return String(value || '').replace(/\D/g, '');
+}
+
 function mappedUpdates(
   body: Record<string, any>,
   mappings: Array<[column: string, keys: string[], transform?: (value: any) => any]>,
@@ -246,11 +254,22 @@ app.post('/bulk-upload', async (c) => {
 
     const results = { successful: [] as string[], failed: [] as any[] };
 
-    // Fetch existing emails
-    const { data: existing } = await supabase
+    // Keep the matching candidate/row so rejected duplicates are actionable.
+    const { data: existing, error: existingError } = await supabase
       .from('recruitment_candidates')
-      .select('email');
-    const existingEmails = new Set((existing || []).map((e: any) => e.email.toLowerCase()));
+      .select('name, email, phone');
+    if (existingError) {
+      return c.json({ success: false, error: 'Could not validate duplicate candidate details' }, 500);
+    }
+    const existingEmails = new Map<string, string>();
+    const existingMobiles = new Map<string, string>();
+    for (const candidate of existing || []) {
+      const label = `existing candidate "${candidate.name || candidate.email || candidate.phone}"`;
+      const email = normalizedEmail(candidate.email);
+      const mobile = normalizedMobile(candidate.phone);
+      if (email && !existingEmails.has(email)) existingEmails.set(email, label);
+      if (mobile && !existingMobiles.has(mobile)) existingMobiles.set(mobile, label);
+    }
 
     // Bulk-upload templates use employee codes (for example JL001) rather than
     // exposing internal UUIDs. Names and UUIDs remain accepted for compatibility.
@@ -283,8 +302,19 @@ app.post('/bulk-upload', async (c) => {
         continue;
       }
 
-      if (existingEmails.has(cd.email.toLowerCase())) {
-        results.failed.push({ row, error: `Email ${cd.email} already exists`, data: cd });
+      const email = normalizedEmail(cd.email);
+      const mobile = normalizedMobile(cd.phone);
+      const duplicateReasons: string[] = [];
+      const emailMatch = email ? existingEmails.get(email) : null;
+      const mobileMatch = mobile ? existingMobiles.get(mobile) : null;
+      if (emailMatch) duplicateReasons.push(`email "${cd.email}" matches ${emailMatch}`);
+      if (mobileMatch) duplicateReasons.push(`mobile "${cd.phone}" matches ${mobileMatch}`);
+      if (duplicateReasons.length > 0) {
+        results.failed.push({
+          row,
+          error: `Duplicate ${duplicateReasons.join(' and ')}. Candidate "${cd.name}" was not uploaded.`,
+          data: cd,
+        });
         continue;
       }
 
@@ -300,6 +330,10 @@ app.post('/bulk-upload', async (c) => {
         });
         continue;
       }
+
+      const uploadedRowLabel = `uploaded row ${row} ("${cd.name}")`;
+      if (email) existingEmails.set(email, uploadedRowLabel);
+      if (mobile) existingMobiles.set(mobile, uploadedRowLabel);
 
       const record = {
         name: cd.name,
@@ -342,7 +376,6 @@ app.post('/bulk-upload', async (c) => {
         results.failed.push({ row, error: error.message, data: cd });
       } else {
         results.successful.push(cd.name);
-        existingEmails.add(cd.email.toLowerCase());
       }
     }
 
